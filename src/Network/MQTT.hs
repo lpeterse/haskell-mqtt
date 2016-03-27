@@ -23,7 +23,7 @@ import qualified Data.ByteString as BS
 import qualified Data.ByteString.Builder as BS
 import qualified Data.ByteString.Lazy as LBS
 import qualified Data.Conduit as C
-import qualified Data.Conduit.List as C ( consume )
+import qualified Data.Conduit.List as C ( consume, peek )
 import qualified Data.Conduit.Binary as C
 import qualified Data.Text as T
 import qualified Data.Text.Lazy as LT
@@ -82,7 +82,9 @@ mqttBroker = fix $ \continue-> do
         5  -> liftIO $ print "handlePublishReceived"
         6  -> liftIO $ print "handlePublishRelease"
         7  -> liftIO $ print "handlePublishComplete"
-        8  -> liftIO $ print "handleSubscribe"
+        8  -> do
+          handleSubscribe (\t-> liftIO $ print t >> return SubscriptionSuccessMaxQoS0)
+          continue
         9  -> liftIO $ print "handleSubscribeAck"
         10 -> liftIO $ print "handleUnsubscribe"
         11 -> liftIO $ print "handleUnsubscribeAck"
@@ -225,6 +227,58 @@ handlePublish = do
     rejectEof =
       reject "Unexpected End Of Input"
 
+type TopicFilter = (T.Text, QoS)
+
+data SubscriptionAcknowledgement
+   = SubscriptionSuccessMaxQoS0
+   | SubscriptionSuccessMaxQoS1
+   | SubscriptionSuccessMaxQoS2
+   | SubscriptionFailure
+
+handleSubscribe :: (MonadThrow m, MonadIO m) => (TopicFilter -> m SubscriptionAcknowledgement) -> MQTT m ()
+handleSubscribe subscribe = do
+  -- Receive and validate SUBSCRIBE
+  header <- maybe (throwM EndOfInput) return =<< C.head
+  unless (header == 0x82) $
+    throwM $ ProtocolViolation "Malformed SUBSCRIBE header"
+  remainingLength <- getRemainingLength
+  C.isolate remainingLength C.=$= do
+    packetId <- getWord16BeDefault (throwM EndOfInput)
+    topics   <- getTopics packetId
+    when (null topics) $
+      throwM $ ProtocolViolation "No Topics In SUBSCRIBE"
+    acks <- lift $ mapM subscribe topics
+    C.yield
+      $ LBS.toStrict
+      $ BS.toLazyByteString
+      $ mconcat
+      ( BS.word8 0x90
+      : BS.word8 (fromIntegral $ 2 + length acks)
+      : BS.word16BE packetId
+      : map returnCode acks
+      )
+  where
+    returnCode SubscriptionSuccessMaxQoS0 = BS.word8 0x00
+    returnCode SubscriptionSuccessMaxQoS1 = BS.word8 0x01
+    returnCode SubscriptionSuccessMaxQoS2 = BS.word8 0x02
+    returnCode SubscriptionFailure        = BS.word8 0x08
+    getTopics :: (MonadThrow m, MonadIO m) => Word16 -> MQTT m [TopicFilter]
+    getTopics packetId = fix $ \next-> do
+      m <- C.peek
+      case m of
+        Nothing -> return []
+        Just bs -> if BS.null bs
+          then return []
+          else do
+            topic   <- getStringDefault (throwM EndOfInput)
+            qosCode <- maybe (throwM EndOfInput) return =<< C.head
+            qos     <- case qosCode of
+              0 -> return AtMostOnce
+              2 -> return $ AtLeastOnce packetId
+              4 -> return $ ExactlyOnce packetId
+              _ -> throwM $ ProtocolViolation "Invalid QoS Code"
+            ((topic, qos):) <$> next
+
 -- | Receives PINGREQ from the client and immediately responds with a PINGRESP.
 handlePingRequest :: (MonadThrow m, MonadIO m) => MQTT m ()
 handlePingRequest = do
@@ -245,7 +299,7 @@ handleDisconnect = do
   unless (w16 == 0xe000) $
     throwM $ ProtocolViolation "Malformed DISCONNECT"
 
-getWord16BeDefault :: (Monad m, Num a) => MQTT m a -> MQTT m a
+getWord16BeDefault :: (Monad m, Num a) => C.ConduitM BS.ByteString o m a -> C.ConduitM BS.ByteString o m a
 getWord16BeDefault def = (+)
   <$> ( maybe def (return . (*256) . fromIntegral) =<< C.head )
   <*> ( maybe def (return .          fromIntegral) =<< C.head )
@@ -253,8 +307,10 @@ getWord16BeDefault def = (+)
 getBlobDefault   :: Monad m => MQTT m BS.ByteString -> MQTT m BS.ByteString
 getBlobDefault   def = LBS.toStrict <$> (getWord16BeDefault (def >> return 0) >>= C.take)
 
-getStringDefault :: Monad m => MQTT m T.Text -> MQTT m T.Text
-getStringDefault def = getWord16BeDefault (def >> return 0) >>= C.take >>= parse
+getStringDefault :: MonadThrow m => C.ConduitM BS.ByteString o m T.Text -> C.ConduitM BS.ByteString o m T.Text
+getStringDefault def = do
+  size <- getWord16BeDefault (throwM EndOfInput)
+  C.take size >>= parse
  where
    parse = either
      ( const def )
