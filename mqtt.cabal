@@ -26,3 +26,17 @@ library
 
   hs-source-dirs:      src
   default-language:    Haskell2010
+
+executable hummingbird
+  main-is:             hummingbird.hs
+  build-depends:       base >=4.8 && <4.9,
+                       bytestring,
+                       conduit,
+                       conduit-extra,
+                       exceptions,
+                       text,
+                       transformers,
+                       socket,
+                       socket-conduit
+  hs-source-dirs:      src
+  default-language:    Haskell2010
