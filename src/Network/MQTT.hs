@@ -18,6 +18,7 @@ import Control.Monad.Trans.Class (lift)
 import Control.Monad.IO.Class
 
 import Data.Bits ((.&.), (.|.))
+import Data.Function (fix)
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Builder as BS
 import qualified Data.ByteString.Lazy as LBS
@@ -48,26 +49,21 @@ data Connection
 
 data Message
    = Message
-     { msgDuplicate  :: Bool
-     , msgRetain     :: Bool
+     { msgTopic      :: T.Text
      , msgQoS        :: QoS
-     , msgTopic      :: T.Text
-     , msgIdentifier :: Maybe Word16
      , msgBody       :: LBS.ByteString
+     , msgDuplicate  :: Bool
+     , msgRetain     :: Bool
      } deriving (Eq, Ord, Show)
 
 data QoS
    = AtMostOnce
-   | AtLeastOnce
-   | ExactlyOnce
+   | AtLeastOnce Word16
+   | ExactlyOnce Word16
    deriving (Eq, Ord, Show)
 
 mqttBroker :: (MonadIO m, MonadThrow m) => MQTT m ()
-mqttBroker =
-  forever receive
-
-receive :: (MonadIO m, MonadThrow m) => MQTT m ()
-receive = do
+mqttBroker = fix $ \continue-> do
   mbs <- C.await
   case mbs of
     Nothing -> throwM EndOfInput
@@ -77,22 +73,25 @@ receive = do
         1  -> do
           connection <- handleConnect (\_ _-> return True )
           liftIO $ print connection
+          continue
         3  -> do
           message <- handlePublish
           liftIO $ print message
-  {-    3  -> handlePublish
-        4  -> handlePublishAcknowledgement
-        5  ->
-        6  ->
-        7  ->
-        8  ->
-        9  ->
-        10 ->
-        11 ->
-        12 ->
-        13 ->
-        14 -> -}
-        _  -> liftIO $ print "COMMAND NOT IMPLEMENTED"
+          continue
+        4  -> liftIO $ print "handlePublishAcknowledgement"
+        5  -> liftIO $ print "handlePublishReceived"
+        6  -> liftIO $ print "handlePublishRelease"
+        7  -> liftIO $ print "handlePublishComplete"
+        8  -> liftIO $ print "handleSubscribe"
+        9  -> liftIO $ print "handleSubscribeAck"
+        10 -> liftIO $ print "handleUnsubscribe"
+        11 -> liftIO $ print "handleUnsubscribeAck"
+        12 -> handlePingRequest >> continue
+        13 -> liftIO $ print "handlePingResponse"
+        14 -> do
+          handleDisconnect
+          liftIO $ print "Graceful DISCONNECT"
+        _  -> throwM $ ProtocolViolation "Unacceptable Command"
 
 getRemainingLength :: MonadThrow m => MQTT m Int
 getRemainingLength = do
@@ -128,8 +127,6 @@ getRemainingLength = do
                         else protocolViolation
   where
     protocolViolation = throwM $ ProtocolViolation "Malformed Remaining Length"
-
-
 
 handleConnect :: (MonadIO m, MonadThrow m) => (Maybe Username -> Maybe Password -> m Bool) -> MQTT m Connection
 handleConnect authorize = do
@@ -199,21 +196,26 @@ handlePublish :: (MonadThrow m, MonadIO m) => MQTT m Message
 handlePublish = do
   header          <- maybe rejectEof return =<< C.head
   remainingLength <- getRemainingLength
-  C.isolate remainingLength C.=$= Message
-    <$> return (header .&. flagDuplicate /= 0)
-    <*> return (header .&. flagRetain /= 0)
+  message         <- C.isolate remainingLength C.=$= Message
+    <$> getStringDefault rejectEof
     <*> case header .&. flagQoS of
           0 -> return AtMostOnce
-          2 -> return AtLeastOnce
-          4 -> return ExactlyOnce
+          2 -> AtLeastOnce <$> getWord16BeDefault (reject "")
+          4 -> ExactlyOnce <$> getWord16BeDefault (reject "")
           _ -> reject "Invalid QoS Level"
-    <*> getStringDefault rejectEof
-    -- The packet identifier header is only set in QoS Levels 1 and 2
-    <*> ( if header .&. (4 .|. 2) /= 0
-      then Just <$> getWord16BeDefault (reject "")
-      else return Nothing )
     -- Read the rest of the _isolated_ message
     <*> fmap LBS.fromChunks C.consume
+    <*> return (header .&. flagDuplicate /= 0)
+    <*> return (header .&. flagRetain /= 0)
+  -- The message has been received. Acknowledge it if required.
+  case msgQoS message of
+    AtMostOnce             -> return ()
+    AtLeastOnce idenfifier -> C.yield
+      $ LBS.toStrict
+      $ BS.toLazyByteString
+      $ BS.word32BE (0x40020000 .|. fromIntegral idenfifier)
+    ExactlyOnce identifier -> return () -- FIXME: Send PubRec
+  return message
   where
     flagRetain    = 0x01
     flagQoS       = 0x02 + 0x04
@@ -222,6 +224,26 @@ handlePublish = do
       throwM (ProtocolViolation reason)
     rejectEof =
       reject "Unexpected End Of Input"
+
+-- | Receives PINGREQ from the client and immediately responds with a PINGRESP.
+handlePingRequest :: (MonadThrow m, MonadIO m) => MQTT m ()
+handlePingRequest = do
+  -- Receive and validate PINGREQ
+  w16 <- getWord16BeDefault $ throwM EndOfInput
+  unless (w16 == 0xc000) $
+    throwM $ ProtocolViolation "Malformed PINGREQ"
+  -- Send PINGRESP
+  C.yield
+      $ LBS.toStrict
+      $ BS.toLazyByteString
+      $ BS.word16BE 0xd000
+
+-- | Receives a DISCONNECT from the client. Doesn't do anything else.
+handleDisconnect :: MonadThrow m => MQTT m ()
+handleDisconnect = do
+  w16 <- getWord16BeDefault $ throwM EndOfInput
+  unless (w16 == 0xe000) $
+    throwM $ ProtocolViolation "Malformed DISCONNECT"
 
 getWord16BeDefault :: (Monad m, Num a) => MQTT m a -> MQTT m a
 getWord16BeDefault def = (+)
@@ -241,6 +263,7 @@ getStringDefault def = getWord16BeDefault (def >> return 0) >>= C.take >>= parse
 data MQTTException
    = EndOfInput
    | ProtocolViolation String
+   | Disconnect
    deriving (Eq, Ord, Show, Typeable)
 
 instance Exception MQTTException
