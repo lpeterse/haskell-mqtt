@@ -11,10 +11,16 @@ module Network.MQTT where
 
 import Control.Exception
 import Control.Monad.Catch (MonadThrow (..))
+import Control.Monad
 
+import Data.Bits ((.&.), (.|.))
 import qualified Data.ByteString as BS
+import qualified Data.ByteString.Lazy as LBS
 import qualified Data.Conduit as C
 import qualified Data.Conduit.Binary as C
+import qualified Data.Text as T
+import qualified Data.Text.Lazy as LT
+import qualified Data.Text.Lazy.Encoding as LT
 import Data.Word
 import Data.Typeable
 
@@ -41,40 +47,129 @@ data ControlPacketType
    | PingResponse
    | Disconnect
 
-connect :: MQTT m a
-connect = undefined
+receive :: MonadThrow m => MQTT m ()
+receive = do
+  mctl <- C.head
+  case mctl of
+    Nothing  -> throwM EndOfInput
+    Just ctl -> case ctl `div` 16 of
+      1  -> handleConnect
+      2  -> handleConnectAcknowledgement
+{-    3  -> handlePublish
+      4  -> handlePublishAcknowledgement
+      5  ->
+      6  ->
+      7  ->
+      8  ->
+      9  ->
+      10 ->
+      11 ->
+      12 ->
+      13 ->
+      14 -> -}
+      _  -> undefined
+  where
+    handleConnectAcknowledgement = undefined
 
-remainingLength :: MonadThrow m => MQTT m Int
-remainingLength = do
+getRemainingLength :: MonadThrow m => MQTT m Int
+getRemainingLength = do
   mb0 <- C.head
   case mb0 of
     Nothing -> protocolViolation
     Just b0 -> if b0 < 128
-      then return (fromIntegral b0)
+      then return $ fromIntegral b0
       else do
         mb1 <- C.head
         case mb1 of
           Nothing -> protocolViolation
           Just b1 -> if b1 < 128
-            then return (fromIntegral b1 * 128 + fromIntegral b0)
+            then return $ fromIntegral b1 * 128 +
+                          fromIntegral b0
             else do
               mb2 <- C.head
               case mb2 of
                 Nothing -> protocolViolation
                 Just b2 -> if b2 < 128
-                  then return (fromIntegral b2 * 128 * 128 + fromIntegral b1 * 128 + fromIntegral b0)
+                  then return $ fromIntegral b2 * 128 * 128 +
+                                fromIntegral b1 * 128 +
+                                fromIntegral b0
                   else do
                     mb3 <- C.head
                     case mb3 of
                       Nothing -> protocolViolation
                       Just b3 -> if b3 < 128
-                        then return (fromIntegral b3 * 128*128*128 + fromIntegral b2 *128*128 + fromIntegral b1 * 128 + fromIntegral b0)
+                        then return $ fromIntegral b3 * 128*128*128 +
+                                      fromIntegral b2 * 128*128 +
+                                      fromIntegral b1 * 128 +
+                                      fromIntegral b0
                         else protocolViolation
   where
     protocolViolation = throwM $ ProtocolViolation "Malformed Remaining Length"
 
+getBlob   :: MonadThrow m => MQTT m BS.ByteString
+getBlob    = LBS.toStrict <$> (getWord16BE >>= C.take)
+
+getString :: MonadThrow m => MQTT m T.Text
+getString  = getWord16BE >>= C.take >>= parse
+ where
+   parse = either
+     ( const $ throwM $ ProtocolViolation "Invalid Unicode" )
+     ( return . LT.toStrict ) . LT.decodeUtf8'
+
+handleConnect :: MonadThrow m => MQTT m ()
+handleConnect = do
+  C.isolate =<< getRemainingLength
+  mapM_ (expect handleUnexpectedProtocolName) expectedProtocolName
+  expect handleUnsupportedProtocolLevel expectedProtocolLevel
+  connectFlags <- maybe handleEof return =<< C.head
+  keepAlive    <- getWord16BE
+  clientId     <- getString
+  mWillTopic   <- if flagWill .&. connectFlags /= 0
+    then Just <$> getString
+    else return Nothing
+  mWillMessage <- if flagWill .&. connectFlags /= 0
+    then Just <$> getBlob
+    else return Nothing
+  mUsername    <- if flagUsername .&. connectFlags /= 0
+    then Just <$> getString
+    else return Nothing
+  mPassword    <- if flagPassword .&. connectFlags /= 0
+    then Just <$> getBlob
+    else return Nothing
+  undefined
+  where
+    expectedProtocolName  = [0x00, 0x04, 0xd4, 0x51, 0x54, 0x54]
+    expectedProtocolLevel = 0x04
+    expect handleUnexpected expected =
+      maybe handleEof (\actual-> when (actual /= expected) handleUnexpected) =<< C.head
+    handleUnexpectedProtocolName =
+      throwM $ ProtocolViolation "Unexpected Protocol Name"
+    handleUnsupportedProtocolLevel = do
+      sendConnectionAcknowledgement 0x01
+      throwM $ ProtocolViolation "Unsupported Protocol Level"
+    flagUsername     = 128
+    flagPassword     = 64
+    flagWillRetain   = 32
+    flagWillQoS      = 16 + 8
+    flagWill         = 4
+    flagCleanSession = 2
+
+handleEof :: MonadThrow m => MQTT m a
+handleEof =
+  throwM $ ProtocolViolation "Unexpected End Of Input"
+
+sendConnectionAcknowledgement :: Int -> MQTT m ()
+sendConnectionAcknowledgement =
+  undefined
+
+getWord16BE :: (MonadThrow m, Num a) => MQTT m a
+getWord16BE = (+)
+  <$> ( maybe handleEof (return . (*256) . fromIntegral) =<< C.head )
+  <*> ( maybe handleEof (return .          fromIntegral) =<< C.head )
+
 data MQTTException
-   = ProtocolViolation String
+   = EndOfInput
+   | ProtocolViolation String
    deriving (Eq, Ord, Show, Typeable)
 
 instance Exception MQTTException
