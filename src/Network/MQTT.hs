@@ -22,6 +22,7 @@ import qualified Data.ByteString as BS
 import qualified Data.ByteString.Builder as BS
 import qualified Data.ByteString.Lazy as LBS
 import qualified Data.Conduit as C
+import qualified Data.Conduit.List as C ( consume )
 import qualified Data.Conduit.Binary as C
 import qualified Data.Text as T
 import qualified Data.Text.Lazy as LT
@@ -34,21 +35,32 @@ type Password = BS.ByteString
 
 type MQTT m a = C.ConduitM BS.ByteString BS.ByteString m a
 
-data ControlPacketType
-   = Connect
-   | ConnectAcknowledgement
-   | Publish
-   | PublishAcknowledgement
-   | PublishReceived
-   | PublishRelease
-   | PublishComplete
-   | Subscribe
-   | SubscribeAcknowledgement
-   | Unsubscribe
-   | UnsubscribeAcknowledgement
-   | PingRequest
-   | PingResponse
-   | Disconnect
+data Connection
+   = Connection
+     { connClientId :: T.Text
+     , connWillTopic :: Maybe T.Text
+     , connWillMessage :: Maybe BS.ByteString
+     , connUsername :: Maybe T.Text
+     , connPassword :: Maybe BS.ByteString
+     , connKeepAlive :: Word16
+     , connFlags :: Word8
+     } deriving (Eq, Ord, Show)
+
+data Message
+   = Message
+     { msgDuplicate  :: Bool
+     , msgRetain     :: Bool
+     , msgQoS        :: QoS
+     , msgTopic      :: T.Text
+     , msgIdentifier :: Maybe Word16
+     , msgBody       :: LBS.ByteString
+     } deriving (Eq, Ord, Show)
+
+data QoS
+   = AtMostOnce
+   | AtLeastOnce
+   | ExactlyOnce
+   deriving (Eq, Ord, Show)
 
 mqttBroker :: (MonadIO m, MonadThrow m) => MQTT m ()
 mqttBroker =
@@ -56,29 +68,31 @@ mqttBroker =
 
 receive :: (MonadIO m, MonadThrow m) => MQTT m ()
 receive = do
-  mctl <- C.head
-  case mctl of
-    Nothing  -> throwM EndOfInput
-    Just ctl -> case ctl `div` 16 of
-      1  -> do
-        connection <- handleConnect (\_ _-> return True )
-        liftIO $ print connection
-      2  -> handleConnectAcknowledgement
-{-    3  -> handlePublish
-      4  -> handlePublishAcknowledgement
-      5  ->
-      6  ->
-      7  ->
-      8  ->
-      9  ->
-      10 ->
-      11 ->
-      12 ->
-      13 ->
-      14 -> -}
-      _  -> liftIO $ print "COMMAND NOT IMPLEMENTED"
-  where
-    handleConnectAcknowledgement = undefined
+  mbs <- C.await
+  case mbs of
+    Nothing -> throwM EndOfInput
+    Just bs -> do
+      C.leftover bs
+      when (BS.length bs > 0) $ case BS.head bs `div` 16 of
+        1  -> do
+          connection <- handleConnect (\_ _-> return True )
+          liftIO $ print connection
+        3  -> do
+          message <- handlePublish
+          liftIO $ print message
+  {-    3  -> handlePublish
+        4  -> handlePublishAcknowledgement
+        5  ->
+        6  ->
+        7  ->
+        8  ->
+        9  ->
+        10 ->
+        11 ->
+        12 ->
+        13 ->
+        14 -> -}
+        _  -> liftIO $ print "COMMAND NOT IMPLEMENTED"
 
 getRemainingLength :: MonadThrow m => MQTT m Int
 getRemainingLength = do
@@ -115,41 +129,34 @@ getRemainingLength = do
   where
     protocolViolation = throwM $ ProtocolViolation "Malformed Remaining Length"
 
-data Connection
-   = Connection
-     { connClientId :: T.Text
-     , connWillTopic :: Maybe T.Text
-     , connWillMessage :: Maybe BS.ByteString
-     , connUsername :: Maybe T.Text
-     , connPassword :: Maybe BS.ByteString
-     , connKeepAlive :: Word16
-     , connFlags :: Word8
-     } deriving (Eq, Ord, Show)
+
 
 handleConnect :: (MonadIO m, MonadThrow m) => (Maybe Username -> Maybe Password -> m Bool) -> MQTT m Connection
 handleConnect authorize = do
-  _ <- getRemainingLength
-  mapM_ (expect rejectUnacceptableProtocolName) expectedProtocolName
-  expect rejectUnacceptableProtocolVersion expectedProtocolVersion
-  flags <- maybe rejectEof return =<< C.head
-  keepAlive    <- getWord16BeDefault       rejectEof
-  clientId     <- getStringDefault         rejectUnacceptableIdentifier
-  mWillTopic   <- if flagWill .&. flags /= 0
-    then Just <$> getStringDefault        ( reject "Bad Will Topic")
-    else return Nothing
-  mWillMessage <- if flagWill .&. flags /= 0
-    then Just <$> getBlobDefault          ( reject "Bad Will Message")
-    else return Nothing
-  mUsername    <- if flagUsername .&. flags /= 0
-    then Just <$> getStringDefault         rejectUnacceptableUsernamePassword
-    else return Nothing
-  mPassword    <- if flagPassword .&. flags /= 0
-    then Just <$> getBlobDefault           rejectUnacceptableUsernamePassword
-    else return Nothing
-  isAuthorized <- lift $ authorize mUsername mPassword
-  unless isAuthorized rejectUnauthorized
-  acceptConnection
-  return $ Connection clientId mWillTopic mWillMessage  mUsername mPassword keepAlive flags
+  header          <- maybe rejectEof return =<< C.head
+  remainingLength <- getRemainingLength
+  C.isolate remainingLength C.=$= do
+    mapM_ (expect rejectUnacceptableProtocolName) expectedProtocolName
+    expect rejectUnacceptableProtocolVersion expectedProtocolVersion
+    flags <- maybe rejectEof return =<< C.head
+    keepAlive    <- getWord16BeDefault       rejectEof
+    clientId     <- getStringDefault         rejectUnacceptableIdentifier
+    mWillTopic   <- if flagWill .&. flags /= 0
+      then Just <$> getStringDefault        ( reject "Bad Will Topic")
+      else return Nothing
+    mWillMessage <- if flagWill .&. flags /= 0
+      then Just <$> getBlobDefault          ( reject "Bad Will Message")
+      else return Nothing
+    mUsername    <- if flagUsername .&. flags /= 0
+      then Just <$> getStringDefault         rejectUnacceptableUsernamePassword
+      else return Nothing
+    mPassword    <- if flagPassword .&. flags /= 0
+      then Just <$> getBlobDefault           rejectUnacceptableUsernamePassword
+      else return Nothing
+    isAuthorized <- lift $ authorize mUsername mPassword
+    unless isAuthorized rejectUnauthorized
+    acceptConnection
+    return $ Connection clientId mWillTopic mWillMessage  mUsername mPassword keepAlive flags
   where
     expectedProtocolName    = [0x00, 0x04, 0x4d, 0x51, 0x54, 0x54]
     expectedProtocolVersion = 0x04
@@ -187,6 +194,34 @@ handleConnect authorize = do
               $ BS.word32BE (0x20020000 .|. sessionPresent .|. responseCode)
       where
         sessionPresent = 0 -- FIXE: session present flag
+
+handlePublish :: (MonadThrow m, MonadIO m) => MQTT m Message
+handlePublish = do
+  header          <- maybe rejectEof return =<< C.head
+  remainingLength <- getRemainingLength
+  C.isolate remainingLength C.=$= Message
+    <$> return (header .&. flagDuplicate /= 0)
+    <*> return (header .&. flagRetain /= 0)
+    <*> case header .&. flagQoS of
+          0 -> return AtMostOnce
+          2 -> return AtLeastOnce
+          4 -> return ExactlyOnce
+          _ -> reject "Invalid QoS Level"
+    <*> getStringDefault rejectEof
+    -- The packet identifier header is only set in QoS Levels 1 and 2
+    <*> ( if header .&. (4 .|. 2) /= 0
+      then Just <$> getWord16BeDefault (reject "")
+      else return Nothing )
+    -- Read the rest of the _isolated_ message
+    <*> fmap LBS.fromChunks C.consume
+  where
+    flagRetain    = 0x01
+    flagQoS       = 0x02 + 0x04
+    flagDuplicate = 0x08
+    reject reason =
+      throwM (ProtocolViolation reason)
+    rejectEof =
+      reject "Unexpected End Of Input"
 
 getWord16BeDefault :: (Monad m, Num a) => MQTT m a -> MQTT m a
 getWord16BeDefault def = (+)
