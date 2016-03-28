@@ -7,8 +7,7 @@
 -- Maintainer  :  info@lars-petersen.net
 -- Stability   :  experimental
 --------------------------------------------------------------------------------
-module Network.MQTT
-  ( mqttBroker, MQTTException (..) ) where
+module Network.MQTT where
 
 import Control.Applicative
 import Control.Exception
