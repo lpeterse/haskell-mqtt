@@ -1,3 +1,4 @@
+{-# LANGUAGE OverloadedStrings #-}
 --------------------------------------------------------------------------------
 -- |
 -- Module      :  Network.MQTT
@@ -10,13 +11,16 @@
 module Network.MQTT where
 
 import Control.Applicative
+import Control.Concurrent.Chan
+import Control.Concurrent.MVar
 import Control.Exception
 import Control.Monad.Catch (MonadThrow (..))
 import Control.Monad
 import Control.Monad.Trans.Class (lift)
 import Control.Monad.IO.Class
 
-import Data.Bits ((.&.), (.|.))
+import Data.Monoid
+import Data.Bits
 import Data.Function (fix)
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Builder as BS
@@ -25,10 +29,13 @@ import qualified Data.Conduit as C
 import qualified Data.Conduit.List as C ( consume, peek )
 import qualified Data.Conduit.Binary as C
 import qualified Data.Text as T
+import qualified Data.Text.Encoding as T
 import qualified Data.Text.Lazy as LT
 import qualified Data.Text.Lazy.Encoding as LT
 import Data.Word
 import Data.Typeable
+
+import Network.MQTT.SubscriptionTree
 
 type Username = T.Text
 type Password = BS.ByteString
@@ -47,7 +54,7 @@ data Connection
      } deriving (Eq, Ord, Show)
 
 data Message
-   = Message
+   = PUBLISH
      { msgTopic      :: T.Text
      , msgQoS        :: QoS
      , msgBody       :: LBS.ByteString
@@ -55,44 +62,93 @@ data Message
      , msgRetain     :: Bool
      } deriving (Eq, Ord, Show)
 
+serialize :: Message -> BS.ByteString
+serialize p@PUBLISH {} =
+  let t = T.encodeUtf8 (msgTopic p)
+  in      LBS.toStrict
+  $ BS.toLazyByteString
+  $ BS.word8 (0x30 .|. flagDuplicate .|. flagQoS .|. flagRetain)
+  <> len ( 2 + BS.length topicBS
+         + fromIntegral ( ( ( flagQoS `div` 2 ) .|. flagQoS ) .&. 2 )
+         + fromIntegral ( LBS.length (msgBody p) )
+         )
+  <> BS.word16BE ( fromIntegral $ BS.length topicBS )
+  <> BS.byteString topicBS
+  <> packetid
+  <> BS.lazyByteString (msgBody p)
+  where
+    flagDuplicate, flagRetain, flagQoS :: Word8
+    flagDuplicate  = if msgDuplicate p then 0x08 else 0
+    flagRetain     = if msgRetain    p then 0x01 else 0
+    len :: Int -> BS.Builder
+    len i | i < 0x80                = BS.word8    ( fromIntegral i )
+          | i < 0x80*0x80           = BS.word16BE ( fromIntegral $ unsafeShiftR ( i .&. 0x7f00     ) 1
+                                                                 +              ( i .&. 0x7f       ) )
+          | i < 0x80*0x80*0x80      = BS.word16BE ( fromIntegral $ unsafeShiftR ( i .&. 0x7f0000   ) 2
+                                                                 + unsafeShiftR ( i .&. 0x7f00     ) 1
+                                 ) <> BS.word8    ( fromIntegral                ( i .&. 0x7f       ) )
+          | i < 0x80*0x80*0x80*0x80 = BS.word32BE ( fromIntegral $ unsafeShiftR ( i .&. 0x7f000000 ) 3
+                                                                 + unsafeShiftR ( i .&. 0x7f0000   ) 2
+                                                                 + unsafeShiftR ( i .&. 0x7f00     ) 1
+                                                                 +              ( i .&. 0x7f       ) )
+          | otherwise     = undefined
+    flagQoS        = case msgQoS p of
+      AtMostOnce    -> 0x00
+      AtLeastOnce _ -> 0x02
+      ExactlyOnce _ -> 0x04
+    topicBS        = T.encodeUtf8 $ msgTopic p
+    packetid       = case msgQoS p of
+      AtMostOnce    -> mempty
+      AtLeastOnce x -> BS.word16BE x
+      ExactlyOnce x -> BS.word16BE x
+
 data QoS
    = AtMostOnce
    | AtLeastOnce Word16
    | ExactlyOnce Word16
    deriving (Eq, Ord, Show)
 
-mqttBroker :: (MonadIO m, MonadThrow m) => MQTT m ()
-mqttBroker = fix $ \continue-> do
-  mbs <- C.await
-  case mbs of
-    Nothing -> throwM EndOfInput
-    Just bs -> do
-      C.leftover bs
-      when (BS.length bs > 0) $ case BS.head bs `div` 16 of
-        1  -> do
-          connection <- handleConnect (\_ _-> return True )
-          liftIO $ print connection
-          continue
-        3  -> do
-          message <- handlePublish
-          liftIO $ print message
-          continue
-        4  -> liftIO $ print "handlePublishAcknowledgement"
-        5  -> liftIO $ print "handlePublishReceived"
-        6  -> liftIO $ print "handlePublishRelease"
-        7  -> liftIO $ print "handlePublishComplete"
-        8  -> do
-          handleSubscribe (\t-> liftIO $ print t >> return SubscriptionSuccessMaxQoS0)
-          continue
-        9  -> liftIO $ print "handleSubscribeAck"
-        10 -> liftIO $ print "handleUnsubscribe"
-        11 -> liftIO $ print "handleUnsubscribeAck"
-        12 -> handlePingRequest >> continue
-        13 -> liftIO $ print "handlePingResponse"
-        14 -> do
-          handleDisconnect
-          liftIO $ print "Graceful DISCONNECT"
-        _  -> throwM $ ProtocolViolation "Unacceptable Command"
+data ConnectionState
+   = ConnectionState
+     { csOutgoingMailbox  :: Chan BS.ByteString
+     , csSubscriptionTree :: SubscriptionTree Message
+     }
+
+mqttBroker :: (MonadIO m, MonadThrow m) => ConnectionState -> MQTT m ()
+mqttBroker st = fix $ \continue-> do
+    mbs <- C.peek
+    case mbs of
+      Nothing -> throwM EndOfInput
+      Just bs -> when (BS.length bs > 0) $ case BS.head bs `div` 16 of
+          1  -> do
+            connection <- handleConnect (\_ _-> return True )
+            liftIO $ print connection
+            continue
+          3  -> do
+            message <- handlePublish
+            liftIO $ print message
+            liftIO $ print (serialize message)
+            liftIO $ writeChan (csOutgoingMailbox st) (serialize message)
+            continue
+          4  -> liftIO $ print "handlePublishAcknowledgement"
+          5  -> liftIO $ print "handlePublishReceived"
+          6  -> liftIO $ print "handlePublishRelease"
+          7  -> liftIO $ print "handlePublishComplete"
+          8  -> do
+            handleSubscribe $ \(topic,qos)-> do
+              liftIO $ print "SUBSCRIBE"
+              _ <- liftIO $ subscribe (csSubscriptionTree st) ( liftIO . (>> print "abc") . writeChan (csOutgoingMailbox st) . serialize ) topic
+              return SubscriptionSuccessMaxQoS0
+            continue
+          9  -> liftIO $ print "handleSubscribeAck"
+          10 -> liftIO $ print "handleUnsubscribe"
+          11 -> liftIO $ print "handleUnsubscribeAck"
+          12 -> handlePingRequest >> continue
+          13 -> liftIO $ print "handlePingResponse"
+          14 -> do
+            handleDisconnect
+            liftIO $ print "Graceful DISCONNECT"
+          _  -> throwM $ ProtocolViolation "Unacceptable Command"
 
 getRemainingLength :: MonadThrow m => MQTT m Int
 getRemainingLength = do
@@ -197,7 +253,7 @@ handlePublish :: (MonadThrow m, MonadIO m) => MQTT m Message
 handlePublish = do
   header          <- maybe rejectEof return =<< C.head
   remainingLength <- getRemainingLength
-  message         <- C.isolate remainingLength C.=$= Message
+  message         <- C.isolate remainingLength C.=$= PUBLISH
     <$> getStringDefault rejectEof
     <*> case header .&. flagQoS of
           0 -> return AtMostOnce
@@ -226,7 +282,7 @@ handlePublish = do
     rejectEof =
       reject "Unexpected End Of Input"
 
-type TopicFilter = (T.Text, QoS)
+type TopicFilter = ([T.Text], QoS)
 
 data SubscriptionAcknowledgement
    = SubscriptionSuccessMaxQoS0
@@ -269,7 +325,7 @@ handleSubscribe subscribe = do
         Just bs -> if BS.null bs
           then return []
           else do
-            topic   <- getStringDefault (throwM EndOfInput)
+            topic   <- T.splitOn "/" <$> getStringDefault (throwM EndOfInput)
             qosCode <- maybe (throwM EndOfInput) return =<< C.head
             qos     <- case qosCode of
               0 -> return AtMostOnce
