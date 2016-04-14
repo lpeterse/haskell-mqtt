@@ -5,11 +5,7 @@ import Control.Concurrent.Async
 import Control.Concurrent.Chan
 import Control.Exception ( bracket, catch )
 import Control.Monad ( forever )
-import Control.Monad.IO.Class
-import Control.Monad.Trans.Class
-import Control.Monad.Trans.Resource
 
-import Data.Conduit
 import Data.Function ( fix )
 import qualified Data.ByteString as BS
 
@@ -17,13 +13,13 @@ import System.Socket
 import System.Socket.Family.Inet6
 import System.Socket.Type.Stream
 import System.Socket.Protocol.TCP
-import System.Socket.Conduit ( toSource, toSink )
 
 import Network.MQTT
 import Network.MQTT.SubscriptionTree
 
 main :: IO ()
-main = do
+main = undefined
+{-
   stree <- newSubscriptionTree
   bracket
     ( socket :: IO (Socket Inet6 Stream TCP) )
@@ -62,3 +58,4 @@ acceptAndHandle stree s = bracket
     sinkChan :: Chan BS.ByteString -> Sink BS.ByteString IO ()
     sinkChan chan = fix $ \again->
       await >>= maybe (return ()) ((>> again) . lift . liftIO . writeChan chan)
+-}

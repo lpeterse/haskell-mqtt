@@ -16,18 +16,15 @@ import Control.Concurrent.MVar
 import Control.Exception
 import Control.Monad.Catch (MonadThrow (..))
 import Control.Monad
-import Control.Monad.Trans.Class (lift)
-import Control.Monad.IO.Class
 
 import Data.Monoid
 import Data.Bits
 import Data.Function (fix)
+import qualified Data.Source as S
+import qualified Data.Source.ByteString as S
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Builder as BS
 import qualified Data.ByteString.Lazy as LBS
-import qualified Data.Conduit as C
-import qualified Data.Conduit.List as C ( consume, peek )
-import qualified Data.Conduit.Binary as C
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as T
 import qualified Data.Text.Lazy as LT
@@ -35,12 +32,11 @@ import qualified Data.Text.Lazy.Encoding as LT
 import Data.Word
 import Data.Typeable
 
+import Network.MQTT.Message
 import Network.MQTT.SubscriptionTree
 
 type Username = T.Text
 type Password = BS.ByteString
-
-type MQTT m a = C.ConduitM BS.ByteString BS.ByteString m a
 
 data Connection
    = Connection
@@ -51,15 +47,6 @@ data Connection
      , connPassword :: Maybe BS.ByteString
      , connKeepAlive :: Word16
      , connFlags :: Word8
-     } deriving (Eq, Ord, Show)
-
-data Message
-   = PUBLISH
-     { msgTopic      :: T.Text
-     , msgQoS        :: QoS
-     , msgBody       :: LBS.ByteString
-     , msgDuplicate  :: Bool
-     , msgRetain     :: Bool
      } deriving (Eq, Ord, Show)
 
 serialize :: Message -> BS.ByteString
@@ -93,20 +80,14 @@ serialize p@PUBLISH {} =
                                                                  +              ( i .&. 0x7f       ) )
           | otherwise     = undefined
     flagQoS        = case msgQoS p of
-      AtMostOnce    -> 0x00
-      AtLeastOnce _ -> 0x02
-      ExactlyOnce _ -> 0x04
+      AtMostOnce   -> 0x00
+      AtLeastOnce  -> 0x02
+      ExactlyOnce  -> 0x04
     topicBS        = T.encodeUtf8 $ msgTopic p
     packetid       = case msgQoS p of
-      AtMostOnce    -> mempty
-      AtLeastOnce x -> BS.word16BE x
-      ExactlyOnce x -> BS.word16BE x
-
-data QoS
-   = AtMostOnce
-   | AtLeastOnce Word16
-   | ExactlyOnce Word16
-   deriving (Eq, Ord, Show)
+      AtMostOnce   -> mempty
+      AtLeastOnce  -> BS.word16BE undefined
+      ExactlyOnce  -> BS.word16BE undefined
 
 data ConnectionState
    = ConnectionState
@@ -114,6 +95,7 @@ data ConnectionState
      , csSubscriptionTree :: SubscriptionTree Message
      }
 
+{-
 mqttBroker :: (MonadIO m, MonadThrow m) => ConnectionState -> MQTT m ()
 mqttBroker st = fix $ \continue-> do
     mbs <- C.peek
@@ -150,40 +132,7 @@ mqttBroker st = fix $ \continue-> do
             liftIO $ print "Graceful DISCONNECT"
           _  -> throwM $ ProtocolViolation "Unacceptable Command"
 
-getRemainingLength :: MonadThrow m => MQTT m Int
-getRemainingLength = do
-  mb0 <- C.head
-  case mb0 of
-    Nothing -> protocolViolation
-    Just b0 -> if b0 < 128
-      then return $ fromIntegral b0
-      else do
-        mb1 <- C.head
-        case mb1 of
-          Nothing -> protocolViolation
-          Just b1 -> if b1 < 128
-            then return $ fromIntegral b1 * 128 +
-                          fromIntegral b0
-            else do
-              mb2 <- C.head
-              case mb2 of
-                Nothing -> protocolViolation
-                Just b2 -> if b2 < 128
-                  then return $ fromIntegral b2 * 128 * 128 +
-                                fromIntegral b1 * 128 +
-                                fromIntegral b0
-                  else do
-                    mb3 <- C.head
-                    case mb3 of
-                      Nothing -> protocolViolation
-                      Just b3 -> if b3 < 128
-                        then return $ fromIntegral b3 * 128*128*128 +
-                                      fromIntegral b2 * 128*128 +
-                                      fromIntegral b1 * 128 +
-                                      fromIntegral b0
-                        else protocolViolation
-  where
-    protocolViolation = throwM $ ProtocolViolation "Malformed Remaining Length"
+
 
 handleConnect :: (MonadIO m, MonadThrow m) => (Maybe Username -> Maybe Password -> m Bool) -> MQTT m Connection
 handleConnect authorize = do
@@ -378,3 +327,4 @@ data MQTTException
    deriving (Eq, Ord, Show, Typeable)
 
 instance Exception MQTTException
+-}
