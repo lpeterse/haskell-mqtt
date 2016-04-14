@@ -63,4 +63,4 @@ pRemainingLength = do
                               fromIntegral (b2 .&. 127) * 128 * 128 +
                               fromIntegral (b1 .&. 127) * 128 +
                               fromIntegral (b0 .&. 127)
-                else fail "Invalid remaining length." orig
+                else fail "Invalid remaining length."
