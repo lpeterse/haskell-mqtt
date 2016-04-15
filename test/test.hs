@@ -56,7 +56,7 @@ tgMessageRemainingLength=
       ( Right 268435455 )
       ( parseOnly pRemainingLength (BS.pack [0xff, 0xff, 0xff, 0x7f]) )
   , testCase "p [0xff, 0xff, 0xff, 0xff] == invalid" $ assertEqual ""
-      ( Left "Failed reading: Invalid remaining length." )
+      ( Left "Failed reading: pRemainingLength: invalid input" )
       ( parseOnly pRemainingLength (BS.pack [0xff, 0xff, 0xff, 0xff]) )
 
   , QC.testProperty "pRemainingLength . sRemainingLength == id" $

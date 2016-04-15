@@ -1,11 +1,11 @@
 module Network.MQTT.Message.RemainingLength where
 
-import qualified Data.Attoparsec.ByteString as A
-import Data.Monoid
 import Data.Bits
+import Data.Monoid
+import Data.Word
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Builder as BS
-import Data.Word
+import qualified Data.Attoparsec.ByteString as A
 
 pRemainingLength:: A.Parser Int
 pRemainingLength = do
@@ -30,7 +30,7 @@ pRemainingLength = do
                               fromIntegral (b2 .&. 127) * 128 * 128 +
                               fromIntegral (b1 .&. 127) * 128 +
                               fromIntegral (b0 .&. 127)
-                else fail "Invalid remaining length."
+                else fail "pRemainingLength: invalid input"
 
 sRemainingLength :: Int -> BS.Builder
 sRemainingLength i
