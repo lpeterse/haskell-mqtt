@@ -22,3 +22,12 @@ pUtf8String = do
   case T.decodeUtf8' str of
     Right txt -> return txt
     _         -> fail "pUtf8String: violation of [MQTT-1.5.3]"
+
+sUtf8String :: T.Text -> BS.Builder
+sUtf8String txt =
+  if len > 0xffff
+    then error "sUtf8String: encoded size must be <= 0xffff"
+    else BS.word16BE (fromIntegral len) <> BS.byteString bs
+  where
+    bs  = T.encodeUtf8 txt
+    len = BS.length bs

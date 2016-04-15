@@ -58,6 +58,12 @@ tgMessageUtf8String =
   , testCase "U+FEFF [MQTT-1.5.3-3]" $ assertEqual ""
       ( Right "\65279" )
       ( parseOnly pUtf8String $ BS.pack [0x00,0x03,0xef,0xbb,0xbf] )
+
+  , testCase "pUtf8String . sUtf8String == id" $
+      let txt = T.replicate 999 "abc"
+      in assertEqual ""
+      ( Right txt )
+      ( parseOnly pUtf8String (LBS.toStrict $ BS.toLazyByteString (sUtf8String txt)))
   ]
 
 tgMessageRemainingLength :: TestTree
