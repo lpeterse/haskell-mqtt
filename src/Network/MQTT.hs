@@ -55,7 +55,7 @@ serialize p@PUBLISH {} =
   in      LBS.toStrict
   $ BS.toLazyByteString
   $ BS.word8 (0x30 .|. flagDuplicate .|. flagQoS .|. flagRetain)
-  <> len ( 2 + BS.length topicBS
+  <> sRemainingLength ( 2 + BS.length topicBS
          + fromIntegral ( ( ( flagQoS `div` 2 ) .|. flagQoS ) .&. 2 )
          + fromIntegral ( LBS.length (msgBody p) )
          )
@@ -67,18 +67,6 @@ serialize p@PUBLISH {} =
     flagDuplicate, flagRetain, flagQoS :: Word8
     flagDuplicate  = if msgDuplicate p then 0x08 else 0
     flagRetain     = if msgRetain    p then 0x01 else 0
-    len :: Int -> BS.Builder
-    len i | i < 0x80                = BS.word8    ( fromIntegral i )
-          | i < 0x80*0x80           = BS.word16BE ( fromIntegral $ unsafeShiftR ( i .&. 0x7f00     ) 1
-                                                                 +              ( i .&. 0x7f       ) )
-          | i < 0x80*0x80*0x80      = BS.word16BE ( fromIntegral $ unsafeShiftR ( i .&. 0x7f0000   ) 2
-                                                                 + unsafeShiftR ( i .&. 0x7f00     ) 1
-                                 ) <> BS.word8    ( fromIntegral                ( i .&. 0x7f       ) )
-          | i < 0x80*0x80*0x80*0x80 = BS.word32BE ( fromIntegral $ unsafeShiftR ( i .&. 0x7f000000 ) 3
-                                                                 + unsafeShiftR ( i .&. 0x7f0000   ) 2
-                                                                 + unsafeShiftR ( i .&. 0x7f00     ) 1
-                                                                 +              ( i .&. 0x7f       ) )
-          | otherwise     = undefined
     flagQoS        = case msgQoS p of
       AtMostOnce   -> 0x00
       AtLeastOnce  -> 0x02

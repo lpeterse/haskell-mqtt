@@ -15,7 +15,8 @@ cabal-version:       >=1.10
 library
   exposed-modules:     Network.MQTT,
                        Network.MQTT.SubscriptionTree,
-                       Network.MQTT.Message
+                       Network.MQTT.Message,
+                       Network.MQTT.Message.RemainingLength
   build-depends:       base >=4.8 && <4.9,
                        attoparsec,
                        bytestring,
