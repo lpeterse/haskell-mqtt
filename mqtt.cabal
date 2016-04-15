@@ -63,3 +63,4 @@ test-suite test
     , attoparsec
     , exceptions
     , mqtt
+    , text
