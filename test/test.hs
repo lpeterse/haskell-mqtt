@@ -37,14 +37,17 @@ tgMessageUtf8String =
       ( Right "abc" )
       ( parseOnly pUtf8String $ BS.pack [0,3,97,98,99] )
   , testCase "U+D800 [MQTT-1.5.3-1]" $ assertEqual ""
-      ( Left "Failed reading: pUtf8String: Data.Text.Internal.Encoding.decodeUtf8: Invalid UTF-8 stream" )
+      ( Left "Failed reading: pUtf8String: violation of [MQTT-1.5.3]")
       ( parseOnly pUtf8String $ BS.pack [0,2,0xd8,0x01] )
   , testCase "U+DFFF [MQTT-1.5.3-1]" $ assertEqual ""
-      ( Left "Failed reading: pUtf8String: Data.Text.Internal.Encoding.decodeUtf8: Invalid UTF-8 stream" )
+      ( Left "Failed reading: pUtf8String: violation of [MQTT-1.5.3]" )
       ( parseOnly pUtf8String $ BS.pack [0,2,0xdf,0xff] )
   , testCase "U+0000 [MQTT-1.5.3-2]" $ assertEqual ""
-      ( Left "Failed reading: pUtf8String: U+0000 violates [MQTT-1.5.3-2]" )
+      ( Left "Failed reading: pUtf8String: violation of [MQTT-1.5.3-2]" )
       ( parseOnly pUtf8String $ BS.pack [0,1,0] )
+  , testCase "U+FEFF [MQTT-1.5.3-3]" $ assertEqual ""
+      ( Right "\65279" )
+      ( parseOnly pUtf8String $ BS.pack [0x00,0x03,0xef,0xbb,0xbf] )
   ]
 
 tgMessageRemainingLength :: TestTree
