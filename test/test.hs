@@ -10,6 +10,7 @@ import Data.Attoparsec.ByteString
 import Data.Attoparsec.ByteString.Char8 ( anyChar, char )
 
 import Network.MQTT.Message
+import Network.MQTT.Message.Utf8String
 
 import Prelude hiding (head)
 
@@ -23,10 +24,31 @@ main  = defaultMain $ testGroup "Network" [ testGroup "MQTT" [tgMessage]]
 tgMessage :: TestTree
 tgMessage = testGroup "Message"
   [ tgMessageRemainingLength
+  , tgMessageUtf8String
+  ]
+
+tgMessageUtf8String :: TestTree
+tgMessageUtf8String =
+  testGroup "Utf8String"
+  [ testCase "empty string" $ assertEqual ""
+      ( Right "" )
+      ( parseOnly pUtf8String $ BS.pack [0,0] )
+  , testCase "string \"abc\"" $ assertEqual ""
+      ( Right "abc" )
+      ( parseOnly pUtf8String $ BS.pack [0,3,97,98,99] )
+  , testCase "U+D800 [MQTT-1.5.3-1]" $ assertEqual ""
+      ( Left "Failed reading: pUtf8String: Data.Text.Internal.Encoding.decodeUtf8: Invalid UTF-8 stream" )
+      ( parseOnly pUtf8String $ BS.pack [0,2,0xd8,0x01] )
+  , testCase "U+DFFF [MQTT-1.5.3-1]" $ assertEqual ""
+      ( Left "Failed reading: pUtf8String: Data.Text.Internal.Encoding.decodeUtf8: Invalid UTF-8 stream" )
+      ( parseOnly pUtf8String $ BS.pack [0,2,0xdf,0xff] )
+  , testCase "U+0000 [MQTT-1.5.3-2]" $ assertEqual ""
+      ( Left "Failed reading: pUtf8String: U+0000 violates [MQTT-1.5.3-2]" )
+      ( parseOnly pUtf8String $ BS.pack [0,1,0] )
   ]
 
 tgMessageRemainingLength :: TestTree
-tgMessageRemainingLength=
+tgMessageRemainingLength =
   testGroup "pRemainingLength, sRemainingLength"
   [ testCase "p [193,2] == 321" $ assertEqual ""
       ( Right 321 )

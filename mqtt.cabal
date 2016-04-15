@@ -16,7 +16,8 @@ library
   exposed-modules:     Network.MQTT,
                        Network.MQTT.SubscriptionTree,
                        Network.MQTT.Message,
-                       Network.MQTT.Message.RemainingLength
+                       Network.MQTT.Message.RemainingLength,
+                       Network.MQTT.Message.Utf8String
   build-depends:       base >=4.8 && <4.9,
                        attoparsec,
                        bytestring,
