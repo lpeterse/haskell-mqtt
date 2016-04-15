@@ -32,6 +32,7 @@ import Data.Typeable
 import Prelude
 
 import Network.MQTT.Message.RemainingLength
+import Network.MQTT.Message.Utf8String
 
 data QoS
    = AtMostOnce
@@ -52,15 +53,16 @@ data Will
      { willTopic   :: T.Text
      , willMessage :: BS.ByteString
      , willQoS     :: QoS
+     , willRetain  :: Bool
      } deriving (Eq, Show)
 
 data Message
    = CONNECT
      { connectClientIdentifier :: T.Text
-     , connectUsernamePassword :: Maybe (T.Text, Maybe BS.ByteString)
      , connectCleanSession     :: Bool
      , connectKeepAlive        :: Word16
      , connectWill             :: Maybe Will
+     , connectUsernamePassword :: Maybe (T.Text, Maybe BS.ByteString)
      }
    | CONNACK
      { connack                 :: Either ConnectionRefusal Bool
@@ -84,8 +86,48 @@ pMessage = do
     _    -> fail "pMessage: packet type not implemented"
 
 pConnect :: Word8 -> Int -> A.Parser Message
-pConnect flags len
-  | otherwise = undefined
+pConnect hflags len
+  | hflags /= 0 = fail "pConnect: The header flags are reserved and MUST be set to 0."
+  | otherwise   = do
+    pProtocolName
+    pProtocolLevel
+    flags <- pConnectFlags
+    keepAlive <- pKeepAlive
+    CONNECT
+      <$> pClientIdentifier
+      <*> pure (flags .&. 0x02 /= 0)
+      <*> pure keepAlive
+      <*> pWill flags
+      <*> pUsernamePassword flags
+  where
+    pProtocolName  = A.word8 0x00 >> A.word8 0x04 >> A.word8 0x4d >>
+                     A.word8 0x51 >> A.word8 0x54 >> A.word8 0x54 >> pure ()
+    pProtocolLevel = A.word8 0x04 >> pure ()
+    pConnectFlags  = A.anyWord8
+    pKeepAlive     = (\msb lsb-> (fromIntegral msb * 256) + fromIntegral lsb)
+                     <$> A.anyWord8 <*> A.anyWord8
+    pClientIdentifier = do
+      txt <- pUtf8String
+      when (T.null txt) $
+        fail "pConnect: Client identifier MUST not be empty (in this implementation)."
+      return txt
+    pWill flags
+      | flags .&. 0x04 == 0 = pure Nothing
+      | otherwise           = (Just <$>) $  Will
+        <$> pUtf8String
+        <*> pBlob
+        <*> case flags .&. 0x18 of
+              0x00 -> pure AtMostOnce
+              0x08 -> pure AtLeastOnce
+              0x10 -> pure ExactlyOnce
+              _    -> fail "pConnect: Violation of [MQTT-3.1.2-14]."
+        <*> pure (flags .&. 0x20 /= 0)
+    pUsernamePassword flags
+      | flags .&. 0x80 == 0 = pure Nothing
+      | otherwise           = Just <$> ((,) <$> pUtf8String <*> pPassword flags)
+    pPassword flags
+      | flags .&. 0x40 == 0 = pure Nothing
+      | otherwise           = Just <$> pBlob
 
 pConnAck :: Word8 -> Int -> A.Parser Message
 pConnAck hflags len
@@ -103,70 +145,14 @@ pConnAck hflags len
       | returnCode <= 5 = pure $ CONNACK $ Left $ toEnum (fromIntegral returnCode - 1)
       | otherwise       = fail "pConnack: Invalid (reserved) return code."
 
+pBlob :: A.Parser BS.ByteString
+pBlob = do
+  msb <- A.anyWord8
+  lsb <- A.anyWord8
+  let len = (fromIntegral msb * 256) + fromIntegral lsb :: Int
+  A.take len
+
 {-
-handleConnect :: (MonadIO m, MonadThrow m) => (Maybe Username -> Maybe Password -> m Bool) -> MQTT m Connection
-handleConnect authorize = do
-  header          <- maybe rejectEof return =<< C.head
-  remainingLength <- getRemainingLength
-  C.isolate remainingLength C.=$= do
-    mapM_ (expect rejectUnacceptableProtocolName) expectedProtocolName
-    expect rejectUnacceptableProtocolVersion expectedProtocolVersion
-    flags <- maybe rejectEof return =<< C.head
-    keepAlive    <- getWord16BeDefault       rejectEof
-    clientId     <- getStringDefault         rejectUnacceptableIdentifier
-    mWillTopic   <- if flagWill .&. flags /= 0
-      then Just <$> getStringDefault        ( reject "Bad Will Topic")
-      else return Nothing
-    mWillMessage <- if flagWill .&. flags /= 0
-      then Just <$> getBlobDefault          ( reject "Bad Will Message")
-      else return Nothing
-    mUsername    <- if flagUsername .&. flags /= 0
-      then Just <$> getStringDefault         rejectUnacceptableUsernamePassword
-      else return Nothing
-    mPassword    <- if flagPassword .&. flags /= 0
-      then Just <$> getBlobDefault           rejectUnacceptableUsernamePassword
-      else return Nothing
-    isAuthorized <- lift $ authorize mUsername mPassword
-    unless isAuthorized rejectUnauthorized
-    acceptConnection
-    return $ Connection clientId mWillTopic mWillMessage  mUsername mPassword keepAlive flags
-  where
-    expectedProtocolName    = [0x00, 0x04, 0x4d, 0x51, 0x54, 0x54]
-    expectedProtocolVersion = 0x04
-    expect handleUnexpected expected =
-      maybe handleUnexpected (\actual-> when (actual /= expected) handleUnexpected) =<< C.head
-    flagUsername     = 128
-    flagPassword     = 64
-    flagWillRetain   = 32
-    flagWillQoS      = 8 + 16
-    flagWill         = 4
-    flagCleanSession = 2
-    reject reason =
-      throwM (ProtocolViolation reason)
-    rejectEof =
-      reject "Unexpected End Of Input"
-    rejectUnacceptableProtocolName =
-      reject "Unacceptable Protocol Name"
-    rejectUnacceptableProtocolVersion = do
-      sendAcknowledgement 0x01
-      reject "Unacceptable Protocol Version"
-    rejectUnacceptableIdentifier = do
-      sendAcknowledgement 0x02
-      reject "Unacceptable Identifier"
-    rejectUnacceptableUsernamePassword = do
-      sendAcknowledgement 0x04
-      reject "Unacceptable Username/Password"
-    rejectUnauthorized = do
-      sendAcknowledgement 0x05
-      reject "Unauthorized"
-    acceptConnection =
-      sendAcknowledgement 0x00
-    sendAcknowledgement responseCode =
-      C.yield $ LBS.toStrict
-              $ BS.toLazyByteString
-              $ BS.word32BE (0x20020000 .|. sessionPresent .|. responseCode)
-      where
-        sessionPresent = 0 -- FIXE: session present flag
 
 handlePublish :: (MonadThrow m, MonadIO m) => MQTT m Message
 handlePublish = do
