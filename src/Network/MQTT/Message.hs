@@ -31,11 +31,12 @@ import Network.MQTT.Message.RemainingLength
 import Network.MQTT.Message.Utf8String
 
 type ClientIdentifier = T.Text
-type SessionPresent = Bool
-type CleanSession   = Bool
-type KeepAlive      = Word16
-type Username       = T.Text
-type Password       = BS.ByteString
+type SessionPresent   = Bool
+type CleanSession     = Bool
+type KeepAlive        = Word16
+type Username         = T.Text
+type Password         = BS.ByteString
+type PacketIdentifier = Word16
 
 data QoS
    = AtLeastOnce
@@ -71,9 +72,13 @@ data Message
      { publishDuplicate        :: Bool
      , publishRetain           :: Bool
      , publishTopic            :: T.Text
-     , publishPacketIdentifier :: Maybe (QoS, Word16)
+     , publishQoS              :: Maybe (QoS, Word16)
      , publishBody             :: LBS.ByteString
      }
+   | PUBACK                       PacketIdentifier
+   | PUBREC                       PacketIdentifier
+   | PUBREL                       PacketIdentifier
+   | PUBCOMP                      PacketIdentifier
    | PINGREQ
    | PINGRESP
    | DISCONNECT
@@ -88,6 +93,10 @@ pMessage = do
     0x01 -> pConnect flags len
     0x02 -> pConnAck flags len
     0x03 -> pPublish flags len
+    0x04 -> pPubAck flags
+    0x05 -> pPubRec flags
+    0x06 -> pPubRel flags
+    0x07 -> pPubComp flags
     0x0c -> pPingReq flags len
     0x0d -> pPingResp flags len
     0x0e -> pDisconnect flags len
@@ -169,11 +178,32 @@ pPublish hflags len = PUBLISH
     0x04 -> Just . (ExactlyOnce,) <$> pPacketIdentifier
     _    -> fail "pPublish: Violation of [MQTT-3.3.1-4]."
   <*> A.takeLazyByteString
-  where
-    pPacketIdentifier = do
-      msb <- A.anyWord8
-      lsb <- A.anyWord8
-      pure $  (fromIntegral msb * 256) + fromIntegral lsb
+
+pPacketIdentifier :: A.Parser Word16
+pPacketIdentifier = do
+  msb <- A.anyWord8
+  lsb <- A.anyWord8
+  pure $  (fromIntegral msb * 256) + fromIntegral lsb
+
+pPubAck :: Word8 -> A.Parser Message
+pPubAck hflags
+  | hflags /= 0 = fail "pPubAck: The header flags are reserved and MUST be set to 0."
+  | otherwise   = PUBACK <$> pPacketIdentifier
+
+pPubRec :: Word8 -> A.Parser Message
+pPubRec hflags
+  | hflags /= 0 = fail "pPubRec: The header flags are reserved and MUST be set to 0."
+  | otherwise   = PUBREC <$> pPacketIdentifier
+
+pPubRel :: Word8 -> A.Parser Message
+pPubRel hflags
+  | hflags /= 2 = fail "pPubRel: The header flags are reserved and MUST be set to 2."
+  | otherwise   = PUBREL <$> pPacketIdentifier
+
+pPubComp:: Word8 -> A.Parser Message
+pPubComp hflags
+  | hflags /= 0 = fail "pPubComp: The header flags are reserved and MUST be set to 0."
+  | otherwise   = PUBCOMP <$> pPacketIdentifier
 
 pPingReq :: Word8 -> Int -> A.Parser Message
 pPingReq hflags len
