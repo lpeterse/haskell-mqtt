@@ -37,6 +37,7 @@ type KeepAlive        = Word16
 type Username         = T.Text
 type Password         = BS.ByteString
 type PacketIdentifier = Word16
+type TopicFilter      = T.Text
 
 data QoS
    = AtLeastOnce
@@ -58,13 +59,6 @@ data Will
      , willQoS     :: Maybe QoS
      , willRetain  :: Bool
      } deriving (Eq, Show)
-
-data TopicFilter
-   = TopicFilter
-     { topicFilter    :: T.Text
-     , topicFilterQoS :: Maybe QoS
-     }
-     deriving (Eq, Show)
 
 data Message
    = CONNECT
@@ -88,12 +82,17 @@ data Message
    | PUBCOMP                      PacketIdentifier
    | SUBSCRIBE
      { subscribePacketIdentifier :: PacketIdentifier
-     , subscribeTopicFilters     :: [TopicFilter]
+     , subscribeTopicFilters     :: [(TopicFilter, Maybe QoS)]
      }
    | SUBACK
      { subackPacketIdentifier    :: PacketIdentifier
      , subackReturnCodes         :: [Maybe (Maybe QoS)]
      }
+   | UNSUBSCRIBE
+     { unsubscribePacketIdentifier :: PacketIdentifier
+     , unsubscribeTopicFilters     :: [TopicFilter]
+     }
+   | UNSUBACK                         PacketIdentifier
    | PINGREQ
    | PINGRESP
    | DISCONNECT
@@ -231,7 +230,7 @@ pSubscribe hflags
       <$> pPacketIdentifier
       <*> A.many1 pTopicFilter
   where
-    pTopicFilter = TopicFilter
+    pTopicFilter = (,)
       <$> pUtf8String
       <*> ( A.anyWord8 >>= \qos-> case qos of
         0x00 -> pure Nothing
@@ -256,10 +255,17 @@ pSubAck hflags
         _    -> fail "pSubAck: Violation of [MQTT-3.9.3-2]."
 
 pUnsubscribe :: Word8 -> A.Parser Message
-pUnsubscribe  = undefined
+pUnsubscribe hflags
+  | hflags /= 2 = fail "pUnsubscribe: The header flags are reserved and MUST be set to 2."
+  | otherwise   = UNSUBSCRIBE
+    <$> pPacketIdentifier
+    <*> A.many1 pUtf8String
 
 pUnsubAck :: Word8 -> A.Parser Message
-pUnsubAck  = undefined
+pUnsubAck hflags
+  | hflags /= 0 = fail "pUnsubAck: The header flags are reserved and MUST be set to 0."
+  | otherwise   = UNSUBACK
+    <$> pPacketIdentifier
 
 pPingReq :: Word8 -> Int -> A.Parser Message
 pPingReq hflags len
