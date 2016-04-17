@@ -61,41 +61,32 @@ data Will
      } deriving (Eq, Show)
 
 data Message
-   = CONNECT
+   = Connect
      { connectClientIdentifier :: ClientIdentifier
      , connectCleanSession     :: CleanSession
      , connectKeepAlive        :: KeepAlive
      , connectWill             :: Maybe Will
      , connectUsernamePassword :: Maybe (Username, Maybe Password)
      }
-   | CONNACK                      (Either ConnectionRefusal SessionPresent)
-   | PUBLISH
+   | ConnectAcknowledgement         (Either ConnectionRefusal SessionPresent)
+   | Publish
      { publishDuplicate        :: Bool
      , publishRetain           :: Bool
      , publishTopic            :: T.Text
-     , publishQoS              :: Maybe (QoS, Word16)
+     , publishQoS              :: Maybe (QoS, PacketIdentifier)
      , publishBody             :: LBS.ByteString
      }
-   | PUBACK                       PacketIdentifier
-   | PUBREC                       PacketIdentifier
-   | PUBREL                       PacketIdentifier
-   | PUBCOMP                      PacketIdentifier
-   | SUBSCRIBE
-     { subscribePacketIdentifier :: PacketIdentifier
-     , subscribeTopicFilters     :: [(TopicFilter, Maybe QoS)]
-     }
-   | SUBACK
-     { subackPacketIdentifier    :: PacketIdentifier
-     , subackReturnCodes         :: [Maybe (Maybe QoS)]
-     }
-   | UNSUBSCRIBE
-     { unsubscribePacketIdentifier :: PacketIdentifier
-     , unsubscribeTopicFilters     :: [TopicFilter]
-     }
-   | UNSUBACK                         PacketIdentifier
-   | PINGREQ
-   | PINGRESP
-   | DISCONNECT
+   | PublishAcknowledgement       PacketIdentifier
+   | PublishReceived              PacketIdentifier
+   | PublishRelease               PacketIdentifier
+   | PublishComplete              PacketIdentifier
+   | Subscribe                    PacketIdentifier [(TopicFilter, Maybe QoS)]
+   | SubscribeAcknowledgement     PacketIdentifier [Maybe (Maybe QoS)]
+   | Unsubscribe                  PacketIdentifier [TopicFilter]
+   | UnsubscribeAcknowledgement   PacketIdentifier
+   | PingRequest
+   | PingResponse
+   | Disconnect
    deriving (Eq, Show)
 
 pMessage :: A.Parser Message
@@ -105,18 +96,18 @@ pMessage = do
   let flags = mod h 0x10
   limit len $ assureEndOfInput $ ($ flags) $ case div h 0x0f of
     0x01 -> pConnect
-    0x02 -> pConnAck
+    0x02 -> pConnectAcknowledgement
     0x03 -> pPublish
-    0x04 -> pPubAck
-    0x05 -> pPubRec
-    0x06 -> pPubRel
-    0x07 -> pPubComp
+    0x04 -> pPublishAcknowledgement
+    0x05 -> pPublishReceived
+    0x06 -> pPublishRelease
+    0x07 -> pPublishComplete
     0x08 -> pSubscribe
-    0x09 -> pSubAck
+    0x09 -> pSubscribeAcknowledgement
     0x10 -> pUnsubscribe
-    0x11 -> pUnsubAck
-    0x0c -> pPingReq
-    0x0d -> pPingResp
+    0x11 -> pUnsubscribeAcknowledgement
+    0x0c -> pPingRequest
+    0x0d -> pPingResponse
     0x0e -> pDisconnect
     _    -> const $ fail "pMessage: Packet type not implemented."
   where
@@ -133,7 +124,7 @@ pConnect hflags
     pProtocolLevel
     flags <- pConnectFlags
     keepAlive <- pKeepAlive
-    CONNECT
+    Connect
       <$> pClientIdentifier
       <*> pure (flags .&. 0x02 /= 0)
       <*> pure keepAlive
@@ -169,23 +160,23 @@ pConnect hflags
       | flags .&. 0x40 == 0 = pure Nothing
       | otherwise           = Just <$> pBlob
 
-pConnAck :: Word8 -> A.Parser Message
-pConnAck hflags
-  | hflags /= 0 = fail "pConnack: The header flags are reserved and MUST be set to 0."
+pConnectAcknowledgement :: Word8 -> A.Parser Message
+pConnectAcknowledgement hflags
+  | hflags /= 0 = fail "pConnectAcknowledgement: The header flags are reserved and MUST be set to 0."
   | otherwise   = do
     flags <- A.anyWord8
     when (flags .&. 0xfe /= 0) $
-      fail "pConnack: The flags 7-1 are reserved and MUST be set to 0."
+      fail "pConnectAcknowledgement: The flags 7-1 are reserved and MUST be set to 0."
     A.anyWord8 >>= f (flags /= 0)
   where
     f sessionPresent returnCode
-      | returnCode == 0 = pure $ CONNACK $ Right sessionPresent
-      | sessionPresent  = fail "pConnack: Violation of [MQTT-3.2.2-4]."
-      | returnCode <= 5 = pure $ CONNACK $ Left $ toEnum (fromIntegral returnCode - 1)
-      | otherwise       = fail "pConnack: Invalid (reserved) return code."
+      | returnCode == 0 = pure $ ConnectAcknowledgement $ Right sessionPresent
+      | sessionPresent  = fail "pConnectAcknowledgement: Violation of [MQTT-3.2.2-4]."
+      | returnCode <= 5 = pure $ ConnectAcknowledgement $ Left $ toEnum (fromIntegral returnCode - 1)
+      | otherwise       = fail "pConnectAcknowledgement: Invalid (reserved) return code."
 
 pPublish :: Word8 -> A.Parser Message
-pPublish hflags = PUBLISH
+pPublish hflags = Publish
   ( hflags .&. 0x08 /= 0 ) -- duplicate flag
   ( hflags .&. 0x01 /= 0 ) -- retain flag
   <$> pUtf8String
@@ -196,30 +187,30 @@ pPublish hflags = PUBLISH
     _    -> fail "pPublish: Violation of [MQTT-3.3.1-4]."
   <*> A.takeLazyByteString
 
-pPubAck :: Word8 -> A.Parser Message
-pPubAck hflags
+pPublishAcknowledgement :: Word8 -> A.Parser Message
+pPublishAcknowledgement hflags
   | hflags /= 0 = fail "pPubAck: The header flags are reserved and MUST be set to 0."
-  | otherwise   = PUBACK <$> pPacketIdentifier
+  | otherwise   = PublishAcknowledgement <$> pPacketIdentifier
 
-pPubRec :: Word8 -> A.Parser Message
-pPubRec hflags
-  | hflags /= 0 = fail "pPubRec: The header flags are reserved and MUST be set to 0."
-  | otherwise   = PUBREC <$> pPacketIdentifier
+pPublishReceived :: Word8 -> A.Parser Message
+pPublishReceived hflags
+  | hflags /= 0 = fail "pPublishReceived: The header flags are reserved and MUST be set to 0."
+  | otherwise   = PublishReceived <$> pPacketIdentifier
 
-pPubRel :: Word8 -> A.Parser Message
-pPubRel hflags
-  | hflags /= 2 = fail "pPubRel: The header flags are reserved and MUST be set to 2."
-  | otherwise   = PUBREL <$> pPacketIdentifier
+pPublishRelease :: Word8 -> A.Parser Message
+pPublishRelease hflags
+  | hflags /= 2 = fail "pPublishRelease: The header flags are reserved and MUST be set to 2."
+  | otherwise   = PublishRelease <$> pPacketIdentifier
 
-pPubComp:: Word8 -> A.Parser Message
-pPubComp hflags
-  | hflags /= 0 = fail "pPubComp: The header flags are reserved and MUST be set to 0."
-  | otherwise   = PUBCOMP <$> pPacketIdentifier
+pPublishComplete :: Word8 -> A.Parser Message
+pPublishComplete hflags
+  | hflags /= 0 = fail "pPublishComplete: The header flags are reserved and MUST be set to 0."
+  | otherwise   = PublishComplete <$> pPacketIdentifier
 
 pSubscribe :: Word8 -> A.Parser Message
 pSubscribe hflags
   | hflags /= 2 = fail "pSubscribe: The header flags are reserved and MUST be set to 2."
-  | otherwise = SUBSCRIBE
+  | otherwise = Subscribe
       <$> pPacketIdentifier
       <*> A.many1 pTopicFilter
   where
@@ -231,10 +222,10 @@ pSubscribe hflags
         0x04 -> pure $ Just ExactlyOnce
         _    -> fail "pSubscribe: Violation of [MQTT-3.8.3-4]." )
 
-pSubAck :: Word8 -> A.Parser Message
-pSubAck hflags
-  | hflags /= 0 = fail "pSubAck: The header flags are reserved and MUST be set to 0."
-  | otherwise   = SUBACK
+pSubscribeAcknowledgement :: Word8 -> A.Parser Message
+pSubscribeAcknowledgement hflags
+  | hflags /= 0 = fail "pSubscribeAcknowledgement: The header flags are reserved and MUST be set to 0."
+  | otherwise   = SubscribeAcknowledgement
       <$> pPacketIdentifier
       <*> A.many1 pReturnCode
   where
@@ -245,35 +236,32 @@ pSubAck hflags
         0x01 -> pure $ Just $ Just AtLeastOnce
         0x02 -> pure $ Just $ Just ExactlyOnce
         0x80 -> pure Nothing
-        _    -> fail "pSubAck: Violation of [MQTT-3.9.3-2]."
+        _    -> fail "pSubscribeAcknowledgement: Violation of [MQTT-3.9.3-2]."
 
 pUnsubscribe :: Word8 -> A.Parser Message
 pUnsubscribe hflags
   | hflags /= 2 = fail "pUnsubscribe: The header flags are reserved and MUST be set to 2."
-  | otherwise   = UNSUBSCRIBE
-    <$> pPacketIdentifier
-    <*> A.many1 pUtf8String
+  | otherwise   = Unsubscribe <$> pPacketIdentifier <*> A.many1 pUtf8String
 
-pUnsubAck :: Word8 -> A.Parser Message
-pUnsubAck hflags
-  | hflags /= 0 = fail "pUnsubAck: The header flags are reserved and MUST be set to 0."
-  | otherwise   = UNSUBACK
-    <$> pPacketIdentifier
+pUnsubscribeAcknowledgement :: Word8 -> A.Parser Message
+pUnsubscribeAcknowledgement hflags
+  | hflags /= 0 = fail "pUnsubscribeAcknowledgement: The header flags are reserved and MUST be set to 0."
+  | otherwise   = UnsubscribeAcknowledgement <$> pPacketIdentifier
 
-pPingReq :: Word8 -> A.Parser Message
-pPingReq hflags
-  | hflags /= 0 = fail "pPingReq: The header flags are reserved and MUST be set to 0."
-  | otherwise   = pure PINGREQ
+pPingRequest :: Word8 -> A.Parser Message
+pPingRequest hflags
+  | hflags /= 0 = fail "pPingRequest: The header flags are reserved and MUST be set to 0."
+  | otherwise   = pure PingRequest
 
-pPingResp :: Word8 -> A.Parser Message
-pPingResp hflags
-  | hflags /= 0 = fail "pPingResp: The header flags are reserved and MUST be set to 0."
-  | otherwise   = pure PINGRESP
+pPingResponse :: Word8 -> A.Parser Message
+pPingResponse hflags
+  | hflags /= 0 = fail "pPingResponse: The header flags are reserved and MUST be set to 0."
+  | otherwise   = pure PingResponse
 
 pDisconnect :: Word8 -> A.Parser Message
 pDisconnect hflags
   | hflags /= 0 = fail "pDisconnect: The header flags are reserved and MUST be set to 0."
-  | otherwise   = pure DISCONNECT
+  | otherwise   = pure Disconnect
 
 limit :: Int -> A.Parser a -> A.Parser a
 limit  = undefined
