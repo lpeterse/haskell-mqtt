@@ -84,13 +84,19 @@ pMessage = do
   h   <- A.anyWord8
   len <- pRemainingLength
   let flags = mod h 0x10
-  case div h 0x0f of
+  limit len $ assureEndOfInput $ case div h 0x0f of
     0x01 -> pConnect flags len
     0x02 -> pConnAck flags len
+    0x03 -> pPublish flags len
     0x0c -> pPingReq flags len
     0x0d -> pPingResp flags len
     0x0e -> pDisconnect flags len
     _    -> fail "pMessage: packet type not implemented"
+  where
+    assureEndOfInput p = do
+      a <- p
+      endOfInput <|> fail "pMessage: remaining length does not match expectation"
+      pure p
 
 pConnect :: Word8 -> Int -> A.Parser Message
 pConnect hflags len
@@ -152,6 +158,9 @@ pConnAck hflags len
       | returnCode <= 5 = pure $ CONNACK $ Left $ toEnum (fromIntegral returnCode - 1)
       | otherwise       = fail "pConnack: Invalid (reserved) return code."
 
+pPublish :: Word8 -> Int -> A.Parser Message
+pPublish hflags len
+  =
 
 pPingReq :: Word8 -> Int -> A.Parser Message
 pPingReq hflags len
@@ -171,6 +180,8 @@ pDisconnect hflags len
   | hflags /= 0 = fail "pDisconnect: The header flags are reserved and MUST be set to 0."
   | otherwise   = pure DISCONNECT
 
+limit :: Int -> Parser a -> Parser a
+limit  = undefined
 
 {-
 
