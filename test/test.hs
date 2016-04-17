@@ -12,6 +12,7 @@ import qualified Data.Attoparsec.ByteString.Char8 as A
 
 import Network.MQTT.Message
 import Network.MQTT.Message.Utf8String
+import Network.MQTT.Message.RemainingLength
 
 import Prelude hiding (head)
 

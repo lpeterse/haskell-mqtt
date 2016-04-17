@@ -4,9 +4,11 @@ module Main where
 import Control.Concurrent.Async
 import Control.Concurrent.Chan
 import Control.Exception ( bracket, catch )
-import Control.Monad ( forever )
+import Control.Monad ( forever, void )
 
 import Data.Function ( fix )
+import qualified Data.Source as S
+import qualified Data.Source.Attoparsec as S
 import qualified Data.ByteString as BS
 
 import System.Socket
@@ -15,11 +17,11 @@ import System.Socket.Type.Stream
 import System.Socket.Protocol.TCP
 
 import Network.MQTT
+import Network.MQTT.Message
 import Network.MQTT.SubscriptionTree
 
 main :: IO ()
-main = undefined
-{-
+main = do
   stree <- newSubscriptionTree
   bracket
     ( socket :: IO (Socket Inet6 Stream TCP) )
@@ -34,7 +36,6 @@ main = undefined
       listen s 5
       putStrLn "Listening socket ready..."
       forever $ acceptAndHandle stree s `catch` \e-> print (e :: SocketException)
-                                        `catch` \e-> print (e :: MQTTException)
     )
 
 acceptAndHandle :: SubscriptionTree Message -> Socket Inet6 Stream TCP -> IO ()
@@ -46,16 +47,12 @@ acceptAndHandle stree s = bracket
   )
   ( \(sock, addr)-> do
     out <- newChan :: IO (Chan BS.ByteString)
-    let st             = ConnectionState out stree
-    let handleIncoming = toSource 4096 msgNoSignal sock $= mqttBroker st $$ sinkChan out
-    let handleOutgoing = sourceChan out $$ toSink msgNoSignal sock
-    handleIncoming `race_` handleOutgoing
+    S.drain $ S.each (void . \x-> send sock x mempty) $ fmap (const "") $ S.each print $ S.parse pMessage $ toSource sock
   )
-  where
-    sourceChan :: Chan BS.ByteString -> Source IO BS.ByteString
-    sourceChan chan = forever $
-      liftIO (readChan chan) >>= yield
-    sinkChan :: Chan BS.ByteString -> Sink BS.ByteString IO ()
-    sinkChan chan = fix $ \again->
-      await >>= maybe (return ()) ((>> again) . lift . liftIO . writeChan chan)
--}
+
+toSource :: Socket f Stream p -> S.Source IO BS.ByteString BS.ByteString
+toSource sock = S.Source $ do
+  bs <- receive sock 4096 mempty
+  S.pull $ if BS.null bs
+    then S.complete id
+    else S.prepend bs $ toSource sock

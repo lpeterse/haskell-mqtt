@@ -33,6 +33,7 @@ import Data.Word
 import Data.Typeable
 
 import Network.MQTT.Message
+import Network.MQTT.Message.RemainingLength
 import Network.MQTT.SubscriptionTree
 
 type Username = T.Text

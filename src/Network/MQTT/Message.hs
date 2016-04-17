@@ -1,10 +1,4 @@
-module Network.MQTT.Message
-  ( Message (..)
-  , QoS (..)
-  , pRemainingLength
-  , sRemainingLength
-  )
-where
+module Network.MQTT.Message where
 
 import Control.Applicative
 import Control.Concurrent.Chan
@@ -31,8 +25,16 @@ import Data.Typeable
 
 import Prelude
 
+import Network.MQTT.Message.Blob
 import Network.MQTT.Message.RemainingLength
 import Network.MQTT.Message.Utf8String
+
+type ClientIdentifier = T.Text
+type SessionPresent = Bool
+type CleanSession   = Bool
+type KeepAlive      = Word16
+type Username       = T.Text
+type Password       = BS.ByteString
 
 data QoS
    = AtMostOnce
@@ -58,22 +60,24 @@ data Will
 
 data Message
    = CONNECT
-     { connectClientIdentifier :: T.Text
-     , connectCleanSession     :: Bool
-     , connectKeepAlive        :: Word16
+     { connectClientIdentifier :: ClientIdentifier
+     , connectCleanSession     :: CleanSession
+     , connectKeepAlive        :: KeepAlive
      , connectWill             :: Maybe Will
-     , connectUsernamePassword :: Maybe (T.Text, Maybe BS.ByteString)
+     , connectUsernamePassword :: Maybe (Username, Maybe Password)
      }
-   | CONNACK
-     { connack                 :: Either ConnectionRefusal Bool
-     }
+   | CONNACK                      (Either ConnectionRefusal SessionPresent)
    | PUBLISH
-     { msgTopic      :: T.Text
-     , msgQoS        :: QoS
-     , msgBody       :: LBS.ByteString
-     , msgDuplicate  :: Bool
-     , msgRetain     :: Bool
-     } deriving (Eq, Show)
+     { msgTopic                :: T.Text
+     , msgQoS                  :: QoS
+     , msgBody                 :: LBS.ByteString
+     , msgDuplicate            :: Bool
+     , msgRetain               :: Bool
+     }
+   | PINGREQ
+   | PINGRESP
+   | DISCONNECT
+   deriving (Eq, Show)
 
 pMessage :: A.Parser Message
 pMessage = do
@@ -83,6 +87,9 @@ pMessage = do
   case div h 0x0f of
     0x01 -> pConnect flags len
     0x02 -> pConnAck flags len
+    0x0c -> pPingReq flags len
+    0x0d -> pPingResp flags len
+    0x0e -> pDisconnect flags len
     _    -> fail "pMessage: packet type not implemented"
 
 pConnect :: Word8 -> Int -> A.Parser Message
@@ -145,12 +152,25 @@ pConnAck hflags len
       | returnCode <= 5 = pure $ CONNACK $ Left $ toEnum (fromIntegral returnCode - 1)
       | otherwise       = fail "pConnack: Invalid (reserved) return code."
 
-pBlob :: A.Parser BS.ByteString
-pBlob = do
-  msb <- A.anyWord8
-  lsb <- A.anyWord8
-  let len = (fromIntegral msb * 256) + fromIntegral lsb :: Int
-  A.take len
+
+pPingReq :: Word8 -> Int -> A.Parser Message
+pPingReq hflags len
+  | len    /= 0 = fail "pPingReq: The remaining length field MUST be set to 0."
+  | hflags /= 0 = fail "pPingReq: The header flags are reserved and MUST be set to 0."
+  | otherwise   = pure PINGREQ
+
+pPingResp :: Word8 -> Int -> A.Parser Message
+pPingResp hflags len
+  | len    /= 0 = fail "pPingResp: The remaining length field MUST be set to 0."
+  | hflags /= 0 = fail "pPingResp: The header flags are reserved and MUST be set to 0."
+  | otherwise   = pure PINGRESP
+
+pDisconnect :: Word8 -> Int -> A.Parser Message
+pDisconnect hflags len
+  | len    /= 0 = fail "pDisconnect: The remaining length field MUST be set to 0."
+  | hflags /= 0 = fail "pDisconnect: The header flags are reserved and MUST be set to 0."
+  | otherwise   = pure DISCONNECT
+
 
 {-
 
