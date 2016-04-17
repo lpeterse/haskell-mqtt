@@ -38,8 +38,7 @@ type Username       = T.Text
 type Password       = BS.ByteString
 
 data QoS
-   = AtMostOnce
-   | AtLeastOnce
+   = AtLeastOnce
    | ExactlyOnce
    deriving (Eq, Ord, Show, Enum)
 
@@ -55,7 +54,7 @@ data Will
    = Will
      { willTopic   :: T.Text
      , willMessage :: BS.ByteString
-     , willQoS     :: QoS
+     , willQoS     :: Maybe QoS
      , willRetain  :: Bool
      } deriving (Eq, Show)
 
@@ -97,7 +96,7 @@ pMessage = do
     assureEndOfInput p = do
       a <- p
       A.endOfInput <|> fail "pMessage: remaining length does not match expectation"
-      pure p
+      pure a
 
 pConnect :: Word8 -> Int -> A.Parser Message
 pConnect hflags len
@@ -131,9 +130,9 @@ pConnect hflags len
         <$> pUtf8String
         <*> pBlob
         <*> case flags .&. 0x18 of
-              0x00 -> pure AtMostOnce
-              0x08 -> pure AtLeastOnce
-              0x10 -> pure ExactlyOnce
+              0x00 -> pure Nothing
+              0x08 -> pure $ Just AtLeastOnce
+              0x10 -> pure $ Just ExactlyOnce
               _    -> fail "pConnect: Violation of [MQTT-3.1.2-14]."
         <*> pure (flags .&. 0x20 /= 0)
     pUsernamePassword flags
