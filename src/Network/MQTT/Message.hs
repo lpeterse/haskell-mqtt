@@ -104,9 +104,9 @@ pMessage = do
   len <- pRemainingLength
   let flags = mod h 0x10
   limit len $ assureEndOfInput $ case div h 0x0f of
-    0x01 -> pConnect flags len
-    0x02 -> pConnAck flags len
-    0x03 -> pPublish flags len
+    0x01 -> pConnect flags
+    0x02 -> pConnAck flags
+    0x03 -> pPublish flags
     0x04 -> pPubAck flags
     0x05 -> pPubRec flags
     0x06 -> pPubRel flags
@@ -115,9 +115,9 @@ pMessage = do
     0x09 -> pSubAck flags
     0x10 -> pUnsubscribe flags
     0x11 -> pUnsubAck flags
-    0x0c -> pPingReq flags len
-    0x0d -> pPingResp flags len
-    0x0e -> pDisconnect flags len
+    0x0c -> pPingReq flags
+    0x0d -> pPingResp flags
+    0x0e -> pDisconnect flags
     _    -> fail "pMessage: packet type not implemented"
   where
     assureEndOfInput p = do
@@ -125,8 +125,8 @@ pMessage = do
       A.endOfInput <|> fail "pMessage: remaining length does not match expectation"
       pure a
 
-pConnect :: Word8 -> Int -> A.Parser Message
-pConnect hflags len
+pConnect :: Word8 -> A.Parser Message
+pConnect hflags
   | hflags /= 0 = fail "pConnect: The header flags are reserved and MUST be set to 0."
   | otherwise   = do
     pProtocolName
@@ -169,9 +169,8 @@ pConnect hflags len
       | flags .&. 0x40 == 0 = pure Nothing
       | otherwise           = Just <$> pBlob
 
-pConnAck :: Word8 -> Int -> A.Parser Message
-pConnAck hflags len
-  | len    /= 2 = fail "pConnack: The remaining length field MUST be set to 2."
+pConnAck :: Word8 -> A.Parser Message
+pConnAck hflags
   | hflags /= 0 = fail "pConnack: The header flags are reserved and MUST be set to 0."
   | otherwise   = do
     flags <- A.anyWord8
@@ -185,8 +184,8 @@ pConnAck hflags len
       | returnCode <= 5 = pure $ CONNACK $ Left $ toEnum (fromIntegral returnCode - 1)
       | otherwise       = fail "pConnack: Invalid (reserved) return code."
 
-pPublish :: Word8 -> Int -> A.Parser Message
-pPublish hflags len = PUBLISH
+pPublish :: Word8 -> A.Parser Message
+pPublish hflags = PUBLISH
   ( hflags .&. 0x08 /= 0 ) -- duplicate flag
   ( hflags .&. 0x01 /= 0 ) -- retain flag
   <$> pUtf8String
@@ -196,12 +195,6 @@ pPublish hflags len = PUBLISH
     0x04 -> Just . (ExactlyOnce,) <$> pPacketIdentifier
     _    -> fail "pPublish: Violation of [MQTT-3.3.1-4]."
   <*> A.takeLazyByteString
-
-pPacketIdentifier :: A.Parser Word16
-pPacketIdentifier = do
-  msb <- A.anyWord8
-  lsb <- A.anyWord8
-  pure $  (fromIntegral msb * 256) + fromIntegral lsb
 
 pPubAck :: Word8 -> A.Parser Message
 pPubAck hflags
@@ -267,23 +260,26 @@ pUnsubAck hflags
   | otherwise   = UNSUBACK
     <$> pPacketIdentifier
 
-pPingReq :: Word8 -> Int -> A.Parser Message
-pPingReq hflags len
-  | len    /= 0 = fail "pPingReq: The remaining length field MUST be set to 0."
+pPingReq :: Word8 -> A.Parser Message
+pPingReq hflags
   | hflags /= 0 = fail "pPingReq: The header flags are reserved and MUST be set to 0."
   | otherwise   = pure PINGREQ
 
-pPingResp :: Word8 -> Int -> A.Parser Message
-pPingResp hflags len
-  | len    /= 0 = fail "pPingResp: The remaining length field MUST be set to 0."
+pPingResp :: Word8 -> A.Parser Message
+pPingResp hflags
   | hflags /= 0 = fail "pPingResp: The header flags are reserved and MUST be set to 0."
   | otherwise   = pure PINGRESP
 
-pDisconnect :: Word8 -> Int -> A.Parser Message
-pDisconnect hflags len
-  | len    /= 0 = fail "pDisconnect: The remaining length field MUST be set to 0."
+pDisconnect :: Word8 -> A.Parser Message
+pDisconnect hflags
   | hflags /= 0 = fail "pDisconnect: The header flags are reserved and MUST be set to 0."
   | otherwise   = pure DISCONNECT
 
 limit :: Int -> A.Parser a -> A.Parser a
 limit  = undefined
+
+pPacketIdentifier :: A.Parser Word16
+pPacketIdentifier = do
+  msb <- A.anyWord8
+  lsb <- A.anyWord8
+  pure $  (fromIntegral msb * 256) + fromIntegral lsb
