@@ -68,11 +68,11 @@ data Message
      }
    | CONNACK                      (Either ConnectionRefusal SessionPresent)
    | PUBLISH
-     { msgTopic                :: T.Text
-     , msgQoS                  :: QoS
-     , msgBody                 :: LBS.ByteString
-     , msgDuplicate            :: Bool
-     , msgRetain               :: Bool
+     { publishDuplicate        :: Bool
+     , publishRetain           :: Bool
+     , publishQoS              :: QoS
+     , publishTopic            :: T.Text
+     , publishBody             :: LBS.ByteString
      }
    | PINGREQ
    | PINGRESP
@@ -95,7 +95,7 @@ pMessage = do
   where
     assureEndOfInput p = do
       a <- p
-      endOfInput <|> fail "pMessage: remaining length does not match expectation"
+      A.endOfInput <|> fail "pMessage: remaining length does not match expectation"
       pure p
 
 pConnect :: Word8 -> Int -> A.Parser Message
@@ -159,8 +159,16 @@ pConnAck hflags len
       | otherwise       = fail "pConnack: Invalid (reserved) return code."
 
 pPublish :: Word8 -> Int -> A.Parser Message
-pPublish hflags len
-  =
+pPublish hflags len = PUBLISH
+  ( hflags .&. 0x08 /= 0 ) -- duplicate flag
+  ( hflags .&. 0x01 /= 0 ) -- retain flag
+  <$> case hflags .&. 0x6 of
+    0x00 -> pure AtMostOnce
+    0x02 -> pure AtLeastOnce
+    0x04 -> pure ExactlyOnce
+    _    -> fail "pPublish: Violation of [MQTT-3.3.1-4]."
+  <*> pUtf8String
+  <*> A.takeLazyByteString
 
 pPingReq :: Word8 -> Int -> A.Parser Message
 pPingReq hflags len
@@ -180,7 +188,7 @@ pDisconnect hflags len
   | hflags /= 0 = fail "pDisconnect: The header flags are reserved and MUST be set to 0."
   | otherwise   = pure DISCONNECT
 
-limit :: Int -> Parser a -> Parser a
+limit :: Int -> A.Parser a -> A.Parser a
 limit  = undefined
 
 {-
