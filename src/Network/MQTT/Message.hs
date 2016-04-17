@@ -1,3 +1,4 @@
+{-# LANGUAGE TupleSections #-}
 module Network.MQTT.Message where
 
 import Control.Applicative
@@ -70,8 +71,8 @@ data Message
    | PUBLISH
      { publishDuplicate        :: Bool
      , publishRetain           :: Bool
-     , publishQoS              :: QoS
      , publishTopic            :: T.Text
+     , publishPacketIdentifier :: Maybe (QoS, Word16)
      , publishBody             :: LBS.ByteString
      }
    | PINGREQ
@@ -162,13 +163,18 @@ pPublish :: Word8 -> Int -> A.Parser Message
 pPublish hflags len = PUBLISH
   ( hflags .&. 0x08 /= 0 ) -- duplicate flag
   ( hflags .&. 0x01 /= 0 ) -- retain flag
-  <$> case hflags .&. 0x6 of
-    0x00 -> pure AtMostOnce
-    0x02 -> pure AtLeastOnce
-    0x04 -> pure ExactlyOnce
+  <$> pUtf8String
+  <*> case hflags .&. 0x6 of
+    0x00 -> pure Nothing
+    0x02 -> Just . (AtLeastOnce,) <$> pPacketIdentifier
+    0x04 -> Just . (ExactlyOnce,) <$> pPacketIdentifier
     _    -> fail "pPublish: Violation of [MQTT-3.3.1-4]."
-  <*> pUtf8String
   <*> A.takeLazyByteString
+  where
+    pPacketIdentifier = do
+      msb <- A.anyWord8
+      lsb <- A.anyWord8
+      pure $  (fromIntegral msb * 256) + fromIntegral lsb
 
 pPingReq :: Word8 -> Int -> A.Parser Message
 pPingReq hflags len
