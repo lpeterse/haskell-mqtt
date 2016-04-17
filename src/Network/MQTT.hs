@@ -50,33 +50,6 @@ data Connection
      , connFlags :: Word8
      } deriving (Eq, Ord, Show)
 
-serialize :: Message -> BS.ByteString
-serialize p@PUBLISH {} =
-  let t = T.encodeUtf8 (msgTopic p)
-  in      LBS.toStrict
-  $ BS.toLazyByteString
-  $ BS.word8 (0x30 .|. flagDuplicate .|. flagQoS .|. flagRetain)
-  <> sRemainingLength ( 2 + BS.length topicBS
-         + fromIntegral ( ( ( flagQoS `div` 2 ) .|. flagQoS ) .&. 2 )
-         + fromIntegral ( LBS.length (msgBody p) )
-         )
-  <> BS.word16BE ( fromIntegral $ BS.length topicBS )
-  <> BS.byteString topicBS
-  <> packetid
-  <> BS.lazyByteString (msgBody p)
-  where
-    flagDuplicate, flagRetain, flagQoS :: Word8
-    flagDuplicate  = if msgDuplicate p then 0x08 else 0
-    flagRetain     = if msgRetain    p then 0x01 else 0
-    flagQoS        = case msgQoS p of
-      AtMostOnce   -> 0x00
-      AtLeastOnce  -> 0x02
-      ExactlyOnce  -> 0x04
-    topicBS        = T.encodeUtf8 $ msgTopic p
-    packetid       = case msgQoS p of
-      AtMostOnce   -> mempty
-      AtLeastOnce  -> BS.word16BE undefined
-      ExactlyOnce  -> BS.word16BE undefined
 
 data ConnectionState
    = ConnectionState
@@ -85,46 +58,33 @@ data ConnectionState
      }
 
 {-
-mqttBroker :: (MonadIO m, MonadThrow m) => ConnectionState -> MQTT m ()
-mqttBroker st = fix $ \continue-> do
-    mbs <- C.peek
-    case mbs of
-      Nothing -> throwM EndOfInput
-      Just bs -> when (BS.length bs > 0) $ case BS.head bs `div` 16 of
-          1  -> do
-            connection <- handleConnect (\_ _-> return True )
-            liftIO $ print connection
-            continue
-          3  -> do
-            message <- handlePublish
-            liftIO $ print message
-            liftIO $ print (serialize message)
-            liftIO $ writeChan (csOutgoingMailbox st) (serialize message)
-            continue
-          4  -> liftIO $ print "handlePublishAcknowledgement"
-          5  -> liftIO $ print "handlePublishReceived"
-          6  -> liftIO $ print "handlePublishRelease"
-          7  -> liftIO $ print "handlePublishComplete"
-          8  -> do
-            handleSubscribe $ \(topic,qos)-> do
-              liftIO $ print "SUBSCRIBE"
-              _ <- liftIO $ subscribe (csSubscriptionTree st) ( liftIO . (>> print "abc") . writeChan (csOutgoingMailbox st) . serialize ) topic
-              return SubscriptionSuccessMaxQoS0
-            continue
-          9  -> liftIO $ print "handleSubscribeAck"
-          10 -> liftIO $ print "handleUnsubscribe"
-          11 -> liftIO $ print "handleUnsubscribeAck"
-          12 -> handlePingRequest >> continue
-          13 -> liftIO $ print "handlePingResponse"
-          14 -> do
-            handleDisconnect
-            liftIO $ print "Graceful DISCONNECT"
-          _  -> throwM $ ProtocolViolation "Unacceptable Command"
-
-
-
-
-
+serialize :: Message -> BS.ByteString
+serialize p@PUBLISH {} =
+let t = T.encodeUtf8 (msgTopic p)
+in      LBS.toStrict
+$ BS.toLazyByteString
+$ BS.word8 (0x30 .|. flagDuplicate .|. flagQoS .|. flagRetain)
+<> sRemainingLength ( 2 + BS.length topicBS
++ fromIntegral ( ( ( flagQoS `div` 2 ) .|. flagQoS ) .&. 2 )
++ fromIntegral ( LBS.length (msgBody p) )
+)
+<> BS.word16BE ( fromIntegral $ BS.length topicBS )
+<> BS.byteString topicBS
+<> packetid
+<> BS.lazyByteString (msgBody p)
+where
+flagDuplicate, flagRetain, flagQoS :: Word8
+flagDuplicate  = if msgDuplicate p then 0x08 else 0
+flagRetain     = if msgRetain    p then 0x01 else 0
+flagQoS        = case msgQoS p of
+AtMostOnce   -> 0x00
+AtLeastOnce  -> 0x02
+ExactlyOnce  -> 0x04
+topicBS        = T.encodeUtf8 $ msgTopic p
+packetid       = case msgQoS p of
+AtMostOnce   -> mempty
+AtLeastOnce  -> BS.word16BE undefined
+ExactlyOnce  -> BS.word16BE undefined
 type TopicFilter = ([T.Text], QoS)
 
 data SubscriptionAcknowledgement

@@ -59,6 +59,13 @@ data Will
      , willRetain  :: Bool
      } deriving (Eq, Show)
 
+data TopicFilter
+   = TopicFilter
+     { topicFilter    :: T.Text
+     , topicFilterQoS :: Maybe QoS
+     }
+     deriving (Eq, Show)
+
 data Message
    = CONNECT
      { connectClientIdentifier :: ClientIdentifier
@@ -79,6 +86,14 @@ data Message
    | PUBREC                       PacketIdentifier
    | PUBREL                       PacketIdentifier
    | PUBCOMP                      PacketIdentifier
+   | SUBSCRIBE
+     { subscribePacketIdentifier :: PacketIdentifier
+     , subscribeTopicFilters     :: [TopicFilter]
+     }
+   | SUBACK
+     { subackPacketIdentifier    :: PacketIdentifier
+     , subackReturnCodes         :: [Maybe (Maybe QoS)]
+     }
    | PINGREQ
    | PINGRESP
    | DISCONNECT
@@ -97,6 +112,10 @@ pMessage = do
     0x05 -> pPubRec flags
     0x06 -> pPubRel flags
     0x07 -> pPubComp flags
+    0x08 -> pSubscribe flags
+    0x09 -> pSubAck flags
+    0x10 -> pUnsubscribe flags
+    0x11 -> pUnsubAck flags
     0x0c -> pPingReq flags len
     0x0d -> pPingResp flags len
     0x0e -> pDisconnect flags len
@@ -205,6 +224,43 @@ pPubComp hflags
   | hflags /= 0 = fail "pPubComp: The header flags are reserved and MUST be set to 0."
   | otherwise   = PUBCOMP <$> pPacketIdentifier
 
+pSubscribe :: Word8 -> A.Parser Message
+pSubscribe hflags
+  | hflags /= 2 = fail "pSubscribe: The header flags are reserved and MUST be set to 2."
+  | otherwise = SUBSCRIBE
+      <$> pPacketIdentifier
+      <*> A.many1 pTopicFilter
+  where
+    pTopicFilter = TopicFilter
+      <$> pUtf8String
+      <*> ( A.anyWord8 >>= \qos-> case qos of
+        0x00 -> pure Nothing
+        0x02 -> pure $ Just AtLeastOnce
+        0x04 -> pure $ Just ExactlyOnce
+        _    -> fail "pSubscribe: Violation of [MQTT-3.8.3-4]." )
+
+pSubAck :: Word8 -> A.Parser Message
+pSubAck hflags
+  | hflags /= 0 = fail "pSubAck: The header flags are reserved and MUST be set to 0."
+  | otherwise   = SUBACK
+      <$> pPacketIdentifier
+      <*> A.many1 pReturnCode
+  where
+    pReturnCode = do
+      c <- A.anyWord8
+      case c of
+        0x00 -> pure $ Just Nothing
+        0x01 -> pure $ Just $ Just AtLeastOnce
+        0x02 -> pure $ Just $ Just ExactlyOnce
+        0x80 -> pure Nothing
+        _    -> fail "pSubAck: Violation of [MQTT-3.9.3-2]."
+
+pUnsubscribe :: Word8 -> A.Parser Message
+pUnsubscribe  = undefined
+
+pUnsubAck :: Word8 -> A.Parser Message
+pUnsubAck  = undefined
+
 pPingReq :: Word8 -> Int -> A.Parser Message
 pPingReq hflags len
   | len    /= 0 = fail "pPingReq: The remaining length field MUST be set to 0."
@@ -225,40 +281,3 @@ pDisconnect hflags len
 
 limit :: Int -> A.Parser a -> A.Parser a
 limit  = undefined
-
-{-
-
-handlePublish :: (MonadThrow m, MonadIO m) => MQTT m Message
-handlePublish = do
-  header          <- maybe rejectEof return =<< C.head
-  remainingLength <- getRemainingLength
-  message         <- C.isolate remainingLength C.=$= PUBLISH
-    <$> getStringDefault rejectEof
-    <*> case header .&. flagQoS of
-          0 -> return AtMostOnce
-          2 -> AtLeastOnce <$> getWord16BeDefault (reject "")
-          4 -> ExactlyOnce <$> getWord16BeDefault (reject "")
-          _ -> reject "Invalid QoS Level"
-    -- Read the rest of the _isolated_ message
-    <*> fmap LBS.fromChunks C.consume
-    <*> return (header .&. flagDuplicate /= 0)
-    <*> return (header .&. flagRetain /= 0)
-  -- The message has been received. Acknowledge it if required.
-  case msgQoS message of
-    AtMostOnce             -> return ()
-    AtLeastOnce idenfifier -> C.yield
-      $ LBS.toStrict
-      $ BS.toLazyByteString
-      $ BS.word32BE (0x40020000 .|. fromIntegral idenfifier)
-    ExactlyOnce identifier -> return () -- FIXME: Send PubRec
-  return message
-  where
-    flagRetain    = 0x01
-    flagQoS       = 0x02 + 0x04
-    flagDuplicate = 0x08
-    reject reason =
-      throwM (ProtocolViolation reason)
-    rejectEof =
-      reject "Unexpected End Of Input"
-
--}
