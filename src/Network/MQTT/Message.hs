@@ -103,22 +103,22 @@ pMessage = do
   h   <- A.anyWord8
   len <- pRemainingLength
   let flags = mod h 0x10
-  limit len $ assureEndOfInput $ case div h 0x0f of
-    0x01 -> pConnect flags
-    0x02 -> pConnAck flags
-    0x03 -> pPublish flags
-    0x04 -> pPubAck flags
-    0x05 -> pPubRec flags
-    0x06 -> pPubRel flags
-    0x07 -> pPubComp flags
-    0x08 -> pSubscribe flags
-    0x09 -> pSubAck flags
-    0x10 -> pUnsubscribe flags
-    0x11 -> pUnsubAck flags
-    0x0c -> pPingReq flags
-    0x0d -> pPingResp flags
-    0x0e -> pDisconnect flags
-    _    -> fail "pMessage: packet type not implemented"
+  limit len $ assureEndOfInput $ ($ flags) $ case div h 0x0f of
+    0x01 -> pConnect
+    0x02 -> pConnAck
+    0x03 -> pPublish
+    0x04 -> pPubAck
+    0x05 -> pPubRec
+    0x06 -> pPubRel
+    0x07 -> pPubComp
+    0x08 -> pSubscribe
+    0x09 -> pSubAck
+    0x10 -> pUnsubscribe
+    0x11 -> pUnsubAck
+    0x0c -> pPingReq
+    0x0d -> pPingResp
+    0x0e -> pDisconnect
+    _    -> const $ fail "pMessage: Packet type not implemented."
   where
     assureEndOfInput p = do
       a <- p
