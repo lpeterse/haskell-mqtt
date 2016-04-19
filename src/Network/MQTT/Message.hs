@@ -9,6 +9,7 @@ import Control.Monad.Catch (MonadThrow (..))
 import Control.Monad
 
 import qualified Data.Attoparsec.ByteString as A
+import qualified Data.Attoparsec.Internal.Types as AI
 import Data.Monoid
 import Data.Bits
 import Data.Function (fix)
@@ -264,7 +265,8 @@ pDisconnect hflags
   | otherwise   = pure Disconnect
 
 limit :: Int -> A.Parser a -> A.Parser a
-limit  = undefined
+limit i parser = AI.Parser $ \st pos more failure success->
+  undefined
 
 pPacketIdentifier :: A.Parser Word16
 pPacketIdentifier = do
