@@ -34,10 +34,12 @@ import Network.MQTT.Message.Utf8String
 type ClientIdentifier = T.Text
 type SessionPresent   = Bool
 type CleanSession     = Bool
+type Retain           = Bool
 type KeepAlive        = Word16
 type Username         = T.Text
 type Password         = BS.ByteString
 type PacketIdentifier = Word16
+type Topic            = T.Text
 type TopicFilter      = T.Text
 
 data QoS
@@ -273,3 +275,35 @@ pPacketIdentifier = do
   msb <- A.anyWord8
   lsb <- A.anyWord8
   pure $  (fromIntegral msb * 256) + fromIntegral lsb
+
+  {-
+  serialize :: Message -> BS.ByteString
+  serialize p@PUBLISH {} =
+  let t = T.encodeUtf8 (msgTopic p)
+  in      LBS.toStrict
+  $ BS.toLazyByteString
+  $ BS.word8 (0x30 .|. flagDuplicate .|. flagQoS .|. flagRetain)
+  <> sRemainingLength ( 2 + BS.length topicBS
+  + fromIntegral ( ( ( flagQoS `div` 2 ) .|. flagQoS ) .&. 2 )
+  + fromIntegral ( LBS.length (msgBody p) )
+  )
+  <> BS.word16BE ( fromIntegral $ BS.length topicBS )
+  <> BS.byteString topicBS
+  <> packetid
+  <> BS.lazyByteString (msgBody p)
+  where
+  flagDuplicate, flagRetain, flagQoS :: Word8
+  flagDuplicate  = if msgDuplicate p then 0x08 else 0
+  flagRetain     = if msgRetain    p then 0x01 else 0
+  flagQoS        = case msgQoS p of
+  AtMostOnce   -> 0x00
+  AtLeastOnce  -> 0x02
+  ExactlyOnce  -> 0x04
+  topicBS        = T.encodeUtf8 $ msgTopic p
+  packetid       = case msgQoS p of
+  AtMostOnce   -> mempty
+  AtLeastOnce  -> BS.word16BE undefined
+  ExactlyOnce  -> BS.word16BE undefined
+  type TopicFilter = ([T.Text], QoS)
+
+  -}
