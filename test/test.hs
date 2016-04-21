@@ -27,6 +27,7 @@ tgMessage :: TestTree
 tgMessage = testGroup "Message"
   [ tgMessageRemainingLength
   , tgMessageUtf8String
+  , tgMessageAll
   ]
 
 tgMessageUtf8String :: TestTree
@@ -120,3 +121,31 @@ tgMessageRemainingLength =
       \i -> let i' = i `mod` 268435455
             in  Right i' == A.parseOnly pRemainingLength (LBS.toStrict $ BS.toLazyByteString (sRemainingLength i'))
   ]
+
+tgMessageAll :: TestTree
+tgMessageAll = QC.testProperty "pMessage . bMessage == id" $ \msg->
+  Right msg === A.parseOnly pMessage (LBS.toStrict $ BS.toLazyByteString $ bMessage msg)
+
+instance Arbitrary Message where
+  arbitrary = oneof
+    [ arbitraryConnect
+    --, arbitraryConnectAcknowledgment
+    ]
+    where
+      arbitraryConnect = Connect
+        <$> arbitrary
+        <*> elements [ True, False ]
+        <*> choose (0, 65535)
+        <*> oneof [ pure Nothing, Just <$> arbitrary ]
+        <*> oneof [ pure Nothing, Just <$>  ((,) <$> pure "" <*> pure Nothing) ]
+      arbitraryConnectAcknowledgment = undefined
+
+instance Arbitrary ClientIdentifier where
+  arbitrary = elements ["client-identifier"]
+
+instance Arbitrary Will where
+  arbitrary = Will
+    <$> elements [ "", "topic" ]
+    <*> elements [ "", "message"]
+    <*> elements [ Nothing, Just AtLeastOnce, Just ExactlyOnce ]
+    <*> elements [ True, False ]

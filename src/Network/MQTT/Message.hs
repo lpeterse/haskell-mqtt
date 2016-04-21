@@ -1,4 +1,4 @@
-{-# LANGUAGE TupleSections #-}
+{-# LANGUAGE TupleSections, GeneralizedNewtypeDeriving #-}
 module Network.MQTT.Message where
 
 import Control.Applicative
@@ -13,6 +13,7 @@ import qualified Data.Attoparsec.Internal.Types as AI
 import Data.Monoid
 import Data.Bits
 import Data.Function (fix)
+import Data.String
 import qualified Data.Source as S
 import qualified Data.Source.ByteString as S
 import qualified Data.ByteString as BS
@@ -31,7 +32,9 @@ import Network.MQTT.Message.Blob
 import Network.MQTT.Message.RemainingLength
 import Network.MQTT.Message.Utf8String
 
-type ClientIdentifier = T.Text
+newtype ClientIdentifier = ClientIdentifier T.Text
+  deriving (Eq, Ord, Show, IsString)
+
 type SessionPresent   = Bool
 type CleanSession     = Bool
 type Retain           = Bool
@@ -140,7 +143,7 @@ pConnect hflags
     pConnectFlags  = A.anyWord8
     pKeepAlive     = (\msb lsb-> (fromIntegral msb * 256) + fromIntegral lsb)
                      <$> A.anyWord8 <*> A.anyWord8
-    pClientIdentifier = do
+    pClientIdentifier = ClientIdentifier <$> do
       txt <- pUtf8String
       when (T.null txt) $
         fail "pConnect: Client identifier MUST not be empty (in this implementation)."
@@ -268,13 +271,37 @@ pDisconnect hflags
 
 limit :: Int -> A.Parser a -> A.Parser a
 limit i parser = AI.Parser $ \st pos more failure success->
-  undefined
+  error "limit"
 
 pPacketIdentifier :: A.Parser Word16
 pPacketIdentifier = do
   msb <- A.anyWord8
   lsb <- A.anyWord8
   pure $  (fromIntegral msb * 256) + fromIntegral lsb
+
+bMessage :: Message -> BS.Builder
+bMessage (Connect (ClientIdentifier i) cleanSession keepAlive will usernamePassword) =
+  BS.word8 0x10
+    <> BS.word64BE (0x00044d5154540400 .|. f1 .|. f2 .|. f3)
+    <> BS.word16BE keepAlive
+    <> sUtf8String i
+    <> maybe mempty (\(Will t m _ _)-> sUtf8String t <> bBlob m) will
+    <> maybe mempty (\(u,mp)-> sUtf8String u <> maybe mempty bBlob mp) usernamePassword
+  where
+    f1 = case usernamePassword of
+      Nothing           -> 0x00
+      Just (_, Nothing) -> 0x80
+      Just (_, Just _)  -> 0xc0
+    f2 = case will of
+      Nothing                                  -> 0x00
+      Just (Will _ _ Nothing False)            -> 0x24
+      Just (Will _ _ Nothing True)             -> 0x04
+      Just (Will _ _ (Just AtLeastOnce) False) -> 0x14
+      Just (Will _ _ (Just AtLeastOnce) True)  -> 0x34
+      Just (Will _ _ (Just ExactlyOnce) False) -> 0x0c
+      Just (Will _ _ (Just ExactlyOnce) True)  -> 0x2c
+    f3 = if cleanSession then 0x02 else 0x00
+bMessage _ = error "bMessage undefined"
 
   {-
   serialize :: Message -> BS.ByteString
