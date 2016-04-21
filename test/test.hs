@@ -145,7 +145,7 @@ instance Arbitrary ClientIdentifier where
 
 instance Arbitrary Will where
   arbitrary = Will
-    <$> elements [ "", "topic" ]
+    <$> elements [ "", "nyːnɔʃk"]
     <*> elements [ "", "message"]
     <*> elements [ Nothing, Just AtLeastOnce, Just ExactlyOnce ]
     <*> elements [ True, False ]

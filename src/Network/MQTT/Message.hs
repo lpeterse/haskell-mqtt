@@ -270,8 +270,7 @@ pDisconnect hflags
   | otherwise   = pure Disconnect
 
 limit :: Int -> A.Parser a -> A.Parser a
-limit i parser = AI.Parser $ \st pos more failure success->
-  error "limit"
+limit i parser = parser
 
 pPacketIdentifier :: A.Parser Word16
 pPacketIdentifier = do
@@ -280,57 +279,31 @@ pPacketIdentifier = do
   pure $  (fromIntegral msb * 256) + fromIntegral lsb
 
 bMessage :: Message -> BS.Builder
-bMessage (Connect (ClientIdentifier i) cleanSession keepAlive will usernamePassword) =
+bMessage (Connect (ClientIdentifier i) cleanSession keepAlive will credentials) =
   BS.word8 0x10
+    <> sRemainingLength len
     <> BS.word64BE (0x00044d5154540400 .|. f1 .|. f2 .|. f3)
     <> BS.word16BE keepAlive
     <> sUtf8String i
     <> maybe mempty (\(Will t m _ _)-> sUtf8String t <> bBlob m) will
-    <> maybe mempty (\(u,mp)-> sUtf8String u <> maybe mempty bBlob mp) usernamePassword
+    <> maybe mempty (\(u,mp)-> sUtf8String u <> maybe mempty bBlob mp) credentials
   where
-    f1 = case usernamePassword of
-      Nothing           -> 0x00
-      Just (_, Nothing) -> 0x80
-      Just (_, Just _)  -> 0xc0
+    f1 = case credentials of
+      Nothing                                  -> 0x00
+      Just (_, Nothing)                        -> 0x80
+      Just (_, Just _)                         -> 0xc0
     f2 = case will of
       Nothing                                  -> 0x00
-      Just (Will _ _ Nothing False)            -> 0x24
-      Just (Will _ _ Nothing True)             -> 0x04
-      Just (Will _ _ (Just AtLeastOnce) False) -> 0x14
-      Just (Will _ _ (Just AtLeastOnce) True)  -> 0x34
-      Just (Will _ _ (Just ExactlyOnce) False) -> 0x0c
-      Just (Will _ _ (Just ExactlyOnce) True)  -> 0x2c
+      Just (Will _ _ Nothing False)            -> 0x04
+      Just (Will _ _ Nothing True)             -> 0x24
+      Just (Will _ _ (Just AtLeastOnce) False) -> 0x0c
+      Just (Will _ _ (Just AtLeastOnce) True)  -> 0x2c
+      Just (Will _ _ (Just ExactlyOnce) False) -> 0x14
+      Just (Will _ _ (Just ExactlyOnce) True)  -> 0x34
     f3 = if cleanSession then 0x02 else 0x00
+    len = 8 + 3
+      + BS.length ( T.encodeUtf8 i )
+      + maybe 0 ( \(Will t m _ _)-> 0 ) will
+      + maybe 0 ( \(u,mp)-> BS.length ( T.encodeUtf8 u )
+                          + maybe 0 BS.length mp) credentials
 bMessage _ = error "bMessage undefined"
-
-  {-
-  serialize :: Message -> BS.ByteString
-  serialize p@PUBLISH {} =
-  let t = T.encodeUtf8 (msgTopic p)
-  in      LBS.toStrict
-  $ BS.toLazyByteString
-  $ BS.word8 (0x30 .|. flagDuplicate .|. flagQoS .|. flagRetain)
-  <> sRemainingLength ( 2 + BS.length topicBS
-  + fromIntegral ( ( ( flagQoS `div` 2 ) .|. flagQoS ) .&. 2 )
-  + fromIntegral ( LBS.length (msgBody p) )
-  )
-  <> BS.word16BE ( fromIntegral $ BS.length topicBS )
-  <> BS.byteString topicBS
-  <> packetid
-  <> BS.lazyByteString (msgBody p)
-  where
-  flagDuplicate, flagRetain, flagQoS :: Word8
-  flagDuplicate  = if msgDuplicate p then 0x08 else 0
-  flagRetain     = if msgRetain    p then 0x01 else 0
-  flagQoS        = case msgQoS p of
-  AtMostOnce   -> 0x00
-  AtLeastOnce  -> 0x02
-  ExactlyOnce  -> 0x04
-  topicBS        = T.encodeUtf8 $ msgTopic p
-  packetid       = case msgQoS p of
-  AtMostOnce   -> mempty
-  AtLeastOnce  -> BS.word16BE undefined
-  ExactlyOnce  -> BS.word16BE undefined
-  type TopicFilter = ([T.Text], QoS)
-
-  -}
