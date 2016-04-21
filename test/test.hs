@@ -135,9 +135,11 @@ instance Arbitrary Message where
       arbitraryConnect = Connect
         <$> arbitrary
         <*> elements [ True, False ]
-        <*> choose (0, 65535)
+        <*> choose ( 0, 65535 )
         <*> oneof [ pure Nothing, Just <$> arbitrary ]
-        <*> oneof [ pure Nothing, Just <$>  ((,) <$> pure "" <*> pure Nothing) ]
+        <*> oneof [ pure Nothing, (Just .) . (,)
+          <$> elements [ "", "username" ]
+          <*> oneof [ pure Nothing, Just <$> elements [ "", "password" ] ] ]
       arbitraryConnectAcknowledgment = undefined
 
 instance Arbitrary ClientIdentifier where
