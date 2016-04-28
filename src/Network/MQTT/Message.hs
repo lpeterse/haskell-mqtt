@@ -1,6 +1,8 @@
 {-# LANGUAGE TupleSections, GeneralizedNewtypeDeriving #-}
 module Network.MQTT.Message where
 
+import Debug.Trace
+
 import Control.Applicative
 import Control.Concurrent.Chan
 import Control.Concurrent.MVar
@@ -81,7 +83,7 @@ data Message
      , publishRetain           :: Bool
      , publishTopic            :: T.Text
      , publishQoS              :: Maybe (QoS, PacketIdentifier)
-     , publishBody             :: LBS.ByteString
+     , publishBody             :: BS.ByteString
      }
    | PublishAcknowledgement       PacketIdentifier
    | PublishReceived              PacketIdentifier
@@ -100,22 +102,22 @@ pMessage :: A.Parser Message
 pMessage = do
   h   <- A.anyWord8
   len <- pRemainingLength
-  let flags = mod h 0x10
-  assureCorrentLength len $ ($ flags) $ ($ len) $ case div h 0x0f of
-    0x01 -> pConnect
-    0x02 -> pConnectAcknowledgement
-    0x03 -> pPublish
-    0x04 -> pPublishAcknowledgement
-    0x05 -> pPublishReceived
-    0x06 -> pPublishRelease
-    0x07 -> pPublishComplete
-    0x08 -> pSubscribe
-    0x09 -> pSubscribeAcknowledgement
-    0x10 -> pUnsubscribe
-    0x11 -> pUnsubscribeAcknowledgement
-    0x0c -> pPingRequest
-    0x0d -> pPingResponse
-    0x0e -> pDisconnect
+  let flags = h .&. 0x0f
+  assureCorrentLength len $ ($ flags) $ ($ len) $ case h .&. 0xf0 of
+    0x10 -> pConnect
+    0x20 -> pConnectAcknowledgement
+    0x30 -> pPublish
+    0x40 -> pPublishAcknowledgement
+    0x50 -> pPublishReceived
+    0x60 -> pPublishRelease
+    0x70 -> pPublishComplete
+    0x80 -> pSubscribe
+    0x90 -> pSubscribeAcknowledgement
+    0xa0 -> pUnsubscribe
+    0xb0 -> pUnsubscribeAcknowledgement
+    0xc0 -> pPingRequest
+    0xc0 -> pPingResponse
+    0xc0 -> pDisconnect
     _    -> const $ fail "pMessage: Packet type not implemented."
   where
     assureCorrentLength len parser = do
@@ -187,16 +189,18 @@ pConnectAcknowledgement len hflags
       | otherwise       = fail "pConnectAcknowledgement: Invalid (reserved) return code."
 
 pPublish :: Int -> Word8 -> A.Parser Message
-pPublish len hflags = Publish
-  ( hflags .&. 0x08 /= 0 ) -- duplicate flag
-  ( hflags .&. 0x01 /= 0 ) -- retain flag
-  <$> pUtf8String
-  <*> case hflags .&. 0x6 of
-    0x00 -> pure Nothing
-    0x02 -> Just . (AtLeastOnce,) <$> pPacketIdentifier
-    0x04 -> Just . (ExactlyOnce,) <$> pPacketIdentifier
-    _    -> fail "pPublish: Violation of [MQTT-3.3.1-4]."
-  <*> A.takeLazyByteString
+pPublish len hflags = do
+  begin <- pPosition
+  Publish
+    ( hflags .&. 0x08 /= 0 ) -- duplicate flag
+    ( hflags .&. 0x01 /= 0 ) -- retain flag
+    <$> pUtf8String
+    <*> case hflags .&. 0x06 of
+      0x00 -> pure Nothing
+      0x02 -> Just . (AtLeastOnce,) <$> pPacketIdentifier
+      0x04 -> Just . (ExactlyOnce,) <$> pPacketIdentifier
+      _    -> fail "pPublish: Violation of [MQTT-3.3.1-4]."
+    <*> (pPosition >>= \end-> A.take (len - (end - begin)))
 
 pPublishAcknowledgement :: Int -> Word8 -> A.Parser Message
 pPublishAcknowledgement len hflags
@@ -313,4 +317,21 @@ bMessage (ConnectAcknowledgement crs) =
   BS.word32BE $ 0x20020000 .|. case crs of
     Left cr -> fromIntegral $ fromEnum cr + 1
     Right s -> if s then 0x0100 else 0
-bMessage _ = mempty
+bMessage (Publish d r t mqp b) =
+  BS.word8 ( 0x30
+    .|. ( if d then 0x08 else 0 )
+    .|. ( if r then 0x01 else 0 )
+    .|. case mqp of
+      Nothing    -> 0
+      Just (q,_) -> case q of
+        AtLeastOnce -> 0x02
+        ExactlyOnce -> 0x04
+    )
+  <> bRemainingLength len
+  <> bUtf8String t
+  <> case mqp of
+       Nothing     -> mempty
+       Just (_,p) -> BS.word16BE p
+  <> BS.byteString b
+  where
+    len = 2 + BS.length (T.encodeUtf8 t) + BS.length b + maybe 0 (const 2) mqp

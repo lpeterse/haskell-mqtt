@@ -134,6 +134,7 @@ instance Arbitrary Message where
   arbitrary = oneof
     [ arbitraryConnect
     , arbitraryConnectAcknowledgment
+    , arbitraryPublish
     ]
     where
       arbitraryConnect = Connect
@@ -146,6 +147,15 @@ instance Arbitrary Message where
           <*> oneof [ pure Nothing, Just <$> elements [ "", "password" ] ] ]
       arbitraryConnectAcknowledgment = ConnectAcknowledgement
         <$> oneof [ Left <$> arbitrary, Right <$> arbitrary ]
+      arbitraryPublish = Publish
+        <$> elements [ True, False ]
+        <*> elements [ True, False ]
+        <*> elements [ "", "topic", "nyːnɔʃk"]
+        <*> oneof [ pure Nothing, (Just .) . (,) <$> arbitrary <*> arbitrary ]
+        <*> elements [ "", "small message", BS.replicate 188273 0x34 ]
+
+instance Arbitrary QoS where
+  arbitrary = elements [ AtLeastOnce, ExactlyOnce ]
 
 instance Arbitrary ClientIdentifier where
   arbitrary = elements ["client-identifier"]
