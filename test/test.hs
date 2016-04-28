@@ -135,6 +135,11 @@ instance Arbitrary Message where
     [ arbitraryConnect
     , arbitraryConnectAcknowledgment
     , arbitraryPublish
+    , PublishAcknowledgement <$> arbitrary
+    , PublishReceived <$> arbitrary
+    , PublishRelease <$> arbitrary
+    , PublishComplete <$> arbitrary
+    , arbitrarySubscribe
     ]
     where
       arbitraryConnect = Connect
@@ -153,6 +158,11 @@ instance Arbitrary Message where
         <*> elements [ "", "topic", "nyːnɔʃk"]
         <*> oneof [ pure Nothing, (Just .) . (,) <$> arbitrary <*> arbitrary ]
         <*> elements [ "", "small message", BS.replicate 188273 0x34 ]
+      arbitrarySubscribe = Subscribe
+        <$> arbitrary
+        <*> listOf1 ((,)
+          <$> elements [ "+", "$SYS", "a/#"]
+          <*> oneof [ pure Nothing, Just <$>  arbitrary ])
 
 instance Arbitrary QoS where
   arbitrary = elements [ AtLeastOnce, ExactlyOnce ]

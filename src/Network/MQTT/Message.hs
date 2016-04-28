@@ -116,8 +116,8 @@ pMessage = do
     0xa0 -> pUnsubscribe
     0xb0 -> pUnsubscribeAcknowledgement
     0xc0 -> pPingRequest
-    0xc0 -> pPingResponse
-    0xc0 -> pDisconnect
+    0xd0 -> pPingResponse
+    0xe0 -> pDisconnect
     _    -> const $ fail "pMessage: Packet type not implemented."
   where
     assureCorrentLength len parser = do
@@ -225,17 +225,25 @@ pPublishComplete len hflags
 pSubscribe :: Int -> Word8 -> A.Parser Message
 pSubscribe len hflags
   | hflags /= 2 = fail "pSubscribe: The header flags are reserved and MUST be set to 2."
-  | otherwise = Subscribe
-      <$> pPacketIdentifier
-      <*> A.many1 pTopicFilter
+  | otherwise = do
+      stop <- (+ len) <$> pPosition
+      Subscribe
+        <$> pPacketIdentifier
+        <*> pTopicFilter stop
   where
-    pTopicFilter = (,)
-      <$> pUtf8String
-      <*> ( A.anyWord8 >>= \qos-> case qos of
-        0x00 -> pure Nothing
-        0x02 -> pure $ Just AtLeastOnce
-        0x04 -> pure $ Just ExactlyOnce
-        _    -> fail "pSubscribe: Violation of [MQTT-3.8.3-4]." )
+    pTopicFilter stop = do
+      pos <- pPosition
+      if pos >= stop
+        then pure []
+        else do
+          tf <- (,)
+            <$> pUtf8String
+            <*> ( A.anyWord8 >>= \qos-> case qos of
+              0x00 -> pure Nothing
+              0x01 -> pure $ Just AtLeastOnce
+              0x02 -> pure $ Just ExactlyOnce
+              _    -> fail $ "pSubscribe: Violation of [MQTT-3.8.3-4]." ++ show qos )
+          (tf:) <$> pTopicFilter stop
 
 pSubscribeAcknowledgement :: Int -> Word8 -> A.Parser Message
 pSubscribeAcknowledgement len hflags
@@ -335,3 +343,22 @@ bMessage (Publish d r t mqp b) =
   <> BS.byteString b
   where
     len = 2 + BS.length (T.encodeUtf8 t) + BS.length b + maybe 0 (const 2) mqp
+bMessage (PublishAcknowledgement p) =
+  BS.word16BE 0x4002 <> BS.word16BE p
+bMessage (PublishReceived p) =
+  BS.word16BE 0x5002 <> BS.word16BE p
+bMessage (PublishRelease p) =
+  BS.word16BE 0x6202 <> BS.word16BE p
+bMessage (PublishComplete p) =
+  BS.word16BE 0x7002 <> BS.word16BE p
+bMessage (Subscribe p tf)  =
+  BS.word8 0x82
+  <> bRemainingLength len
+  <> BS.word16BE p
+  <> mconcat ( map f tf )
+  where
+    f (t, q) = (bUtf8String t <>) $ BS.word8 $ case q of
+      Nothing          -> 0x00
+      Just AtLeastOnce -> 0x01
+      Just ExactlyOnce -> 0x02
+    len  = 2 + length tf * 3 + sum ( map (BS.length . T.encodeUtf8 . fst) tf )
