@@ -256,7 +256,7 @@ pSubscribeAcknowledgement len hflags
 pUnsubscribe :: Int -> Word8 -> A.Parser Message
 pUnsubscribe len hflags
   | hflags /= 2 = fail "pUnsubscribe: The header flags are reserved and MUST be set to 2."
-  | otherwise   = Unsubscribe <$> pPacketIdentifier <*> A.many1 pUtf8String
+  | otherwise   = Unsubscribe <$> pPacketIdentifier <*> pManyWithLimit (len - 2) pUtf8String
 
 pUnsubscribeAcknowledgement :: Int -> Word8 -> A.Parser Message
 pUnsubscribeAcknowledgement len hflags
