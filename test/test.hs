@@ -48,15 +48,15 @@ tgMessageUtf8String =
       ( A.parseOnly pUtf8String $ BS.pack $ [0x03,0x45] ++ replicate 0x0345 97 )
 
   , testCase "U+D800 [MQTT-1.5.3-1]" $ assertEqual ""
-      ( Left "Failed reading: pUtf8String: violation of [MQTT-1.5.3]")
+      ( Left "Failed reading: pUtf8String: Violation of [MQTT-1.5.3].")
       ( A.parseOnly pUtf8String $ BS.pack [0,2,0xd8,0x01] )
 
   , testCase "U+DFFF [MQTT-1.5.3-1]" $ assertEqual ""
-      ( Left "Failed reading: pUtf8String: violation of [MQTT-1.5.3]" )
+      ( Left "Failed reading: pUtf8String: Violation of [MQTT-1.5.3]." )
       ( A.parseOnly pUtf8String $ BS.pack [0,2,0xdf,0xff] )
 
   , testCase "U+0000 [MQTT-1.5.3-2]" $ assertEqual ""
-      ( Left "Failed reading: pUtf8String: violation of [MQTT-1.5.3-2]" )
+      ( Left "Failed reading: pUtf8String: Violation of [MQTT-1.5.3-2]." )
       ( A.parseOnly pUtf8String $ BS.pack [0,1,0] )
 
   , testCase "U+FEFF [MQTT-1.5.3-3]" $ assertEqual ""
@@ -64,7 +64,7 @@ tgMessageUtf8String =
       ( A.parseOnly pUtf8String $ BS.pack [0x00,0x03,0xef,0xbb,0xbf] )
 
   , testCase "sUtf8String $ T.replicate 65536 \"a\"" $ do
-     e <- try $ return $! BS.toLazyByteString $ sUtf8String $ T.replicate 65536 "a"
+     e <- try $ return $! BS.toLazyByteString $ bUtf8String $ T.replicate 65536 "a"
      case e :: Either SomeException LBS.ByteString of
        Left _  -> return ()
        Right _ -> assertFailure "Expected exception, instead got result."
@@ -73,7 +73,7 @@ tgMessageUtf8String =
       let txt = T.replicate 999 "abc"
       in assertEqual ""
       ( Right txt )
-      ( A.parseOnly pUtf8String (LBS.toStrict $ BS.toLazyByteString (sUtf8String txt)))
+      ( A.parseOnly pUtf8String (LBS.toStrict $ BS.toLazyByteString (bUtf8String txt)))
   ]
 
 tgMessageRemainingLength :: TestTree
@@ -119,14 +119,16 @@ tgMessageRemainingLength =
       ( Left "Failed reading: pRemainingLength: invalid input" )
       ( A.parseOnly pRemainingLength (BS.pack [0xff, 0xff, 0xff, 0xff]) )
 
-  , QC.testProperty "pRemainingLength . sRemainingLength == id" $
+  , QC.testProperty "pRemainingLength . bRemainingLength == id" $
       \i -> let i' = i `mod` 268435455
-            in  Right i' == A.parseOnly pRemainingLength (LBS.toStrict $ BS.toLazyByteString (bRemainingLength i'))
+            in  Right i' == A.parseOnly
+              (pRemainingLength >>= \x-> A.endOfInput >> pure x)
+              (LBS.toStrict $ BS.toLazyByteString (bRemainingLength i'))
   ]
 
 tgMessageAll :: TestTree
 tgMessageAll = QC.testProperty "pMessage . bMessage == id" $ \msg->
-  Right msg === A.parseOnly pMessage ((LBS.toStrict $ BS.toLazyByteString $ bMessage msg) )
+  Right msg === A.parseOnly pMessage (LBS.toStrict $ BS.toLazyByteString $ bMessage msg)
 
 instance Arbitrary Message where
   arbitrary = oneof
@@ -138,7 +140,7 @@ instance Arbitrary Message where
         <$> arbitrary
         <*> elements [ True, False ]
         <*> choose ( 0, 65535 )
-        <*> oneof [ pure Nothing, Just <$> arbitrary ]
+        <*> oneof [ pure Nothing , Just <$> arbitrary ]
         <*> oneof [ pure Nothing, (Just .) . (,)
           <$> elements [ "", "username" ]
           <*> oneof [ pure Nothing, Just <$> elements [ "", "password" ] ] ]
@@ -151,7 +153,7 @@ instance Arbitrary ClientIdentifier where
 instance Arbitrary Will where
   arbitrary = Will
     <$> elements [ "", "nyːnɔʃk"]
-    <*> elements [ "", "message"]
+    <*> elements [ "", "message body"]
     <*> elements [ Nothing, Just AtLeastOnce, Just ExactlyOnce ]
     <*> elements [ True, False ]
 

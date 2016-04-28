@@ -283,12 +283,12 @@ pPacketIdentifier = do
 bMessage :: Message -> BS.Builder
 bMessage (Connect (ClientIdentifier i) cleanSession keepAlive will credentials) =
   BS.word8 0x10
-    <> bRemainingLength len
-    <> BS.word64BE (0x00044d5154540400 .|. f1 .|. f2 .|. f3)
+    <> BS.word8 (fromIntegral len)
+    <> BS.word64BE ( 0x00044d5154540400 .|. f1 .|. f2 .|. f3 )
     <> BS.word16BE keepAlive
-    <> sUtf8String i
-    <> maybe mempty (\(Will t m _ _)-> sUtf8String t <> bBlob m) will
-    <> maybe mempty (\(u,mp)-> sUtf8String u <> maybe mempty bBlob mp) credentials
+    <> bUtf8String i
+    <> maybe mempty (\(Will t m _ _)-> bUtf8String t <> bBlob m) will
+    <> maybe mempty (\(u,mp)-> bUtf8String u <> maybe mempty bBlob mp) credentials
   where
     f1 = case credentials of
       Nothing                                  -> 0x00
@@ -303,11 +303,12 @@ bMessage (Connect (ClientIdentifier i) cleanSession keepAlive will credentials) 
       Just (Will _ _ (Just ExactlyOnce) False) -> 0x14
       Just (Will _ _ (Just ExactlyOnce) True)  -> 0x34
     f3 = if cleanSession then 0x02 else 0x00
-    len = 8 + 3
+    len = 12
       + BS.length ( T.encodeUtf8 i )
-      + maybe 0 ( \(Will t m _ _)-> 0 ) will
-      + maybe 0 ( \(u,mp)-> BS.length ( T.encodeUtf8 u )
-                          + maybe 0 BS.length mp) credentials
+      + maybe 0 ( \(Will t m _ _)-> 4 + BS.length (T.encodeUtf8 t) + BS.length m ) will
+      + maybe 0 ( \(u,mp)->
+          2 + BS.length ( T.encodeUtf8 u ) + maybe 0 ( (2 +) . BS.length ) mp
+        ) credentials
 bMessage (ConnectAcknowledgement crs) =
   BS.word32BE $ 0x20020000 .|. case crs of
     Left cr -> fromIntegral $ fromEnum cr + 1
