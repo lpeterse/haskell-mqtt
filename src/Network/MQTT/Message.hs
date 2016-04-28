@@ -1,8 +1,6 @@
 {-# LANGUAGE TupleSections, GeneralizedNewtypeDeriving #-}
 module Network.MQTT.Message where
 
-import Debug.Trace
-
 import Control.Applicative
 import Control.Concurrent.Chan
 import Control.Concurrent.MVar
@@ -346,10 +344,7 @@ bMessage (PublishRelease p) =
 bMessage (PublishComplete p) =
   BS.word16BE 0x7002 <> BS.word16BE p
 bMessage (Subscribe p tf)  =
-  BS.word8 0x82
-  <> bRemainingLength len
-  <> BS.word16BE p
-  <> mconcat ( map f tf )
+  BS.word8 0x82 <> bRemainingLength len <> BS.word16BE p <> mconcat ( map f tf )
   where
     f (t, q) = (bUtf8String t <>) $ BS.word8 $ case q of
       Nothing          -> 0x00
@@ -357,7 +352,7 @@ bMessage (Subscribe p tf)  =
       Just ExactlyOnce -> 0x02
     len  = 2 + length tf * 3 + sum ( map (BS.length . T.encodeUtf8 . fst) tf )
 bMessage (SubscribeAcknowledgement p rcs) =
-  mconcat $ BS.word8 0x90 : bRemainingLength (2 + length rcs) : BS.word16BE p :  map ( BS.word8 . f ) rcs
+  BS.word8 0x90 <> bRemainingLength (2 + length rcs) <> BS.word16BE p <> mconcat ( map ( BS.word8 . f ) rcs )
   where
     f Nothing                   = 0x80
     f (Just Nothing)            = 0x00
