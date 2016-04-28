@@ -229,28 +229,22 @@ pSubscribe len hflags
       stop <- (+ len) <$> pPosition
       Subscribe
         <$> pPacketIdentifier
-        <*> pTopicFilter stop
+        <*> pManyWithLimit (len - 2) pTopicFilter
   where
-    pTopicFilter stop = do
-      pos <- pPosition
-      if pos >= stop
-        then pure []
-        else do
-          tf <- (,)
-            <$> pUtf8String
-            <*> ( A.anyWord8 >>= \qos-> case qos of
-              0x00 -> pure Nothing
-              0x01 -> pure $ Just AtLeastOnce
-              0x02 -> pure $ Just ExactlyOnce
-              _    -> fail $ "pSubscribe: Violation of [MQTT-3.8.3-4]." ++ show qos )
-          (tf:) <$> pTopicFilter stop
+    pTopicFilter = (,)
+      <$> pUtf8String
+      <*> ( A.anyWord8 >>= \qos-> case qos of
+        0x00 -> pure Nothing
+        0x01 -> pure $ Just AtLeastOnce
+        0x02 -> pure $ Just ExactlyOnce
+        _    -> fail $ "pSubscribe: Violation of [MQTT-3.8.3-4]." ++ show qos )
 
 pSubscribeAcknowledgement :: Int -> Word8 -> A.Parser Message
 pSubscribeAcknowledgement len hflags
   | hflags /= 0 = fail "pSubscribeAcknowledgement: The header flags are reserved and MUST be set to 0."
   | otherwise   = SubscribeAcknowledgement
       <$> pPacketIdentifier
-      <*> A.many1 pReturnCode
+      <*> pManyWithLimit (len - 2) pReturnCode
   where
     pReturnCode = do
       c <- A.anyWord8
@@ -362,3 +356,23 @@ bMessage (Subscribe p tf)  =
       Just AtLeastOnce -> 0x01
       Just ExactlyOnce -> 0x02
     len  = 2 + length tf * 3 + sum ( map (BS.length . T.encodeUtf8 . fst) tf )
+bMessage (SubscribeAcknowledgement p rcs) =
+  mconcat $ BS.word8 0x90 : bRemainingLength (2 + length rcs) : BS.word16BE p :  map ( BS.word8 . f ) rcs
+  where
+    f Nothing                   = 0x80
+    f (Just Nothing)            = 0x00
+    f (Just (Just AtLeastOnce)) = 0x01
+    f (Just (Just ExactlyOnce)) = 0x02
+bMessage (Unsubscribe p tfs) =
+  BS.word8 0xa2 <> bRemainingLength len <> BS.word16BE p <> mconcat ( map bUtf8String tfs )
+  where
+    bfs = map T.encodeUtf8 tfs
+    len = 2 + sum ( map ( ( + 2 ) . BS.length ) bfs )
+bMessage (UnsubscribeAcknowledgement p) =
+  BS.word16BE 0xb002 <> BS.word16BE p
+bMessage PingRequest =
+  BS.word16BE 0xc000
+bMessage PingResponse =
+  BS.word16BE 0xd000
+bMessage Disconnect =
+  BS.word16BE 0xe000

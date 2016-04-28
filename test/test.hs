@@ -140,6 +140,12 @@ instance Arbitrary Message where
     , PublishRelease <$> arbitrary
     , PublishComplete <$> arbitrary
     , arbitrarySubscribe
+    , arbitrarySubscribeAcknowledgement
+    , arbitraryUnsubscribe
+    , arbitraryUnsubscribeAcknowledgement
+    , pure PingRequest
+    , pure PingResponse
+    , pure Disconnect
     ]
     where
       arbitraryConnect = Connect
@@ -163,6 +169,15 @@ instance Arbitrary Message where
         <*> listOf1 ((,)
           <$> elements [ "+", "$SYS", "a/#"]
           <*> oneof [ pure Nothing, Just <$>  arbitrary ])
+      arbitrarySubscribeAcknowledgement = SubscribeAcknowledgement
+        <$> arbitrary
+        <*> listOf1 ( oneof [ pure Nothing, Just <$> oneof [
+              pure Nothing, Just <$> elements [ AtLeastOnce, ExactlyOnce ]]])
+      arbitraryUnsubscribe = Unsubscribe
+        <$> arbitrary
+        <*> listOf1 (elements [ "", "#", "a/+/b" ])
+      arbitraryUnsubscribeAcknowledgement = UnsubscribeAcknowledgement
+        <$> arbitrary
 
 instance Arbitrary QoS where
   arbitrary = elements [ AtLeastOnce, ExactlyOnce ]

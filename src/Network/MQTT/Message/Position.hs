@@ -7,3 +7,12 @@ import Data.Attoparsec.Internal.Types
 pPosition :: A.Parser Int
 pPosition = Parser $ \state pos more failure success->
   success state pos more (fromPos pos)
+
+pManyWithLimit :: Int -> A.Parser a -> A.Parser [a]
+pManyWithLimit len parser
+  | len <= 0 = pure []
+  | otherwise = do
+      begin <- pPosition
+      a <- parser
+      end <- pPosition
+      (a:) <$> pManyWithLimit (len - (end - begin)) parser
