@@ -3,11 +3,13 @@ module Main where
 
 import Control.Exception ( try, SomeException )
 
+import Data.Monoid
 import qualified Data.Text as T
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Builder as BS
 import qualified Data.ByteString.Lazy as LBS
 import qualified Data.Attoparsec.ByteString as A
+import qualified Data.Attoparsec.ByteString.Lazy as AL
 import qualified Data.Attoparsec.ByteString.Char8 as A
 
 import Network.MQTT.Message
@@ -119,17 +121,17 @@ tgMessageRemainingLength =
 
   , QC.testProperty "pRemainingLength . sRemainingLength == id" $
       \i -> let i' = i `mod` 268435455
-            in  Right i' == A.parseOnly pRemainingLength (LBS.toStrict $ BS.toLazyByteString (sRemainingLength i'))
+            in  Right i' == A.parseOnly pRemainingLength (LBS.toStrict $ BS.toLazyByteString (bRemainingLength i'))
   ]
 
 tgMessageAll :: TestTree
 tgMessageAll = QC.testProperty "pMessage . bMessage == id" $ \msg->
-  Right msg === A.parseOnly pMessage (LBS.toStrict $ BS.toLazyByteString $ bMessage msg)
+  Right msg === A.parseOnly pMessage ((LBS.toStrict $ BS.toLazyByteString $ bMessage msg) )
 
 instance Arbitrary Message where
   arbitrary = oneof
     [ arbitraryConnect
-    --, arbitraryConnectAcknowledgment
+    , arbitraryConnectAcknowledgment
     ]
     where
       arbitraryConnect = Connect
@@ -140,7 +142,8 @@ instance Arbitrary Message where
         <*> oneof [ pure Nothing, (Just .) . (,)
           <$> elements [ "", "username" ]
           <*> oneof [ pure Nothing, Just <$> elements [ "", "password" ] ] ]
-      arbitraryConnectAcknowledgment = undefined
+      arbitraryConnectAcknowledgment = ConnectAcknowledgement
+        <$> oneof [ Left <$> arbitrary, Right <$> arbitrary ]
 
 instance Arbitrary ClientIdentifier where
   arbitrary = elements ["client-identifier"]
@@ -151,3 +154,6 @@ instance Arbitrary Will where
     <*> elements [ "", "message"]
     <*> elements [ Nothing, Just AtLeastOnce, Just ExactlyOnce ]
     <*> elements [ True, False ]
+
+instance Arbitrary ConnectionRefusal where
+  arbitrary = elements [ minBound .. maxBound ]

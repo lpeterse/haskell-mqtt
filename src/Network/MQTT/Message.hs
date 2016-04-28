@@ -9,7 +9,7 @@ import Control.Monad.Catch (MonadThrow (..))
 import Control.Monad
 
 import qualified Data.Attoparsec.ByteString as A
-import qualified Data.Attoparsec.Internal.Types as AI
+
 import Data.Monoid
 import Data.Bits
 import Data.Function (fix)
@@ -31,6 +31,7 @@ import Prelude
 import Network.MQTT.Message.Blob
 import Network.MQTT.Message.RemainingLength
 import Network.MQTT.Message.Utf8String
+import Network.MQTT.Message.Position
 
 newtype ClientIdentifier = ClientIdentifier T.Text
   deriving (Eq, Ord, Show, IsString)
@@ -56,7 +57,7 @@ data ConnectionRefusal
    | ServerUnavailable
    | BadUsernameOrPassword
    | NotAuthorized
-   deriving (Eq, Ord, Show, Enum)
+   deriving (Eq, Ord, Show, Enum, Bounded)
 
 data Will
    = Will
@@ -100,7 +101,7 @@ pMessage = do
   h   <- A.anyWord8
   len <- pRemainingLength
   let flags = mod h 0x10
-  limit len $ assureEndOfInput $ ($ flags) $ case div h 0x0f of
+  assureCorrentLength len $ ($ flags) $ ($ len) $ case div h 0x0f of
     0x01 -> pConnect
     0x02 -> pConnectAcknowledgement
     0x03 -> pPublish
@@ -117,13 +118,17 @@ pMessage = do
     0x0e -> pDisconnect
     _    -> const $ fail "pMessage: Packet type not implemented."
   where
-    assureEndOfInput p = do
-      a <- p
-      A.endOfInput <|> fail "pMessage: remaining length does not match expectation"
+    assureCorrentLength len parser = do
+      begin <- pPosition
+      a <- parser
+      end <- pPosition
+      when (end - begin /= len) $
+        fail $ "pMessage: Remaining length does not match expectation. Expected: "
+          ++ show len  ++ ". Parsed: " ++ show (end - begin)
       pure a
 
-pConnect :: Word8 -> A.Parser Message
-pConnect hflags
+pConnect :: Int -> Word8 -> A.Parser Message
+pConnect len hflags
   | hflags /= 0 = fail "pConnect: The header flags are reserved and MUST be set to 0."
   | otherwise   = do
     pProtocolName
@@ -166,8 +171,8 @@ pConnect hflags
       | flags .&. 0x40 == 0 = pure Nothing
       | otherwise           = Just <$> pBlob
 
-pConnectAcknowledgement :: Word8 -> A.Parser Message
-pConnectAcknowledgement hflags
+pConnectAcknowledgement :: Int -> Word8 -> A.Parser Message
+pConnectAcknowledgement len hflags
   | hflags /= 0 = fail "pConnectAcknowledgement: The header flags are reserved and MUST be set to 0."
   | otherwise   = do
     flags <- A.anyWord8
@@ -181,8 +186,8 @@ pConnectAcknowledgement hflags
       | returnCode <= 5 = pure $ ConnectAcknowledgement $ Left $ toEnum (fromIntegral returnCode - 1)
       | otherwise       = fail "pConnectAcknowledgement: Invalid (reserved) return code."
 
-pPublish :: Word8 -> A.Parser Message
-pPublish hflags = Publish
+pPublish :: Int -> Word8 -> A.Parser Message
+pPublish len hflags = Publish
   ( hflags .&. 0x08 /= 0 ) -- duplicate flag
   ( hflags .&. 0x01 /= 0 ) -- retain flag
   <$> pUtf8String
@@ -193,28 +198,28 @@ pPublish hflags = Publish
     _    -> fail "pPublish: Violation of [MQTT-3.3.1-4]."
   <*> A.takeLazyByteString
 
-pPublishAcknowledgement :: Word8 -> A.Parser Message
-pPublishAcknowledgement hflags
+pPublishAcknowledgement :: Int -> Word8 -> A.Parser Message
+pPublishAcknowledgement len hflags
   | hflags /= 0 = fail "pPubAck: The header flags are reserved and MUST be set to 0."
   | otherwise   = PublishAcknowledgement <$> pPacketIdentifier
 
-pPublishReceived :: Word8 -> A.Parser Message
-pPublishReceived hflags
+pPublishReceived :: Int -> Word8 -> A.Parser Message
+pPublishReceived len hflags
   | hflags /= 0 = fail "pPublishReceived: The header flags are reserved and MUST be set to 0."
   | otherwise   = PublishReceived <$> pPacketIdentifier
 
-pPublishRelease :: Word8 -> A.Parser Message
-pPublishRelease hflags
+pPublishRelease :: Int -> Word8 -> A.Parser Message
+pPublishRelease len hflags
   | hflags /= 2 = fail "pPublishRelease: The header flags are reserved and MUST be set to 2."
   | otherwise   = PublishRelease <$> pPacketIdentifier
 
-pPublishComplete :: Word8 -> A.Parser Message
-pPublishComplete hflags
+pPublishComplete :: Int -> Word8 -> A.Parser Message
+pPublishComplete len hflags
   | hflags /= 0 = fail "pPublishComplete: The header flags are reserved and MUST be set to 0."
   | otherwise   = PublishComplete <$> pPacketIdentifier
 
-pSubscribe :: Word8 -> A.Parser Message
-pSubscribe hflags
+pSubscribe :: Int -> Word8 -> A.Parser Message
+pSubscribe len hflags
   | hflags /= 2 = fail "pSubscribe: The header flags are reserved and MUST be set to 2."
   | otherwise = Subscribe
       <$> pPacketIdentifier
@@ -228,8 +233,8 @@ pSubscribe hflags
         0x04 -> pure $ Just ExactlyOnce
         _    -> fail "pSubscribe: Violation of [MQTT-3.8.3-4]." )
 
-pSubscribeAcknowledgement :: Word8 -> A.Parser Message
-pSubscribeAcknowledgement hflags
+pSubscribeAcknowledgement :: Int -> Word8 -> A.Parser Message
+pSubscribeAcknowledgement len hflags
   | hflags /= 0 = fail "pSubscribeAcknowledgement: The header flags are reserved and MUST be set to 0."
   | otherwise   = SubscribeAcknowledgement
       <$> pPacketIdentifier
@@ -244,33 +249,30 @@ pSubscribeAcknowledgement hflags
         0x80 -> pure Nothing
         _    -> fail "pSubscribeAcknowledgement: Violation of [MQTT-3.9.3-2]."
 
-pUnsubscribe :: Word8 -> A.Parser Message
-pUnsubscribe hflags
+pUnsubscribe :: Int -> Word8 -> A.Parser Message
+pUnsubscribe len hflags
   | hflags /= 2 = fail "pUnsubscribe: The header flags are reserved and MUST be set to 2."
   | otherwise   = Unsubscribe <$> pPacketIdentifier <*> A.many1 pUtf8String
 
-pUnsubscribeAcknowledgement :: Word8 -> A.Parser Message
-pUnsubscribeAcknowledgement hflags
+pUnsubscribeAcknowledgement :: Int -> Word8 -> A.Parser Message
+pUnsubscribeAcknowledgement len hflags
   | hflags /= 0 = fail "pUnsubscribeAcknowledgement: The header flags are reserved and MUST be set to 0."
   | otherwise   = UnsubscribeAcknowledgement <$> pPacketIdentifier
 
-pPingRequest :: Word8 -> A.Parser Message
-pPingRequest hflags
+pPingRequest :: Int -> Word8 -> A.Parser Message
+pPingRequest len hflags
   | hflags /= 0 = fail "pPingRequest: The header flags are reserved and MUST be set to 0."
   | otherwise   = pure PingRequest
 
-pPingResponse :: Word8 -> A.Parser Message
-pPingResponse hflags
+pPingResponse :: Int -> Word8 -> A.Parser Message
+pPingResponse len hflags
   | hflags /= 0 = fail "pPingResponse: The header flags are reserved and MUST be set to 0."
   | otherwise   = pure PingResponse
 
-pDisconnect :: Word8 -> A.Parser Message
-pDisconnect hflags
+pDisconnect :: Int -> Word8 -> A.Parser Message
+pDisconnect len hflags
   | hflags /= 0 = fail "pDisconnect: The header flags are reserved and MUST be set to 0."
   | otherwise   = pure Disconnect
-
-limit :: Int -> A.Parser a -> A.Parser a
-limit i parser = parser
 
 pPacketIdentifier :: A.Parser Word16
 pPacketIdentifier = do
@@ -281,7 +283,7 @@ pPacketIdentifier = do
 bMessage :: Message -> BS.Builder
 bMessage (Connect (ClientIdentifier i) cleanSession keepAlive will credentials) =
   BS.word8 0x10
-    <> sRemainingLength len
+    <> bRemainingLength len
     <> BS.word64BE (0x00044d5154540400 .|. f1 .|. f2 .|. f3)
     <> BS.word16BE keepAlive
     <> sUtf8String i
@@ -306,4 +308,8 @@ bMessage (Connect (ClientIdentifier i) cleanSession keepAlive will credentials) 
       + maybe 0 ( \(Will t m _ _)-> 0 ) will
       + maybe 0 ( \(u,mp)-> BS.length ( T.encodeUtf8 u )
                           + maybe 0 BS.length mp) credentials
-bMessage _ = error "bMessage undefined"
+bMessage (ConnectAcknowledgement crs) =
+  BS.word32BE $ 0x20020000 .|. case crs of
+    Left cr -> fromIntegral $ fromEnum cr + 1
+    Right s -> if s then 0x0100 else 0
+bMessage _ = mempty

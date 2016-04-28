@@ -32,8 +32,8 @@ pRemainingLength = do
                               fromIntegral (b0 .&. 127)
                 else fail "pRemainingLength: invalid input"
 
-sRemainingLength :: Int -> BS.Builder
-sRemainingLength i
+bRemainingLength :: Int -> BS.Builder
+bRemainingLength i
   | i < 0x80                = BS.word8    ( fromIntegral i )
   | i < 0x80*0x80           = BS.word16LE $ fromIntegral $ 0x0080 -- continuation bit
                                          .|.              ( i .&. 0x7f      )

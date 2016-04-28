@@ -18,7 +18,8 @@ library
                        Network.MQTT.Message,
                        Network.MQTT.Message.Blob,
                        Network.MQTT.Message.RemainingLength,
-                       Network.MQTT.Message.Utf8String
+                       Network.MQTT.Message.Utf8String,
+                       Network.MQTT.Message.Position
   build-depends:       base >=4.8 && <4.9,
                        attoparsec,
                        bytestring,
