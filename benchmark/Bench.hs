@@ -16,7 +16,7 @@ import Network.MQTT.Message
 
 main :: IO ()
 main = defaultMain
-    [ bgroup "Message parsing and serialisation" [
+    [ bgroup "Message-parsing-and-serialisation" [
         bgroup "Connect (without will)" $ pb $
           Connect "client-identifier" True 65298 Nothing (Just ("username", Just "password"))
       , bgroup "Connect (with will)" $ pb $

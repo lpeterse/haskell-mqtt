@@ -19,10 +19,13 @@ library
                        Network.MQTT.Message.Blob,
                        Network.MQTT.Message.RemainingLength,
                        Network.MQTT.Message.Utf8String,
-                       Network.MQTT.Message.Position
-  build-depends:       base >=4.8 && <4.9,
+                       Network.MQTT.Message.Position,
+                       Network.MQTT.KeepAlive
+  build-depends:       async,
                        attoparsec,
+                       base >=4.8 && <4.9,
                        bytestring,
+                       clock >= 0.7,
                        exceptions,
                        text,
                        containers,
