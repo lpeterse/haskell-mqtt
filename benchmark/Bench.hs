@@ -13,6 +13,7 @@ import qualified Data.Attoparsec.ByteString.Lazy as AL
 import qualified Data.Attoparsec.ByteString.Char8 as A
 
 import Network.MQTT.Message
+import Network.MQTT.PacketIdentifier
 
 main :: IO ()
 main = defaultMain
@@ -28,15 +29,15 @@ main = defaultMain
       , bgroup "Publish (QoS 0)" $ pb $
           Publish True False "topic" Nothing "message body"
       , bgroup "Publish (QoS 1)" $ pb $
-          Publish True False "topic" (Just (AtLeastOnce, 2342)) "message body"
+          Publish True False "topic" (Just (AtLeastOnce, PacketIdentifier 2342)) "message body"
       , bgroup "PublishAcknowledgement" $ pb $
-          PublishAcknowledgement 234
+          PublishAcknowledgement (PacketIdentifier 234)
       , bgroup "Subscribe" $ pb $
-          Subscribe 2345 [("short", Nothing), ("longer longer longer", Just ExactlyOnce)]
+          Subscribe (PacketIdentifier 2345) [("short", Nothing), ("longer longer longer", Just ExactlyOnce)]
       , bgroup "SubscribeAcknowledgement" $ pb $
-          SubscribeAcknowledgement 2345 [Nothing, Just Nothing, Just (Just ExactlyOnce), Nothing]
+          SubscribeAcknowledgement (PacketIdentifier 2345) [Nothing, Just Nothing, Just (Just ExactlyOnce), Nothing]
       , bgroup "Unsubscribe" $ pb $
-          Unsubscribe 2345 ["short", "longer longer longer"]
+          Unsubscribe (PacketIdentifier 2345) ["short", "longer longer longer"]
       , bgroup "PingRequest" $ pb
           PingRequest
       , bgroup "PingResponse" $ pb

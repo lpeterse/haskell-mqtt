@@ -10,26 +10,44 @@
 --------------------------------------------------------------------------------
 module Network.MQTT where
 
+import Data.Int
 import Data.Source
 import qualified Data.ByteString as BS
+
+import Control.Concurrent.MVar
+import Control.Concurrent.Async
+import Control.Concurrent.BoundedChan
 
 import Network.MQTT.Message
 import Network.MQTT.Message.RemainingLength
 import Network.MQTT.SubscriptionTree
 
-data MQTT
-type Interface m a b = Source m a a -> (b -> m ()) -> m ()
+data MqttClient
+   = MqttClient
+     { clientIdentifier  :: ClientIdentifier
+     , clientKeepAlive   :: KeepAlive
+     , clientOutputQueue :: BoundedChan Message
+     , clientInputSource :: Source IO BS.ByteString Message
+     , timeLastMessageReceived :: MVar Int64
+     }
 
-withMQTT    :: Interface IO BS.ByteString BS.ByteString
-            -> (MQTT -> IO a)
-            -> IO a
-withMQTT     = undefined
+runMqttClient :: MqttClient -> IO ()
+runMqttClient c = do
+  send $ Connect (clientIdentifier c) True (clientKeepAlive c) Nothing
+  msg <- receive
+  case msg of
+    ConnectAcknowledgement (Left connectionRefusal) -> undefined
+    ConnectAcknowledgement (Right session) -> undefined
+    _ -> undefined
+  where
+    send = undefined
+    receive = undefined
 
-publish     :: MQTT -> Retain -> Topic -> Message -> IO ()
-publish      = undefined
+publishQoS0 :: MqttClient -> Retain -> Topic -> Message -> IO ()
+publishQoS0  = undefined
 
-publishQoS1 :: MQTT -> Retain -> Topic -> Message -> IO ()
+publishQoS1 :: MqttClient -> Retain -> Topic -> Message -> IO ()
 publishQoS1  = undefined
 
-publishQoS2 :: MQTT -> Retain -> Topic -> Message -> IO ()
+publishQoS2 :: MqttClient -> Retain -> Topic -> Message -> IO ()
 publishQoS2  = undefined

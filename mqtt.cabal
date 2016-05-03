@@ -20,10 +20,12 @@ library
                        Network.MQTT.Message.RemainingLength,
                        Network.MQTT.Message.Utf8String,
                        Network.MQTT.Message.Position,
-                       Network.MQTT.KeepAlive
+                       Network.MQTT.KeepAlive,
+                       Network.MQTT.PacketIdentifier
   build-depends:       async,
                        attoparsec,
                        base >=4.8 && <4.9,
+                       BoundedChan,
                        bytestring,
                        clock >= 0.7,
                        exceptions,
@@ -31,22 +33,6 @@ library
                        containers,
                        source
 
-  hs-source-dirs:      src
-  default-language:    Haskell2010
-
-executable hummingbird
-  hs-source-dirs:      app
-  main-is:             hummingbird.hs
-  build-depends:       async,
-                       attoparsec,
-                       base >=4.8 && <4.9,
-                       bytestring,
-                       exceptions,
-                       mqtt,
-                       text,
-                       containers,
-                       socket,
-                       source
   hs-source-dirs:      src
   default-language:    Haskell2010
 

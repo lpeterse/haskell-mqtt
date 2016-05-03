@@ -15,6 +15,7 @@ import qualified Data.Attoparsec.ByteString.Char8 as A
 import Network.MQTT.Message
 import Network.MQTT.Message.Utf8String
 import Network.MQTT.Message.RemainingLength
+import Network.MQTT.PacketIdentifier
 
 import Prelude hiding (head)
 
@@ -191,6 +192,9 @@ instance Arbitrary Will where
     <*> elements [ "", "message body"]
     <*> elements [ Nothing, Just AtLeastOnce, Just ExactlyOnce ]
     <*> elements [ True, False ]
+
+instance Arbitrary PacketIdentifier where
+  arbitrary = PacketIdentifier <$> choose (0x0000, 0xffff)
 
 instance Arbitrary ConnectionRefusal where
   arbitrary = elements [ minBound .. maxBound ]

@@ -32,6 +32,7 @@ import Network.MQTT.Message.Blob
 import Network.MQTT.Message.RemainingLength
 import Network.MQTT.Message.Utf8String
 import Network.MQTT.Message.Position
+import Network.MQTT.PacketIdentifier
 
 newtype ClientIdentifier = ClientIdentifier T.Text
   deriving (Eq, Ord, Show, IsString)
@@ -42,7 +43,6 @@ type Retain           = Bool
 type KeepAlive        = Word16
 type Username         = T.Text
 type Password         = BS.ByteString
-type PacketIdentifier = Word16
 type Topic            = T.Text
 type TopicFilter      = T.Text
 
@@ -278,11 +278,11 @@ pDisconnect len hflags
   | hflags /= 0 = fail "pDisconnect: The header flags are reserved and MUST be set to 0."
   | otherwise   = pure Disconnect
 
-pPacketIdentifier :: A.Parser Word16
+pPacketIdentifier :: A.Parser PacketIdentifier
 pPacketIdentifier = do
   msb <- A.anyWord8
   lsb <- A.anyWord8
-  pure $  (fromIntegral msb * 256) + fromIntegral lsb
+  pure $  PacketIdentifier $ (fromIntegral msb * 256) + fromIntegral lsb
 
 bMessage :: Message -> BS.Builder
 bMessage (Connect (ClientIdentifier i) cleanSession keepAlive will credentials) =
@@ -330,41 +330,43 @@ bMessage (Publish d r t mqp b) =
   <> bRemainingLength len
   <> bUtf8String t
   <> case mqp of
-       Nothing     -> mempty
-       Just (_,p) -> BS.word16BE p
+       Nothing                      -> mempty
+       Just (_, PacketIdentifier p) -> BS.word16BE (fromIntegral p)
   <> BS.byteString b
   where
     len = 2 + BS.length (T.encodeUtf8 t) + BS.length b + maybe 0 (const 2) mqp
-bMessage (PublishAcknowledgement p) =
-  BS.word16BE 0x4002 <> BS.word16BE p
-bMessage (PublishReceived p) =
-  BS.word16BE 0x5002 <> BS.word16BE p
-bMessage (PublishRelease p) =
-  BS.word16BE 0x6202 <> BS.word16BE p
-bMessage (PublishComplete p) =
-  BS.word16BE 0x7002 <> BS.word16BE p
-bMessage (Subscribe p tf)  =
-  BS.word8 0x82 <> bRemainingLength len <> BS.word16BE p <> mconcat ( map f tf )
+bMessage (PublishAcknowledgement (PacketIdentifier p)) =
+  BS.word16BE 0x4002 <> BS.word16BE (fromIntegral p)
+bMessage (PublishReceived (PacketIdentifier p)) =
+  BS.word16BE 0x5002 <> BS.word16BE (fromIntegral p)
+bMessage (PublishRelease (PacketIdentifier p)) =
+  BS.word16BE 0x6202 <> BS.word16BE (fromIntegral p)
+bMessage (PublishComplete (PacketIdentifier p)) =
+  BS.word16BE 0x7002 <> BS.word16BE (fromIntegral p)
+bMessage (Subscribe (PacketIdentifier p) tf)  =
+  BS.word8 0x82 <> bRemainingLength len <> BS.word16BE (fromIntegral p) <> mconcat ( map f tf )
   where
     f (t, q) = (bUtf8String t <>) $ BS.word8 $ case q of
       Nothing          -> 0x00
       Just AtLeastOnce -> 0x01
       Just ExactlyOnce -> 0x02
     len  = 2 + length tf * 3 + sum ( map (BS.length . T.encodeUtf8 . fst) tf )
-bMessage (SubscribeAcknowledgement p rcs) =
-  BS.word8 0x90 <> bRemainingLength (2 + length rcs) <> BS.word16BE p <> mconcat ( map ( BS.word8 . f ) rcs )
+bMessage (SubscribeAcknowledgement (PacketIdentifier p) rcs) =
+  BS.word8 0x90 <> bRemainingLength (2 + length rcs)
+    <> BS.word16BE (fromIntegral p) <> mconcat ( map ( BS.word8 . f ) rcs )
   where
     f Nothing                   = 0x80
     f (Just Nothing)            = 0x00
     f (Just (Just AtLeastOnce)) = 0x01
     f (Just (Just ExactlyOnce)) = 0x02
-bMessage (Unsubscribe p tfs) =
-  BS.word8 0xa2 <> bRemainingLength len <> BS.word16BE p <> mconcat ( map bUtf8String tfs )
+bMessage (Unsubscribe (PacketIdentifier p) tfs) =
+  BS.word8 0xa2 <> bRemainingLength len
+    <> BS.word16BE (fromIntegral p) <> mconcat ( map bUtf8String tfs )
   where
     bfs = map T.encodeUtf8 tfs
     len = 2 + sum ( map ( ( + 2 ) . BS.length ) bfs )
-bMessage (UnsubscribeAcknowledgement p) =
-  BS.word16BE 0xb002 <> BS.word16BE p
+bMessage (UnsubscribeAcknowledgement (PacketIdentifier p)) =
+  BS.word16BE 0xb002 <> BS.word16BE (fromIntegral p)
 bMessage PingRequest =
   BS.word16BE 0xc000
 bMessage PingResponse =
