@@ -1,4 +1,4 @@
-{-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE OverloadedStrings, TypeFamilies #-}
 --------------------------------------------------------------------------------
 -- |
 -- Module      :  Network.MQTT
@@ -13,7 +13,9 @@ module Network.MQTT where
 import Data.Int
 import Data.Source
 import qualified Data.ByteString as BS
+import qualified Data.ByteString.Builder as BS
 
+import Control.Monad
 import Control.Concurrent.MVar
 import Control.Concurrent.Async
 import Control.Concurrent.BoundedChan
@@ -22,32 +24,57 @@ import Network.MQTT.Message
 import Network.MQTT.Message.RemainingLength
 import Network.MQTT.SubscriptionTree
 
-data MqttClient
+data MqttClient c
    = MqttClient
-     { clientIdentifier  :: ClientIdentifier
-     , clientKeepAlive   :: KeepAlive
-     , clientOutputQueue :: BoundedChan Message
-     , clientInputSource :: Source IO BS.ByteString Message
-     , timeLastMessageReceived :: MVar Int64
+     { clientIdentifier        :: ClientIdentifier
+     , clientKeepAlive         :: KeepAlive
+     , clientOutputQueue       :: MVar Message
+     , clientNewConnection     :: IO c
+     , clientThread            :: MVar (Maybe (Async ()))
      }
 
-runMqttClient :: MqttClient -> IO ()
-runMqttClient c = do
-  send $ Connect (clientIdentifier c) True (clientKeepAlive c) Nothing
-  msg <- receive
-  case msg of
-    ConnectAcknowledgement (Left connectionRefusal) -> undefined
-    ConnectAcknowledgement (Right session) -> undefined
-    _ -> undefined
-  where
-    send = undefined
-    receive = undefined
 
-publishQoS0 :: MqttClient -> Retain -> Topic -> Message -> IO ()
+class Channel a where
+  type ChannelException a
+  send    :: a -> BS.Builder -> IO ()
+  receive :: a -> IO BS.ByteString
+  close   :: a -> IO ()
+
+newMqttClient :: IO (MqttClient a)
+newMqttClient = do
+  undefined
+
+connect :: MqttClient a -> IO ()
+connect c = modifyMVar_ (clientThread c) $ \mt->
+  case mt of
+    Just t  -> pure mt -- already connected, do nothing
+    Nothing -> do
+      undefined
+  where
+    maintainConnection :: Channel c => c -> IO ()
+    maintainConnection c = do
+      keepAlive `race_` processInput c `race_` processOutput c
+    keepAlive :: IO ()
+    keepAlive = do
+      undefined
+    processInput :: Channel c => c -> IO ()
+    processInput channel =
+      undefined
+    processOutput :: Channel c => c -> IO ()
+    processOutput channel =
+      forever $ takeMVar (clientOutputQueue c) >>= send channel . bMessage
+
+disconnect :: MqttClient a -> IO ()
+disconnect c =  modifyMVar_ (clientThread c) $ \mt->
+  case mt of
+    Nothing     -> pure mt -- already disconnected, do nothing
+    Just thread -> cancel thread >> pure mt
+
+publishQoS0 :: MqttClient a -> Retain -> Topic -> Message -> IO ()
 publishQoS0  = undefined
 
-publishQoS1 :: MqttClient -> Retain -> Topic -> Message -> IO ()
+publishQoS1 :: MqttClient a -> Retain -> Topic -> Message -> IO ()
 publishQoS1  = undefined
 
-publishQoS2 :: MqttClient -> Retain -> Topic -> Message -> IO ()
+publishQoS2 :: MqttClient a -> Retain -> Topic -> Message -> IO ()
 publishQoS2  = undefined
