@@ -12,6 +12,7 @@ module Network.MQTT where
 
 import Data.Int
 import Data.Source
+import Data.Source.Attoparsec
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Builder as BS
 
@@ -20,24 +21,26 @@ import Control.Concurrent.MVar
 import Control.Concurrent.Async
 import Control.Concurrent.BoundedChan
 
+import System.Clock
+
 import Network.MQTT.Message
 import Network.MQTT.Message.RemainingLength
 import Network.MQTT.SubscriptionTree
 
 data MqttClient c
    = MqttClient
-     { clientIdentifier        :: ClientIdentifier
-     , clientKeepAlive         :: KeepAlive
-     , clientOutputQueue       :: MVar Message
-     , clientNewConnection     :: IO c
-     , clientThread            :: MVar (Maybe (Async ()))
+     { clientIdentifier              :: ClientIdentifier
+     , clientKeepAlive               :: KeepAlive
+     , clientOutputQueue             :: MVar Message
+     , clientNewConnection           :: IO c
+     , clientThread                  :: MVar (Maybe (Async ()))
+     , clientTimeLastMessageReceived :: MVar TimeSpec
      }
-
 
 class Channel a where
   type ChannelException a
   send    :: a -> BS.Builder -> IO ()
-  receive :: a -> IO BS.ByteString
+  receive :: a -> IO (Maybe BS.ByteString)
   close   :: a -> IO ()
 
 newMqttClient :: IO (MqttClient a)
@@ -58,8 +61,16 @@ connect c = modifyMVar_ (clientThread c) $ \mt->
     keepAlive = do
       undefined
     processInput :: Channel c => c -> IO ()
-    processInput channel =
-      undefined
+    processInput =
+      drain . dispatch . parse pMessage . sample . receive
+      where
+        dispatch :: Transducer IO BS.ByteString Message Message
+        dispatch  = each $ \a-> do
+          -- Interpret this as a life-sign from the server
+          void $ swapMVar (clientTimeLastMessageReceived c) =<< getTime Monotonic
+          case a of
+            PingResponse -> undefined
+            _            -> pure ()
     processOutput :: Channel c => c -> IO ()
     processOutput channel =
       forever $ takeMVar (clientOutputQueue c) >>= send channel . bMessage
