@@ -17,12 +17,12 @@ newtype PacketIdentifierPool = PacketIdentifierPool S.IntSet
 fullPool :: PacketIdentifierPool
 fullPool  = PacketIdentifierPool S.empty
 
-getPacketIdentifier :: PacketIdentifierPool -> Maybe (PacketIdentifier, PacketIdentifierPool)
-getPacketIdentifier (PacketIdentifierPool p) = f [0x0000 .. 0xffff]
+takePacketIdentifier :: PacketIdentifierPool -> (PacketIdentifierPool, Maybe PacketIdentifier)
+takePacketIdentifier (PacketIdentifierPool p) = f [0x0000 .. 0xffff]
   where
-    f []     = Nothing
+    f []     = (PacketIdentifierPool p, Nothing)
     f (i:is) | S.member i p = f is
-             | otherwise    = Just (PacketIdentifier i, PacketIdentifierPool $ S.insert i p)
+             | otherwise    = (PacketIdentifierPool $ S.insert i p, Just $ PacketIdentifier i)
 
 returnPacketIdentifier :: PacketIdentifierPool -> PacketIdentifier -> PacketIdentifierPool
 returnPacketIdentifier (PacketIdentifierPool p) (PacketIdentifier i) =
