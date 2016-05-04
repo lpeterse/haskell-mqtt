@@ -27,7 +27,6 @@ import Control.Concurrent.BoundedChan
 
 import Network.MQTT.Message
 import Network.MQTT.Message.RemainingLength
-import Network.MQTT.SubscriptionTree
 import Network.MQTT.PacketIdentifier
 
 data MqttClient c
@@ -111,8 +110,8 @@ disconnect c =  modifyMVar_ (clientThread c) $ \mt->
     Nothing     -> pure mt -- already disconnected, do nothing
     Just thread -> cancel thread >> pure mt
 
-publishQoS0 :: MqttClient a -> Retain -> Topic -> BS.ByteString -> IO ()
-publishQoS0 client retain !topic !body =
+publish :: MqttClient a -> Maybe QoS -> Retain -> Topic -> BS.ByteString -> IO ()
+publish client Nothing !retain !topic !body =
   putMVar (clientOutputQueue client) message
   where
     message = Publish {
@@ -121,9 +120,7 @@ publishQoS0 client retain !topic !body =
       publishQoS = Nothing,
       publishTopic = topic,
       publishBody = body }
-
-publish' :: MqttClient a -> QoS -> Retain -> Topic -> BS.ByteString -> IO ()
-publish' client qos retain !topic !body = -- Note the BangPatterns!
+publish client (Just qos) !retain !topic !body = -- Note the BangPatterns!
   bracket takeIdentifier returnIdentifier $ maybe withoutIdentifier withIdentifier
   where
     takeIdentifier =
@@ -150,7 +147,6 @@ publish' client qos retain !topic !body = -- Note the BangPatterns!
                 PublishComplete _ -> pure ()
                 _ -> throwIO $ ProtocolViolation
                   "Expected PUBREL, got something else for PUBLISH with QoS 2."
-
             _ -> throwIO $ ProtocolViolation
               "Expected PUBREC, got something else for PUBLISH with QoS 2."
     withoutIdentifier  = do
@@ -159,7 +155,7 @@ publish' client qos retain !topic !body = -- Note the BangPatterns!
       -- extremely unlikely) case of packet identifier exhaustion, we shall wait
       -- 1 second and then try again.
       threadDelay 1000000
-      publish' client qos retain topic body
+      publish client (Just qos) retain topic body
     message i = Publish {
       publishDuplicate = False,
       publishRetain = retain,
