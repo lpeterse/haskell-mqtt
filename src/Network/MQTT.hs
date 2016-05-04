@@ -109,11 +109,19 @@ disconnect c =  modifyMVar_ (clientThread c) $ \mt->
     Nothing     -> pure mt -- already disconnected, do nothing
     Just thread -> cancel thread >> pure mt
 
-publishQoS0 :: MqttClient a -> Retain -> Topic -> Message -> IO ()
-publishQoS0  = undefined
+publishQoS0 :: MqttClient a -> Retain -> Topic -> BS.ByteString -> IO ()
+publishQoS0 client retain !topic !body =
+  putMVar (clientOutputQueue client) message
+  where
+    message = Publish {
+      publishDuplicate = False,
+      publishRetain = retain,
+      publishQoS = Nothing,
+      publishTopic = topic,
+      publishBody = body }
 
-publishQoS1 :: MqttClient a -> Retain -> Topic -> BS.ByteString -> IO ()
-publishQoS1 client retain !topic !body = -- Note the BangPatterns!
+publish' :: MqttClient a -> QoS -> Retain -> Topic -> BS.ByteString -> IO ()
+publish' client qos retain !topic !body = -- Note the BangPatterns!
   bracket takeIdentifier returnIdentifier $
     maybe withoutIdentifier withIdentifier
   where
@@ -126,25 +134,39 @@ publishQoS1 client retain !topic !body = -- Note the BangPatterns!
     withIdentifier (i, mresponse) = do
       putMVar (clientOutputQueue client) (message i)
       response <- takeMVar mresponse
-      case response of
-        PublishAcknowledgement _ -> pure ()
-        _                        -> throwIO $ ProtocolViolation
-          "Got something other than PUBACK for PUBLISH with QoS 1."
+      case qos of
+        AtLeastOnce ->
+          case response of
+            PublishAcknowledgement _ -> pure ()
+            _ -> throwIO $ ProtocolViolation
+              "Expected PUBACK, got something else for PUBLISH with QoS 1."
+        ExactlyOnce ->
+          case response of
+            PublishReceived _ -> do
+              putMVar (clientOutputQueue client) (PublishRelease i)
+              response' <- takeMVar mresponse
+              case response' of
+                PublishComplete _ -> pure ()
+                _ -> throwIO $ ProtocolViolation
+                  "Expected PUBREL, got something else for PUBLISH with QoS 2."
+
+            _ -> throwIO $ ProtocolViolation
+              "Expected PUBREC, got something else for PUBLISH with QoS 2."
     withoutIdentifier  = do
       -- We cannot easily wait for when packet identifiers are available again.
       -- On the other hand throwing an exception seems too drastic. So (for the
       -- extremely unlikely) case of packet identifier exhaustion, we shall wait
       -- 1 second and then try again.
       threadDelay 1000000
-      publishQoS1 client retain topic body
+      publish' client qos retain topic body
     message i = Publish {
       publishDuplicate = False,
       publishRetain = retain,
-      publishQoS = Just (AtLeastOnce, i),
+      publishQoS = Just (qos, i),
       publishTopic = topic,
       publishBody = body }
 
-publishQoS2 :: MqttClient a -> Retain -> Topic -> Message -> IO ()
+publishQoS2 :: MqttClient a -> Retain -> Topic -> BS.ByteString -> IO ()
 publishQoS2  = undefined
 
 data MqttException
