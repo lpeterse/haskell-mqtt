@@ -86,23 +86,25 @@ connect c = modifyMVar_ (clientThread c) $ \mt->
         messageProcessor = each $ \message-> case message of
             Publish {} -> do
               pure ()
-            PublishAcknowledgement {} -> do
-              pure ()
-            PublishReceived {} -> do
-              pure ()
-            PublishRelease {} -> do
-              pure ()
-            PublishComplete {} -> do
-              pure ()
-            SubscribeAcknowledgement {} -> do
-              pure ()
-            UnsubscribeAcknowledgement {} -> do
-              pure ()
-            PingResponse -> do
+            -- The following packet types are responses to earlier requests.
+            -- We need to dispatch them to the waiting threads.
+            PublishAcknowledgement i ->
+              resolvePacketIdentifier (clientPacketIdentifierPool c) i message
+            PublishReceived i ->
+              resolvePacketIdentifier (clientPacketIdentifierPool c) i message
+            PublishRelease i ->
+              resolvePacketIdentifier (clientPacketIdentifierPool c) i message
+            PublishComplete i ->
+              resolvePacketIdentifier (clientPacketIdentifierPool c) i message
+            SubscribeAcknowledgement i _ ->
+              resolvePacketIdentifier (clientPacketIdentifierPool c) i message
+            UnsubscribeAcknowledgement i ->
+              resolvePacketIdentifier (clientPacketIdentifierPool c) i message
+            -- Do nothing on a ping response. We don't care.
+            PingResponse ->
               pure ()
             -- The following messages should not be sent from the server to the client.
-            _ -> throwIO $ ProtocolViolation $ "Unexpected message type ''" ++
-              takeWhile (/= ' ') (show message) ++ "'' received from the server."
+            _ -> throwIO $ ProtocolViolation "Unexpected packet type received from the server."
 
 disconnect :: MqttClient a -> IO ()
 disconnect c =  modifyMVar_ (clientThread c) $ \mt->
