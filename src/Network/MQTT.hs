@@ -19,6 +19,7 @@ import qualified Data.ByteString.Builder as BS
 
 import Control.Exception
 import Control.Monad
+import Control.Concurrent
 import Control.Concurrent.MVar
 import Control.Concurrent.Async
 import Control.Concurrent.BoundedChan
@@ -35,7 +36,7 @@ data MqttClient c
      { clientIdentifier              :: ClientIdentifier
      , clientKeepAlive               :: KeepAlive
      , clientOutputQueue             :: MVar Message
-     , clientPacketIdentifierPool    :: MVar PacketIdentifierPool
+     , clientPacketIdentifierPool    :: PacketIdentifierPool Message
      , clientNewConnection           :: IO c
      , clientThread                  :: MVar (Maybe (Async ()))
      , clientRecentLifeSign          :: MVar Bool
@@ -113,14 +114,22 @@ publishQoS0  = undefined
 
 publishQoS1 :: MqttClient a -> Retain -> Topic -> BS.ByteString -> IO ()
 publishQoS1 client retain !topic !body = -- Note the BangPatterns!
-  bracketOnError takeIdentifier returnIdentifier $
+  bracket takeIdentifier returnIdentifier $
     maybe withoutIdentifier withIdentifier
   where
-    takeIdentifier     = modifyMVar takePacketIdentifier (clientPacketIdentifierPool c)
-    returnIdentifier i = modifyMVar (returnPacketIdentifier i) (clientPacketIdentifierPool c)
-    withIdentifier   i = do
-      putMVar (clientOutputQueue c) (message i) -- This is eventually blocking!
-      undefined
+    takeIdentifier =
+      takePacketIdentifier (clientPacketIdentifierPool client)
+    returnIdentifier Nothing =
+      pure ()
+    returnIdentifier (Just (i, _)) =
+      returnPacketIdentifier (clientPacketIdentifierPool client) i
+    withIdentifier (i, mresponse) = do
+      putMVar (clientOutputQueue client) (message i)
+      response <- takeMVar mresponse
+      case response of
+        PublishAcknowledgement _ -> pure ()
+        _                        -> throwIO $ ProtocolViolation
+          "Got something other than PUBACK for PUBLISH with QoS 1."
     withoutIdentifier  = do
       -- We cannot easily wait for when packet identifiers are available again.
       -- On the other hand throwing an exception seems too drastic. So (for the
