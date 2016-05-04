@@ -14,6 +14,7 @@ import Data.Int
 import Data.Source
 import Data.Source.Attoparsec
 import Data.Typeable
+import qualified Data.Map as M
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Builder as BS
 
@@ -35,10 +36,10 @@ data MqttClient c
      , clientKeepAlive               :: KeepAlive
      , clientRecentActivity          :: MVar Bool
      , clientOutputQueue             :: MVar Message
+     , clientSubscriptions           :: MVar (M.Map TopicFilter (Maybe QoS))
      , clientPacketIdentifierPool    :: PacketIdentifierPool Message
      , clientNewConnection           :: IO c
      , clientThread                  :: MVar (Maybe (Async ()))
-     , clientRecentLifeSign          :: MVar Bool
      }
 
 class Channel a where
@@ -84,8 +85,7 @@ connect c = modifyMVar_ (clientThread c) $ \mt->
         -- server to the client, a 'ProtocolViolation' exception will be thrown.
         messageProcessor :: Transducer IO BS.ByteString Message Message
         messageProcessor = each $ \message-> case message of
-            Publish {} -> do
-              pure ()
+            Publish {} -> pure ()
             -- The following packet types are responses to earlier requests.
             -- We need to dispatch them to the waiting threads.
             PublishAcknowledgement i ->
@@ -100,10 +100,9 @@ connect c = modifyMVar_ (clientThread c) $ \mt->
               resolvePacketIdentifier (clientPacketIdentifierPool c) i message
             UnsubscribeAcknowledgement i ->
               resolvePacketIdentifier (clientPacketIdentifierPool c) i message
-            -- Do nothing on a ping response. We don't care.
-            PingResponse ->
-              pure ()
-            -- The following messages should not be sent from the server to the client.
+            -- Do nothing on a PINGREQ.
+            PingResponse -> pure ()
+            -- The following packets must not be sent from the server to the client.
             _ -> throwIO $ ProtocolViolation "Unexpected packet type received from the server."
 
 disconnect :: MqttClient a -> IO ()
@@ -125,8 +124,7 @@ publishQoS0 client retain !topic !body =
 
 publish' :: MqttClient a -> QoS -> Retain -> Topic -> BS.ByteString -> IO ()
 publish' client qos retain !topic !body = -- Note the BangPatterns!
-  bracket takeIdentifier returnIdentifier $
-    maybe withoutIdentifier withIdentifier
+  bracket takeIdentifier returnIdentifier $ maybe withoutIdentifier withIdentifier
   where
     takeIdentifier =
       takePacketIdentifier (clientPacketIdentifierPool client)
@@ -171,6 +169,9 @@ publish' client qos retain !topic !body = -- Note the BangPatterns!
 
 publishQoS2 :: MqttClient a -> Retain -> Topic -> BS.ByteString -> IO ()
 publishQoS2  = undefined
+
+subscribe   :: MqttClient a -> M.Map TopicFilter (Maybe QoS) -> IO ()
+subscribe    = undefined
 
 data MqttException
    = ProtocolViolation String
