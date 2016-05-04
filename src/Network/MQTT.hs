@@ -24,8 +24,6 @@ import Control.Concurrent.MVar
 import Control.Concurrent.Async
 import Control.Concurrent.BoundedChan
 
-import System.Clock
-
 import Network.MQTT.Message
 import Network.MQTT.Message.RemainingLength
 import Network.MQTT.SubscriptionTree
@@ -35,6 +33,7 @@ data MqttClient c
    = MqttClient
      { clientIdentifier              :: ClientIdentifier
      , clientKeepAlive               :: KeepAlive
+     , clientRecentActivity          :: MVar Bool
      , clientOutputQueue             :: MVar Message
      , clientPacketIdentifierPool    :: PacketIdentifierPool Message
      , clientNewConnection           :: IO c
@@ -62,9 +61,16 @@ connect c = modifyMVar_ (clientThread c) $ \mt->
     maintainConnection :: Channel c => c -> IO ()
     maintainConnection c =
       keepAlive `race_` processOutput c `race_` processInput c
+    -- The keep alive thread wakes up every `keepAlive/2` seconds.
+    -- It reads and unsets the recent-activity flag.
+    -- Whenn it finds the recent-activity flag unset, it sends a PINGREQ to the
+    -- server. The interval between the last message and the PINGREQ is at
+    -- most `keepAlive` seconds (assuming we get woken up on time by the RTS).
     keepAlive :: IO ()
-    keepAlive = do
-      undefined
+    keepAlive = forever $ do
+      threadDelay $ 500000 * fromIntegral (clientKeepAlive c)
+      activity <- swapMVar (clientRecentActivity c) False
+      unless activity $ putMVar (clientOutputQueue c) PingRequest
     processOutput :: Channel c => c -> IO ()
     processOutput channel =
       forever $ takeMVar (clientOutputQueue c) >>= send channel . bMessage
