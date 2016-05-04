@@ -63,7 +63,7 @@ connect c = modifyMVar_ (clientThread c) $ \mt->
       keepAlive `race_` processOutput c `race_` processInput c
     -- The keep alive thread wakes up every `keepAlive/2` seconds.
     -- It reads and unsets the recent-activity flag.
-    -- Whenn it finds the recent-activity flag unset, it sends a PINGREQ to the
+    -- When it finds the recent-activity flag unset, it sends a PINGREQ to the
     -- server. The interval between the last message and the PINGREQ is at
     -- most `keepAlive` seconds (assuming we get woken up on time by the RTS).
     keepAlive :: IO ()
@@ -72,18 +72,13 @@ connect c = modifyMVar_ (clientThread c) $ \mt->
       activity <- swapMVar (clientRecentActivity c) False
       unless activity $ putMVar (clientOutputQueue c) PingRequest
     processOutput :: Channel c => c -> IO ()
-    processOutput channel =
-      forever $ takeMVar (clientOutputQueue c) >>= send channel . bMessage
+    processOutput channel = forever $ do
+      void $ swapMVar (clientRecentActivity c) True
+      takeMVar (clientOutputQueue c) >>= send channel . bMessage
     processInput :: Channel c => c -> IO ()
     processInput =
-      drain . messageProcessor . parse pMessage . lifeSignRegistrator . sample . receive
+      drain . messageProcessor . parse pMessage . sample . receive
       where
-        -- This 'Transducer' sets the recent-life-sign flag on every piece of
-        -- input. This solutions was chosen as it causes the least performance
-        -- penalty. Any other alternative I can think of would require getting
-        -- the current time here which would require a system call.
-        lifeSignRegistrator :: Transducer IO BS.ByteString BS.ByteString BS.ByteString
-        lifeSignRegistrator = each $ const $ void $ swapMVar (clientRecentLifeSign c) True
         -- This 'Transducer' decides what to do with the input.
         -- When a message is encoutered that is not supposed to be sent from the
         -- server to the client, a 'ProtocolViolation' exception will be thrown.
