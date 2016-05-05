@@ -17,6 +17,7 @@ import Data.Typeable
 import qualified Data.Map as M
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Builder as BS
+import qualified Data.ByteString.Lazy as LBS
 
 import Control.Exception
 import Control.Monad
@@ -33,32 +34,59 @@ data MqttClient c
    = MqttClient
      { clientIdentifier              :: ClientIdentifier
      , clientKeepAlive               :: KeepAlive
+     , clientWill                    :: Maybe Will
+     , clientUsernamePassword        :: Maybe (Username, Maybe Password)
      , clientRecentActivity          :: MVar Bool
      , clientOutputQueue             :: MVar Message
      , clientSubscriptions           :: MVar (M.Map TopicFilter (Maybe QoS))
      , clientPacketIdentifierPool    :: PacketIdentifierPool Message
-     , clientNewConnection           :: IO c
-     , clientThread                  :: MVar (Maybe (Async ()))
+     , clientNewConnection           :: IO Connection
+     , clientProcessor               :: MVar (Async ())
      }
 
-class Channel a where
-  type ChannelException a
-  send    :: a -> BS.Builder -> IO ()
-  receive :: a -> IO (Maybe BS.ByteString)
-  close   :: a -> IO ()
+class Runnable a where
+  start  :: a -> IO ()
+  stop   :: a -> IO ()
+  status :: a -> IO RunState
 
-newMqttClient :: IO (MqttClient a)
-newMqttClient = do
-  undefined
+data RunState
+   = Stopped
+   | Stopping
+   | Starting
+   | Running
+   deriving (Eq, Ord, Show)
+
+data Connection
+   = Connection
+     { receive :: IO Message
+     , send    :: Message -> IO ()
+     }
 
 connect :: MqttClient a -> IO ()
-connect c = modifyMVar_ (clientThread c) $ \mt->
-  case mt of
-    Just t  -> pure mt -- already connected, do nothing
-    Nothing -> do
-      undefined
+connect c = modifyMVar_ (clientProcessor c) $ \p->
+  poll p >>= \m-> case m of
+    -- Processing thread is stil running, no need to connect.
+    Nothing -> pure p
+    -- Processing thread not running, create a new one with new connection
+    Just _  -> clientNewConnection c >>= async . establishConnection
   where
-    maintainConnection :: Channel c => c -> IO ()
+    establishConnection :: Connection -> IO ()
+    establishConnection connection = do
+      send connection Connect
+        { connectClientIdentifier = clientIdentifier c
+        , connectCleanSession     = True
+        , connectKeepAlive        = clientKeepAlive c
+        , connectWill             = clientWill c
+        , connectUsernamePassword = clientUsernamePassword c
+        }
+      message <- receive connection
+      case message of
+        ConnectAcknowledgement a -> case a of
+          Right sessionPresent   -> maintainConnection connection -- TODO: handle sessionPresent
+          Left connectionRefusal -> throwIO $ ConnectionRefused connectionRefusal
+        _ -> throwIO $ ProtocolViolation "Expected CONNACK, got something else for CONNECT."
+      undefined
+    maintainConnection :: Connection -> IO ()
     maintainConnection c =
       keepAlive `race_` processOutput c `race_` processInput c
     -- The keep alive thread wakes up every `keepAlive/2` seconds.
@@ -71,44 +99,33 @@ connect c = modifyMVar_ (clientThread c) $ \mt->
       threadDelay $ 500000 * fromIntegral (clientKeepAlive c)
       activity <- swapMVar (clientRecentActivity c) False
       unless activity $ putMVar (clientOutputQueue c) PingRequest
-    processOutput :: Channel c => c -> IO ()
-    processOutput channel = forever $ do
+    processOutput :: Connection -> IO ()
+    processOutput connection = forever $ do
       void $ swapMVar (clientRecentActivity c) True
-      takeMVar (clientOutputQueue c) >>= send channel . bMessage
-    processInput :: Channel c => c -> IO ()
-    processInput =
-      drain . messageProcessor . parse pMessage . sample . receive
-      where
-        -- This 'Transducer' decides what to do with the input.
-        -- When a message is encoutered that is not supposed to be sent from the
-        -- server to the client, a 'ProtocolViolation' exception will be thrown.
-        messageProcessor :: Transducer IO BS.ByteString Message Message
-        messageProcessor = each $ \message-> case message of
-            Publish {} -> pure ()
-            -- The following packet types are responses to earlier requests.
-            -- We need to dispatch them to the waiting threads.
-            PublishAcknowledgement i ->
-              resolvePacketIdentifier (clientPacketIdentifierPool c) i message
-            PublishReceived i ->
-              resolvePacketIdentifier (clientPacketIdentifierPool c) i message
-            PublishRelease i ->
-              resolvePacketIdentifier (clientPacketIdentifierPool c) i message
-            PublishComplete i ->
-              resolvePacketIdentifier (clientPacketIdentifierPool c) i message
-            SubscribeAcknowledgement i _ ->
-              resolvePacketIdentifier (clientPacketIdentifierPool c) i message
-            UnsubscribeAcknowledgement i ->
-              resolvePacketIdentifier (clientPacketIdentifierPool c) i message
-            -- Do nothing on a PINGREQ.
-            PingResponse -> pure ()
-            -- The following packets must not be sent from the server to the client.
-            _ -> throwIO $ ProtocolViolation "Unexpected packet type received from the server."
-
-disconnect :: MqttClient a -> IO ()
-disconnect c =  modifyMVar_ (clientThread c) $ \mt->
-  case mt of
-    Nothing     -> pure mt -- already disconnected, do nothing
-    Just thread -> cancel thread >> pure mt
+      send connection =<< takeMVar (clientOutputQueue c)
+    processInput :: Connection -> IO ()
+    processInput connection = forever $ do
+      message <- receive connection
+      case message of
+        Publish {} -> pure ()
+        -- The following packet types are responses to earlier requests.
+        -- We need to dispatch them to the waiting threads.
+        PublishAcknowledgement i ->
+          resolvePacketIdentifier (clientPacketIdentifierPool c) i message
+        PublishReceived i ->
+          resolvePacketIdentifier (clientPacketIdentifierPool c) i message
+        PublishRelease i ->
+          resolvePacketIdentifier (clientPacketIdentifierPool c) i message
+        PublishComplete i ->
+          resolvePacketIdentifier (clientPacketIdentifierPool c) i message
+        SubscribeAcknowledgement i _ ->
+          resolvePacketIdentifier (clientPacketIdentifierPool c) i message
+        UnsubscribeAcknowledgement i ->
+          resolvePacketIdentifier (clientPacketIdentifierPool c) i message
+        -- Do nothing on a PINGREQ.
+        PingResponse -> pure ()
+        -- The following packets must not be sent from the server to the client.
+        _ -> throwIO $ ProtocolViolation "Unexpected packet type received from the server."
 
 publish :: MqttClient a -> Maybe QoS -> Retain -> Topic -> BS.ByteString -> IO ()
 publish client mqos !retain !topic !body = case mqos of
@@ -170,6 +187,7 @@ subscribe    = undefined
 
 data MqttException
    = ProtocolViolation String
+   | ConnectionRefused ConnectionRefusal
    deriving (Show, Typeable)
 
 instance Exception MqttException where
