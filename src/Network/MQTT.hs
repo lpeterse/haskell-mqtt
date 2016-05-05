@@ -111,17 +111,16 @@ disconnect c =  modifyMVar_ (clientThread c) $ \mt->
     Just thread -> cancel thread >> pure mt
 
 publish :: MqttClient a -> Maybe QoS -> Retain -> Topic -> BS.ByteString -> IO ()
-publish client Nothing !retain !topic !body =
-  putMVar (clientOutputQueue client) message
-  where
-    message = Publish {
+publish client mqos !retain !topic !body = case mqos of
+  Nothing  -> putMVar (clientOutputQueue client)
+    Publish {
       publishDuplicate = False,
       publishRetain = retain,
       publishQoS = Nothing,
       publishTopic = topic,
       publishBody = body }
-publish client (Just qos) !retain !topic !body = -- Note the BangPatterns!
-  bracket takeIdentifier returnIdentifier $ maybe withoutIdentifier withIdentifier
+  Just qos -> bracket takeIdentifier returnIdentifier $
+    maybe (withoutIdentifier qos) (withIdentifier qos)
   where
     takeIdentifier =
       takePacketIdentifier (clientPacketIdentifierPool client)
@@ -129,8 +128,8 @@ publish client (Just qos) !retain !topic !body = -- Note the BangPatterns!
       pure ()
     returnIdentifier (Just (i, _)) =
       returnPacketIdentifier (clientPacketIdentifierPool client) i
-    withIdentifier (i, mresponse) = do
-      putMVar (clientOutputQueue client) (message i)
+    withIdentifier qos (i, mresponse) = do
+      putMVar (clientOutputQueue client) (message qos i)
       response <- takeMVar mresponse
       case qos of
         AtLeastOnce ->
@@ -149,14 +148,14 @@ publish client (Just qos) !retain !topic !body = -- Note the BangPatterns!
                   "Expected PUBREL, got something else for PUBLISH with QoS 2."
             _ -> throwIO $ ProtocolViolation
               "Expected PUBREC, got something else for PUBLISH with QoS 2."
-    withoutIdentifier  = do
+    withoutIdentifier qos = do
       -- We cannot easily wait for when packet identifiers are available again.
       -- On the other hand throwing an exception seems too drastic. So (for the
       -- extremely unlikely) case of packet identifier exhaustion, we shall wait
       -- 1 second and then try again.
       threadDelay 1000000
       publish client (Just qos) retain topic body
-    message i = Publish {
+    message qos i = Publish {
       publishDuplicate = False,
       publishRetain = retain,
       publishQoS = Just (qos, i),
