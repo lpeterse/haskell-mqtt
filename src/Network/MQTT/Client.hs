@@ -75,6 +75,7 @@ data Connection
    = Connection
      { receive :: IO BS.ByteString
      , send    :: BS.ByteString -> IO ()
+     , close   :: IO ()
      }
 
 connect :: MqttClient -> IO ()
@@ -87,10 +88,10 @@ connect c = modifyMVar_ (clientProcessor c) $ \p->
   where
     handleConnection :: Connection -> IO ()
     handleConnection connection =
-      sendConnectMessage >> receiveConnectAcknowledgement >>= maintainConnection
+      sendConnect >> receiveConnectAcknowledgement >>= maintainConnection
       where
-        sendConnectMessage :: IO ()
-        sendConnectMessage =
+        sendConnect :: IO ()
+        sendConnect =
           send connection $ LBS.toStrict $ BS.toLazyByteString $ bRawMessage Connect
             { connectClientIdentifier = clientIdentifier c
             , connectCleanSession     = False
@@ -128,10 +129,13 @@ connect c = modifyMVar_ (clientProcessor c) $ \p->
               unless activity $ putMVar (clientOutputQueue c) PingRequest
 
             handleOutput :: IO ()
-            handleOutput = forever $ do
+            handleOutput = do
               void $ swapMVar (clientRecentActivity c) True
-              nextMessage <- takeMVar (clientOutputQueue c)
-              send connection $ LBS.toStrict $ BS.toLazyByteString $ bRawMessage nextMessage
+              message <- takeMVar (clientOutputQueue c)
+              send connection $ LBS.toStrict $ BS.toLazyByteString $ bRawMessage message
+              case message of
+                Disconnect -> close connection
+                _          -> handleOutput
 
             handleInput :: BS.ByteString -> IO ()
             handleInput i = do
@@ -141,7 +145,15 @@ connect c = modifyMVar_ (clientProcessor c) $ \p->
                 A.Fail _ _ e     -> throwIO $ ParserError e
                 A.Partial _      -> throwIO $ ParserError "Unexpected end of input."
               where
-                f (Publish {}) = pure ()
+                f msg@Publish {} = case publishQoS msg of
+                  Nothing -> publishLocal c Message
+                    { qos      = QoS0
+                    , retained = publishRetain msg
+                    , topic    = publishTopic msg
+                    , payload  = publishBody msg
+                    }
+                  Just (AtLeastOnce, i) -> undefined
+                  Just (ExactlyOnce, i) -> undefined
                 -- The following packet types are responses to earlier requests.
                 -- We need to dispatch them to the waiting threads.
                 f (PublishAcknowledgement (PacketIdentifier i)) =
@@ -169,7 +181,7 @@ connect c = modifyMVar_ (clientProcessor c) $ \p->
                 f (PublishComplete (PacketIdentifier i)) = do
                   modifyMVar_ (clientNotAcknowledgedOutbound c) $ \im->
                     case IM.lookup i im of
-                      Nothing                     ->
+                      Nothing ->
                         pure im
                       Just (NotCompletePublish x) ->
                         pure (IM.delete i im)
@@ -179,7 +191,7 @@ connect c = modifyMVar_ (clientProcessor c) $ \p->
                 f (SubscribeAcknowledgement (PacketIdentifier i) as) =
                   modifyMVar_ (clientNotAcknowledgedOutbound c) $ \im->
                     case IM.lookup i im of
-                      Nothing                             ->
+                      Nothing ->
                         pure im
                       Just (NotAcknowledgedSubscribe m x) -> do
                         putMVar x as
