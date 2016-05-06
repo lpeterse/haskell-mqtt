@@ -45,6 +45,7 @@ type Username         = T.Text
 type Password         = BS.ByteString
 type Topic            = T.Text
 type TopicFilter      = T.Text
+type Payload          = BS.ByteString
 
 data QoS
    = AtLeastOnce
