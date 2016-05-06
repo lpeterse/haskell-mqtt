@@ -29,7 +29,8 @@ data QoS
    deriving (Eq, Ord, Show)
 
 data MqttException
-   = ProtocolViolation String
+   = ParserError String
+   | ProtocolViolation String
    | ConnectionRefused ConnectionRefusal
    deriving (Eq, Ord, Show, Typeable)
 
