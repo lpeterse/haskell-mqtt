@@ -15,6 +15,7 @@ import Data.Source
 import Data.Source.Attoparsec
 import Data.Typeable
 import qualified Data.Map as M
+import qualified Data.IntMap as IM
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Builder as BS
 import qualified Data.ByteString.Lazy as LBS
@@ -36,13 +37,24 @@ data MqttClient c
      , clientKeepAlive               :: KeepAlive
      , clientWill                    :: Maybe Will
      , clientUsernamePassword        :: Maybe (Username, Maybe Password)
+     , clientNewConnection           :: IO Connection
      , clientRecentActivity          :: MVar Bool
      , clientOutputQueue             :: MVar Message
-     , clientSubscriptions           :: MVar (M.Map TopicFilter (Maybe QoS))
-     , clientPacketIdentifierPool    :: PacketIdentifierPool Message
-     , clientNewConnection           :: IO Connection
+     , clientOutput                  :: MVar (Either Message (PacketIdentifier -> (Message, NotAcknowledgedOutbound)))
      , clientProcessor               :: MVar (Async ())
+     , clientNotAcknowledgedInbound  :: MVar (IM.IntMap NotAcknowledgedInbound)
+     , clientNotAcknowledgedOutbound :: MVar (IM.IntMap NotAcknowledgedOutbound)
      }
+
+data NotAcknowledgedOutbound
+   = NotAcknowledgedPublish     Message (MVar ())
+   | NotReceivedPublish         Message (MVar ())
+   | NotCompletePublish         (MVar ())
+   | NotAcknowledgedSubscribe   [(TopicFilter, Maybe QoS)] (MVar [Maybe QoS])
+   | NotAcknowledgedUnsubscribe [TopicFilter] (MVar ())
+
+data NotAcknowledgedInbound
+   = NotReleasedPublish         (IM.IntMap (MVar ()))
 
 class Runnable a where
   start  :: a -> IO ()
@@ -74,7 +86,7 @@ connect c = modifyMVar_ (clientProcessor c) $ \p->
     establishConnection connection = do
       send connection Connect
         { connectClientIdentifier = clientIdentifier c
-        , connectCleanSession     = True
+        , connectCleanSession     = False
         , connectKeepAlive        = clientKeepAlive c
         , connectWill             = clientWill c
         , connectUsernamePassword = clientUsernamePassword c
@@ -111,73 +123,81 @@ connect c = modifyMVar_ (clientProcessor c) $ \p->
         -- The following packet types are responses to earlier requests.
         -- We need to dispatch them to the waiting threads.
         PublishAcknowledgement i ->
-          resolvePacketIdentifier (clientPacketIdentifierPool c) i message
-        PublishReceived i ->
-          resolvePacketIdentifier (clientPacketIdentifierPool c) i message
-        PublishRelease i ->
-          resolvePacketIdentifier (clientPacketIdentifierPool c) i message
-        PublishComplete i ->
-          resolvePacketIdentifier (clientPacketIdentifierPool c) i message
-        SubscribeAcknowledgement i _ ->
-          resolvePacketIdentifier (clientPacketIdentifierPool c) i message
+          modifyMVar_ (clientNotAcknowledgedOutbound c) $ \im->
+            case IM.lookup i im of
+              Just (NotAcknowledgedPublish _ x) ->
+                putMVar x () >> pure (IM.delete i im)
+              _ -> throwIO $ ProtocolViolation "Expected PUBACK, got something else."
+        PublishReceived i -> do
+          modifyMVar_ (clientNotAcknowledgedOutbound c) $ \im->
+            case IM.lookup i im of
+              Just (NotReceivedPublish _ x) ->
+                pure (IM.insert i (NotCompletePublish x) im)
+              _ -> throwIO $ ProtocolViolation "Expected PUBREC, got something else."
+          putMVar (clientOutputQueue c) (PublishRelease i)
+        PublishRelease i -> do
+          modifyMVar_ (clientNotAcknowledgedInbound c) $ \im->
+            case IM.lookup i im of
+              Nothing -> -- probably a duplicate
+                pure im
+              Just (NotReleasedPublish _ x) ->
+                pure (IM.insert i (NotCompletePublish x) im)
+              _ -> throwIO $ ProtocolViolation "Expected PUBREL, got something else."
+          putMVar (clientOutputQueue c) (PublishComplete i)
+        PublishComplete i -> do
+          modifyMVar_ (clientNotAcknowledgedOutbound c) $ \im->
+            case IM.lookup i im of
+              Nothing                     -> pure im
+              Just (NotCompletePublish x) -> pure (IM.delete i im)
+              _ -> throwIO $ ProtocolViolation "Expected PUBCOMP, got something else."
+          putMVar (clientOutputQueue c) (PublishComplete i)
+        SubscribeAcknowledgement i as ->
+          modifyMVar_ (clientNotAcknowledgedOutbound c) $ \im->
+            case IM.lookup i im of
+              Nothing                           -> pure im
+              Just (NotAcknowledgedSubscribe x) -> putMVar x as >> pure (IM.delete i im)
+              _ -> throwIO $ ProtocolViolation "Expected PUBCOMP, got something else."
         UnsubscribeAcknowledgement i ->
-          resolvePacketIdentifier (clientPacketIdentifierPool c) i message
-        -- Do nothing on a PINGREQ.
+          modifyMVar_ (clientNotAcknowledgedOutbound c) $ \im->
+            case IM.lookup i im of
+              Nothing                             -> pure im
+              Just (NotAcknowledgedUnsubscribe x) -> putMVar x >> pure (IM.delete i im)
+              _ -> throwIO $ ProtocolViolation "Expected PUBCOMP, got something else."
         PingResponse -> pure ()
         -- The following packets must not be sent from the server to the client.
         _ -> throwIO $ ProtocolViolation "Unexpected packet type received from the server."
 
 publish :: MqttClient a -> Maybe QoS -> Retain -> Topic -> BS.ByteString -> IO ()
 publish client mqos !retain !topic !body = case mqos of
-  Nothing  -> putMVar (clientOutputQueue client)
-    Publish {
-      publishDuplicate = False,
-      publishRetain = retain,
-      publishQoS = Nothing,
-      publishTopic = topic,
-      publishBody = body }
-  Just qos -> bracket takeIdentifier returnIdentifier $
-    maybe (withoutIdentifier qos) (withIdentifier qos)
+  Nothing  ->
+    putMVar (clientOutput client) $ Left $ message Nothing
+  Just qos -> do
+    transmissionComplete <- newEmptyMVar
+    putMVar (clientOutput client) $ Right $ f transmissionComplete qos
+    takeMVar transmissionComplete
   where
-    takeIdentifier =
-      takePacketIdentifier (clientPacketIdentifierPool client)
-    returnIdentifier Nothing =
-      pure ()
-    returnIdentifier (Just (i, _)) =
-      returnPacketIdentifier (clientPacketIdentifierPool client) i
-    withIdentifier qos (i, mresponse) = do
-      putMVar (clientOutputQueue client) (message qos i)
-      response <- takeMVar mresponse
-      case qos of
-        AtLeastOnce ->
-          case response of
-            PublishAcknowledgement _ -> pure ()
-            _ -> throwIO $ ProtocolViolation
-              "Expected PUBACK, got something else for PUBLISH with QoS 1."
-        ExactlyOnce ->
-          case response of
-            PublishReceived _ -> do
-              putMVar (clientOutputQueue client) (PublishRelease i)
-              response' <- takeMVar mresponse
-              case response' of
-                PublishComplete _ -> pure ()
-                _ -> throwIO $ ProtocolViolation
-                  "Expected PUBREL, got something else for PUBLISH with QoS 2."
-            _ -> throwIO $ ProtocolViolation
-              "Expected PUBREC, got something else for PUBLISH with QoS 2."
-    withoutIdentifier qos = do
-      -- We cannot easily wait for when packet identifiers are available again.
-      -- On the other hand throwing an exception seems too drastic. So (for the
-      -- extremely unlikely) case of packet identifier exhaustion, we shall wait
-      -- 1 second and then try again.
-      threadDelay 1000000
-      publish client (Just qos) retain topic body
-    message qos i = Publish {
+    f transmissionComplete qos packetIdentifier =
+      ( m, g m { publishDuplicate = True } transmissionComplete )
+      where
+        m = message $ Just (qos, packetIdentifier)
+        g = case qos of
+              AtLeastOnce -> NotAcknowledgedPublish
+              ExactlyOnce -> NotReceivedPublish
+    message qp = Publish {
       publishDuplicate = False,
-      publishRetain = retain,
-      publishQoS = Just (qos, i),
-      publishTopic = topic,
-      publishBody = body }
+      publishRetain    = retain,
+      publishQoS       = qp,
+      publishTopic     = topic,
+      publishBody      = body }
+{-
+      withoutIdentifier qos = do
+        -- We cannot easily wait for when packet identifiers are available again.
+        -- On the other hand throwing an exception seems too drastic. So (for the
+        -- extremely unlikely) case of packet identifier exhaustion, we shall wait
+        -- 1 second and then try again.
+        threadDelay 1000000
+        publish client (Just qos) retain topic body
+-}
 
 publishQoS2 :: MqttClient a -> Retain -> Topic -> BS.ByteString -> IO ()
 publishQoS2  = undefined
