@@ -37,6 +37,7 @@ data MqttClient
      , clientWill                    :: Maybe Will
      , clientUsernamePassword        :: Maybe (Username, Maybe Password)
      , clientNewConnection           :: IO Connection
+     , clientAutomaticReconnect      :: MVar Bool
      , clientRecentActivity          :: MVar Bool
      , clientOutputQueue             :: MVar RawMessage
      , clientOutput                  :: MVar (Either RawMessage (PacketIdentifier -> (RawMessage, NotAcknowledgedOutbound)))
@@ -77,6 +78,12 @@ data Connection
      , send    :: BS.ByteString -> IO ()
      , close   :: IO ()
      }
+
+-- | Disconnects the client.
+--   * The operation returns after the DISCONNECT packet has been written to the
+--     connection and the connection has been closed. (FIXME it doesn't do so right now).
+disconnect :: MqttClient -> IO ()
+disconnect c = putMVar (clientOutput c) (Left Disconnect)
 
 connect :: MqttClient -> IO ()
 connect c = modifyMVar_ (clientProcessor c) $ \p->
