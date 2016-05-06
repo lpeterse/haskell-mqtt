@@ -41,7 +41,7 @@ type Topic            = T.Text
 type TopicFilter      = T.Text
 type Payload          = BS.ByteString
 
-data QoS
+data QualityOfService
    = AtLeastOnce
    | ExactlyOnce
    deriving (Eq, Ord, Show, Enum)
@@ -58,11 +58,11 @@ data Will
    = Will
      { willTopic   :: T.Text
      , willMessage :: BS.ByteString
-     , willQoS     :: Maybe QoS
+     , willQoS     :: Maybe QualityOfService
      , willRetain  :: Bool
      } deriving (Eq, Show)
 
-data Message
+data RawMessage
    = Connect
      { connectClientIdentifier :: ClientIdentifier
      , connectCleanSession     :: CleanSession
@@ -75,15 +75,15 @@ data Message
      { publishDuplicate        :: Bool
      , publishRetain           :: Bool
      , publishTopic            :: T.Text
-     , publishQoS              :: Maybe (QoS, PacketIdentifier)
+     , publishQoS              :: Maybe (QualityOfService, PacketIdentifier)
      , publishBody             :: BS.ByteString
      }
    | PublishAcknowledgement       PacketIdentifier
    | PublishReceived              PacketIdentifier
    | PublishRelease               PacketIdentifier
    | PublishComplete              PacketIdentifier
-   | Subscribe                    PacketIdentifier [(TopicFilter, Maybe QoS)]
-   | SubscribeAcknowledgement     PacketIdentifier [Maybe (Maybe QoS)]
+   | Subscribe                    PacketIdentifier [(TopicFilter, Maybe QualityOfService)]
+   | SubscribeAcknowledgement     PacketIdentifier [Maybe (Maybe QualityOfService)]
    | Unsubscribe                  PacketIdentifier [TopicFilter]
    | UnsubscribeAcknowledgement   PacketIdentifier
    | PingRequest
@@ -91,8 +91,8 @@ data Message
    | Disconnect
    deriving (Eq, Show)
 
-pMessage :: A.Parser Message
-pMessage = do
+pRawMessage :: A.Parser RawMessage
+pRawMessage = do
   h   <- A.anyWord8
   len <- pRemainingLength
   let flags = h .&. 0x0f
@@ -111,18 +111,18 @@ pMessage = do
     0xc0 -> pPingRequest
     0xd0 -> pPingResponse
     0xe0 -> pDisconnect
-    _    -> const $ fail "pMessage: Packet type not implemented."
+    _    -> const $ fail "pRawMessage: Packet type not implemented."
   where
     assureCorrentLength len parser = do
       begin <- pPosition
       a <- parser
       end <- pPosition
       when (end - begin /= len) $
-        fail $ "pMessage: Remaining length does not match expectation. Expected: "
+        fail $ "pRawMessage: Remaining length does not match expectation. Expected: "
           ++ show len  ++ ". Parsed: " ++ show (end - begin)
       pure a
 
-pConnect :: Int -> Word8 -> A.Parser Message
+pConnect :: Int -> Word8 -> A.Parser RawMessage
 pConnect len hflags
   | hflags /= 0 = fail "pConnect: The header flags are reserved and MUST be set to 0."
   | otherwise   = do
@@ -166,7 +166,7 @@ pConnect len hflags
       | flags .&. 0x40 == 0 = pure Nothing
       | otherwise           = Just <$> pBlob
 
-pConnectAcknowledgement :: Int -> Word8 -> A.Parser Message
+pConnectAcknowledgement :: Int -> Word8 -> A.Parser RawMessage
 pConnectAcknowledgement len hflags
   | hflags /= 0 = fail "pConnectAcknowledgement: The header flags are reserved and MUST be set to 0."
   | otherwise   = do
@@ -181,7 +181,7 @@ pConnectAcknowledgement len hflags
       | returnCode <= 5 = pure $ ConnectAcknowledgement $ Left $ toEnum (fromIntegral returnCode - 1)
       | otherwise       = fail "pConnectAcknowledgement: Invalid (reserved) return code."
 
-pPublish :: Int -> Word8 -> A.Parser Message
+pPublish :: Int -> Word8 -> A.Parser RawMessage
 pPublish len hflags = do
   begin <- pPosition
   Publish
@@ -195,27 +195,27 @@ pPublish len hflags = do
       _    -> fail "pPublish: Violation of [MQTT-3.3.1-4]."
     <*> (pPosition >>= \end-> A.take (len - (end - begin)))
 
-pPublishAcknowledgement :: Int -> Word8 -> A.Parser Message
+pPublishAcknowledgement :: Int -> Word8 -> A.Parser RawMessage
 pPublishAcknowledgement len hflags
   | hflags /= 0 = fail "pPubAck: The header flags are reserved and MUST be set to 0."
   | otherwise   = PublishAcknowledgement <$> pPacketIdentifier
 
-pPublishReceived :: Int -> Word8 -> A.Parser Message
+pPublishReceived :: Int -> Word8 -> A.Parser RawMessage
 pPublishReceived len hflags
   | hflags /= 0 = fail "pPublishReceived: The header flags are reserved and MUST be set to 0."
   | otherwise   = PublishReceived <$> pPacketIdentifier
 
-pPublishRelease :: Int -> Word8 -> A.Parser Message
+pPublishRelease :: Int -> Word8 -> A.Parser RawMessage
 pPublishRelease len hflags
   | hflags /= 2 = fail "pPublishRelease: The header flags are reserved and MUST be set to 2."
   | otherwise   = PublishRelease <$> pPacketIdentifier
 
-pPublishComplete :: Int -> Word8 -> A.Parser Message
+pPublishComplete :: Int -> Word8 -> A.Parser RawMessage
 pPublishComplete len hflags
   | hflags /= 0 = fail "pPublishComplete: The header flags are reserved and MUST be set to 0."
   | otherwise   = PublishComplete <$> pPacketIdentifier
 
-pSubscribe :: Int -> Word8 -> A.Parser Message
+pSubscribe :: Int -> Word8 -> A.Parser RawMessage
 pSubscribe len hflags
   | hflags /= 2 = fail "pSubscribe: The header flags are reserved and MUST be set to 2."
   | otherwise = do
@@ -232,7 +232,7 @@ pSubscribe len hflags
         0x02 -> pure $ Just ExactlyOnce
         _    -> fail $ "pSubscribe: Violation of [MQTT-3.8.3-4]." ++ show qos )
 
-pSubscribeAcknowledgement :: Int -> Word8 -> A.Parser Message
+pSubscribeAcknowledgement :: Int -> Word8 -> A.Parser RawMessage
 pSubscribeAcknowledgement len hflags
   | hflags /= 0 = fail "pSubscribeAcknowledgement: The header flags are reserved and MUST be set to 0."
   | otherwise   = SubscribeAcknowledgement
@@ -248,27 +248,27 @@ pSubscribeAcknowledgement len hflags
         0x80 -> pure Nothing
         _    -> fail "pSubscribeAcknowledgement: Violation of [MQTT-3.9.3-2]."
 
-pUnsubscribe :: Int -> Word8 -> A.Parser Message
+pUnsubscribe :: Int -> Word8 -> A.Parser RawMessage
 pUnsubscribe len hflags
   | hflags /= 2 = fail "pUnsubscribe: The header flags are reserved and MUST be set to 2."
   | otherwise   = Unsubscribe <$> pPacketIdentifier <*> pManyWithLimit (len - 2) pUtf8String
 
-pUnsubscribeAcknowledgement :: Int -> Word8 -> A.Parser Message
+pUnsubscribeAcknowledgement :: Int -> Word8 -> A.Parser RawMessage
 pUnsubscribeAcknowledgement len hflags
   | hflags /= 0 = fail "pUnsubscribeAcknowledgement: The header flags are reserved and MUST be set to 0."
   | otherwise   = UnsubscribeAcknowledgement <$> pPacketIdentifier
 
-pPingRequest :: Int -> Word8 -> A.Parser Message
+pPingRequest :: Int -> Word8 -> A.Parser RawMessage
 pPingRequest len hflags
   | hflags /= 0 = fail "pPingRequest: The header flags are reserved and MUST be set to 0."
   | otherwise   = pure PingRequest
 
-pPingResponse :: Int -> Word8 -> A.Parser Message
+pPingResponse :: Int -> Word8 -> A.Parser RawMessage
 pPingResponse len hflags
   | hflags /= 0 = fail "pPingResponse: The header flags are reserved and MUST be set to 0."
   | otherwise   = pure PingResponse
 
-pDisconnect :: Int -> Word8 -> A.Parser Message
+pDisconnect :: Int -> Word8 -> A.Parser RawMessage
 pDisconnect len hflags
   | hflags /= 0 = fail "pDisconnect: The header flags are reserved and MUST be set to 0."
   | otherwise   = pure Disconnect
@@ -279,8 +279,8 @@ pPacketIdentifier = do
   lsb <- A.anyWord8
   pure $  PacketIdentifier $ (fromIntegral msb * 256) + fromIntegral lsb
 
-bMessage :: Message -> BS.Builder
-bMessage (Connect (ClientIdentifier i) cleanSession keepAlive will credentials) =
+bRawMessage :: RawMessage -> BS.Builder
+bRawMessage (Connect (ClientIdentifier i) cleanSession keepAlive will credentials) =
   BS.word8 0x10
     <> BS.word8 (fromIntegral len)
     <> BS.word64BE ( 0x00044d5154540400 .|. f1 .|. f2 .|. f3 )
@@ -308,11 +308,11 @@ bMessage (Connect (ClientIdentifier i) cleanSession keepAlive will credentials) 
       + maybe 0 ( \(u,mp)->
           2 + BS.length ( T.encodeUtf8 u ) + maybe 0 ( (2 +) . BS.length ) mp
         ) credentials
-bMessage (ConnectAcknowledgement crs) =
+bRawMessage (ConnectAcknowledgement crs) =
   BS.word32BE $ 0x20020000 .|. case crs of
     Left cr -> fromIntegral $ fromEnum cr + 1
     Right s -> if s then 0x0100 else 0
-bMessage (Publish d r t mqp b) =
+bRawMessage (Publish d r t mqp b) =
   BS.word8 ( 0x30
     .|. ( if d then 0x08 else 0 )
     .|. ( if r then 0x01 else 0 )
@@ -330,15 +330,15 @@ bMessage (Publish d r t mqp b) =
   <> BS.byteString b
   where
     len = 2 + BS.length (T.encodeUtf8 t) + BS.length b + maybe 0 (const 2) mqp
-bMessage (PublishAcknowledgement (PacketIdentifier p)) =
+bRawMessage (PublishAcknowledgement (PacketIdentifier p)) =
   BS.word16BE 0x4002 <> BS.word16BE (fromIntegral p)
-bMessage (PublishReceived (PacketIdentifier p)) =
+bRawMessage (PublishReceived (PacketIdentifier p)) =
   BS.word16BE 0x5002 <> BS.word16BE (fromIntegral p)
-bMessage (PublishRelease (PacketIdentifier p)) =
+bRawMessage (PublishRelease (PacketIdentifier p)) =
   BS.word16BE 0x6202 <> BS.word16BE (fromIntegral p)
-bMessage (PublishComplete (PacketIdentifier p)) =
+bRawMessage (PublishComplete (PacketIdentifier p)) =
   BS.word16BE 0x7002 <> BS.word16BE (fromIntegral p)
-bMessage (Subscribe (PacketIdentifier p) tf)  =
+bRawMessage (Subscribe (PacketIdentifier p) tf)  =
   BS.word8 0x82 <> bRemainingLength len <> BS.word16BE (fromIntegral p) <> mconcat ( map f tf )
   where
     f (t, q) = (bUtf8String t <>) $ BS.word8 $ case q of
@@ -346,7 +346,7 @@ bMessage (Subscribe (PacketIdentifier p) tf)  =
       Just AtLeastOnce -> 0x01
       Just ExactlyOnce -> 0x02
     len  = 2 + length tf * 3 + sum ( map (BS.length . T.encodeUtf8 . fst) tf )
-bMessage (SubscribeAcknowledgement (PacketIdentifier p) rcs) =
+bRawMessage (SubscribeAcknowledgement (PacketIdentifier p) rcs) =
   BS.word8 0x90 <> bRemainingLength (2 + length rcs)
     <> BS.word16BE (fromIntegral p) <> mconcat ( map ( BS.word8 . f ) rcs )
   where
@@ -354,17 +354,17 @@ bMessage (SubscribeAcknowledgement (PacketIdentifier p) rcs) =
     f (Just Nothing)            = 0x00
     f (Just (Just AtLeastOnce)) = 0x01
     f (Just (Just ExactlyOnce)) = 0x02
-bMessage (Unsubscribe (PacketIdentifier p) tfs) =
+bRawMessage (Unsubscribe (PacketIdentifier p) tfs) =
   BS.word8 0xa2 <> bRemainingLength len
     <> BS.word16BE (fromIntegral p) <> mconcat ( map bUtf8String tfs )
   where
     bfs = map T.encodeUtf8 tfs
     len = 2 + sum ( map ( ( + 2 ) . BS.length ) bfs )
-bMessage (UnsubscribeAcknowledgement (PacketIdentifier p)) =
+bRawMessage (UnsubscribeAcknowledgement (PacketIdentifier p)) =
   BS.word16BE 0xb002 <> BS.word16BE (fromIntegral p)
-bMessage PingRequest =
+bRawMessage PingRequest =
   BS.word16BE 0xc000
-bMessage PingResponse =
+bRawMessage PingResponse =
   BS.word16BE 0xd000
-bMessage Disconnect =
+bRawMessage Disconnect =
   BS.word16BE 0xe000

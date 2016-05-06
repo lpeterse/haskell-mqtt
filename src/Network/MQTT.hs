@@ -14,9 +14,23 @@ import Control.Exception
 
 import Network.MQTT.Message
 
+data Message
+   = Message
+     { qos      :: QoS
+     , retained :: Bool
+     , topic    :: Topic
+     , payload  :: Payload
+     } deriving (Eq, Ord, Show)
+
+data QoS
+   = QoS0
+   | QoS1
+   | QoS2
+   deriving (Eq, Ord, Show)
+
 data MqttException
    = ProtocolViolation String
    | ConnectionRefused ConnectionRefusal
-   deriving (Show, Typeable)
+   deriving (Eq, Ord, Show, Typeable)
 
 instance Exception MqttException where
