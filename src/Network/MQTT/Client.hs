@@ -28,7 +28,6 @@ import Control.Concurrent.Async
 import Network.MQTT
 import Network.MQTT.Message
 import Network.MQTT.Message.RemainingLength
-import Network.MQTT.PacketIdentifier
 
 data MqttClient
    = MqttClient
@@ -37,9 +36,9 @@ data MqttClient
      , clientWill                    :: MVar (Maybe Will)
      , clientUsernamePassword        :: MVar (Maybe (Username, Maybe Password))
      , clientRecentActivity          :: MVar Bool
-     , clientOutput                  :: MVar (Either RawMessage (PacketIdentifier -> (RawMessage, NotAcknowledgedOutbound)))
-     , clientNotAcknowledgedInbound  :: MVar (IM.IntMap NotAcknowledgedInbound)
-     , clientNotAcknowledgedOutbound :: MVar (IM.IntMap NotAcknowledgedOutbound)
+     , clientOutput                  :: MVar (Either RawMessage (PacketIdentifier -> (RawMessage, OutboundState)))
+     , clientInboundState            :: MVar (IM.IntMap InboundState)
+     , clientOutboundState           :: MVar (IM.IntMap OutboundState)
      , clientMessages                :: MVar Tail
      , clientNewConnection           :: MVar (IO Connection)
      , clientThreads                 :: MVar (Async ())
@@ -59,15 +58,14 @@ message  :: Messages -> IO Message
 message (Messages mt) =
   modifyMVar mt $ \(Tail next)-> readMVar next
 
-data NotAcknowledgedOutbound
+data OutboundState
    = NotAcknowledgedPublish     RawMessage (MVar ())
    | NotReceivedPublish         RawMessage (MVar ())
    | NotCompletePublish         (MVar ())
    | NotAcknowledgedSubscribe   RawMessage (MVar [Maybe QoS])
    | NotAcknowledgedUnsubscribe RawMessage (MVar ())
 
-newtype NotAcknowledgedInbound
-      = NotReleasedPublish      Message
+newtype InboundState = NotReleasedPublish Message
 
 -- | Disconnects the client.
 --   * The operation returns after the DISCONNECT packet has been written to the
@@ -141,9 +139,9 @@ connect c = modifyMVar_ (clientThreads c) $ \p->
                 Right imessage ->
                   send connection . LBS.toStrict . BS.toLazyByteString . bRawMessage =<< assignPacketIdentifier imessage
               where
-                assignPacketIdentifier :: (PacketIdentifier -> (RawMessage, NotAcknowledgedOutbound)) -> IO RawMessage
+                assignPacketIdentifier :: (PacketIdentifier -> (RawMessage, OutboundState)) -> IO RawMessage
                 assignPacketIdentifier f =
-                  modifyMVar (clientNotAcknowledgedOutbound c) (`g` [0x0000 .. 0xffff]) >>= \mm-> case mm of
+                  modifyMVar (clientOutboundState c) (`g` [0x0000 .. 0xffff]) >>= \mm-> case mm of
                     Just m -> pure m
                     -- We cannot easily wait for when packet identifiers are available again.
                     -- On the other hand throwing an exception seems too drastic. So (for the
@@ -180,7 +178,7 @@ connect c = modifyMVar_ (clientThreads c) $ \p->
                       }
                     putMVar (clientOutput c) $ Left $ PublishAcknowledgement i
                   Just (ExactlyOnce, PacketIdentifier i) ->
-                    modifyMVar_ (clientNotAcknowledgedInbound c) $
+                    modifyMVar_ (clientInboundState c) $
                       pure . IM.insert i (NotReleasedPublish Message
                         { qos      = QoS2
                         , retained = publishRetain msg
@@ -190,20 +188,20 @@ connect c = modifyMVar_ (clientThreads c) $ \p->
                 -- The following packet types are responses to earlier requests.
                 -- We need to dispatch them to the waiting threads.
                 f (PublishAcknowledgement (PacketIdentifier i)) =
-                  modifyMVar_ (clientNotAcknowledgedOutbound c) $ \im->
+                  modifyMVar_ (clientOutboundState c) $ \im->
                     case IM.lookup i im of
                       Just (NotAcknowledgedPublish _ x) ->
                         putMVar x () >> pure (IM.delete i im)
                       _ -> throwIO $ ProtocolViolation "Expected PUBACK, got something else."
                 f (PublishReceived (PacketIdentifier i)) = do
-                  modifyMVar_ (clientNotAcknowledgedOutbound c) $ \im->
+                  modifyMVar_ (clientOutboundState c) $ \im->
                     case IM.lookup i im of
                       Just (NotReceivedPublish _ x) ->
                         pure (IM.insert i (NotCompletePublish x) im)
                       _ -> throwIO $ ProtocolViolation "Expected PUBREC, got something else."
                   putMVar (clientOutput c) (Left $ PublishRelease (PacketIdentifier i))
                 f (PublishRelease (PacketIdentifier i)) = do
-                  modifyMVar_ (clientNotAcknowledgedInbound c) $ \im->
+                  modifyMVar_ (clientInboundState c) $ \im->
                     case IM.lookup i im of
                       Just (NotReleasedPublish msg) -> do
                         publishLocal c msg -- Publish exactly once here!
@@ -212,7 +210,7 @@ connect c = modifyMVar_ (clientThreads c) $ \p->
                         pure im
                   putMVar (clientOutput c) (Left $ PublishComplete (PacketIdentifier i))
                 f (PublishComplete (PacketIdentifier i)) = do
-                  modifyMVar_ (clientNotAcknowledgedOutbound c) $ \im->
+                  modifyMVar_ (clientOutboundState c) $ \im->
                     case IM.lookup i im of
                       Nothing ->
                         pure im
@@ -222,7 +220,7 @@ connect c = modifyMVar_ (clientThreads c) $ \p->
                         throwIO $ ProtocolViolation "Expected PUBCOMP, got something else."
                   putMVar (clientOutput c) (Left $ PublishComplete (PacketIdentifier i))
                 f (SubscribeAcknowledgement (PacketIdentifier i) as) =
-                  modifyMVar_ (clientNotAcknowledgedOutbound c) $ \im->
+                  modifyMVar_ (clientOutboundState c) $ \im->
                     case IM.lookup i im of
                       Nothing ->
                         pure im
@@ -232,7 +230,7 @@ connect c = modifyMVar_ (clientThreads c) $ \p->
                       _ ->
                         throwIO $ ProtocolViolation "Expected PUBCOMP, got something else."
                 f (UnsubscribeAcknowledgement (PacketIdentifier i)) =
-                  modifyMVar_ (clientNotAcknowledgedOutbound c) $ \im->
+                  modifyMVar_ (clientOutboundState c) $ \im->
                     case IM.lookup i im of
                       Nothing                               ->
                         pure im

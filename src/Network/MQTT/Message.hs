@@ -26,7 +26,6 @@ import Network.MQTT.Message.Blob
 import Network.MQTT.Message.RemainingLength
 import Network.MQTT.Message.Utf8String
 import Network.MQTT.Message.Position
-import Network.MQTT.PacketIdentifier
 
 newtype ClientIdentifier = ClientIdentifier T.Text
   deriving (Eq, Ord, Show, IsString)
@@ -40,6 +39,9 @@ type Password         = BS.ByteString
 type Topic            = T.Text
 type TopicFilter      = T.Text
 type Payload          = BS.ByteString
+
+newtype PacketIdentifier = PacketIdentifier Int
+  deriving (Eq, Show)
 
 data QualityOfService
    = AtLeastOnce
