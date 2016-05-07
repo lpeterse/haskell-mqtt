@@ -37,7 +37,6 @@ data MqttClient
      , clientWill                    :: MVar (Maybe Will)
      , clientUsernamePassword        :: MVar (Maybe (Username, Maybe Password))
      , clientRecentActivity          :: MVar Bool
-     , clientOutputQueue             :: MVar RawMessage
      , clientOutput                  :: MVar (Either RawMessage (PacketIdentifier -> (RawMessage, NotAcknowledgedOutbound)))
      , clientNotAcknowledgedInbound  :: MVar (IM.IntMap NotAcknowledgedInbound)
      , clientNotAcknowledgedOutbound :: MVar (IM.IntMap NotAcknowledgedOutbound)
@@ -131,16 +130,18 @@ connect c = modifyMVar_ (clientThreads c) $ \p->
               forever $ do
                 threadDelay interval
                 activity <- swapMVar (clientRecentActivity c) False
-                unless activity $ putMVar (clientOutputQueue c) PingRequest
+                unless activity $ putMVar (clientOutput c) $ Left PingRequest
 
             handleOutput :: IO ()
             handleOutput = do
               void $ swapMVar (clientRecentActivity c) True
-              message <- takeMVar (clientOutputQueue c)
-              send connection $ LBS.toStrict $ BS.toLazyByteString $ bRawMessage message
-              case message of
-                Disconnect -> close connection
-                _          -> handleOutput
+              x <- takeMVar (clientOutput c)
+              case x of
+                Left message -> send connection $ LBS.toStrict $ BS.toLazyByteString $ bRawMessage message
+                Right _      -> undefined
+              case x of
+                Left Disconnect -> close connection
+                _               -> handleOutput
 
             handleInput :: BS.ByteString -> IO ()
             handleInput i = do
@@ -173,7 +174,7 @@ connect c = modifyMVar_ (clientThreads c) $ \p->
                       Just (NotReceivedPublish _ x) ->
                         pure (IM.insert i (NotCompletePublish x) im)
                       _ -> throwIO $ ProtocolViolation "Expected PUBREC, got something else."
-                  putMVar (clientOutputQueue c) (PublishRelease (PacketIdentifier i))
+                  putMVar (clientOutput c) (Left $ PublishRelease (PacketIdentifier i))
                 f (PublishRelease (PacketIdentifier i)) = do
                   modifyMVar_ (clientNotAcknowledgedInbound c) $ \im->
                     case IM.lookup i im of
@@ -182,7 +183,7 @@ connect c = modifyMVar_ (clientThreads c) $ \p->
                         pure (IM.delete i im)
                       Nothing -> -- Duplicate, don't publish again.
                         pure im
-                  putMVar (clientOutputQueue c) (PublishComplete (PacketIdentifier i))
+                  putMVar (clientOutput c) (Left $ PublishComplete (PacketIdentifier i))
                 f (PublishComplete (PacketIdentifier i)) = do
                   modifyMVar_ (clientNotAcknowledgedOutbound c) $ \im->
                     case IM.lookup i im of
@@ -192,7 +193,7 @@ connect c = modifyMVar_ (clientThreads c) $ \p->
                         pure (IM.delete i im)
                       _ ->
                         throwIO $ ProtocolViolation "Expected PUBCOMP, got something else."
-                  putMVar (clientOutputQueue c) (PublishComplete (PacketIdentifier i))
+                  putMVar (clientOutput c) (Left $ PublishComplete (PacketIdentifier i))
                 f (SubscribeAcknowledgement (PacketIdentifier i) as) =
                   modifyMVar_ (clientNotAcknowledgedOutbound c) $ \im->
                     case IM.lookup i im of
