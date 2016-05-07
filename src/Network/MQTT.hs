@@ -24,12 +24,6 @@ data Message
      , payload  :: Payload
      } deriving (Eq, Ord, Show)
 
-data QoS
-   = QoS0
-   | QoS1
-   | QoS2
-   deriving (Eq, Ord, Show)
-
 data Connection
   = Connection
     { receive :: IO BS.ByteString

@@ -52,9 +52,8 @@ newtype Messages
       = Messages (MVar Tail)
 
 messages :: MqttClient -> IO Messages
-messages client = do
-  t <- readMVar (clientMessages client)
-  Messages <$> newMVar t
+messages client =
+  Messages <$> (newMVar =<< readMVar (clientMessages client))
 
 message  :: Messages -> IO Message
 message (Messages mt) =
@@ -64,7 +63,7 @@ data NotAcknowledgedOutbound
    = NotAcknowledgedPublish     RawMessage (MVar ())
    | NotReceivedPublish         RawMessage (MVar ())
    | NotCompletePublish         (MVar ())
-   | NotAcknowledgedSubscribe   RawMessage (MVar [Maybe (Maybe QualityOfService)])
+   | NotAcknowledgedSubscribe   RawMessage (MVar [Maybe QoS])
    | NotAcknowledgedUnsubscribe RawMessage (MVar ())
 
 newtype NotAcknowledgedInbound
@@ -277,17 +276,11 @@ subscribe client [] = pure []
 subscribe client topics = do
   response <- newEmptyMVar
   putMVar (clientOutput client) $ Right $ f response
-  fmap (fmap toQoS) <$> takeMVar response
+  takeMVar response
   where
     f response i = (m, NotAcknowledgedSubscribe m response)
       where
-        m = Subscribe i $ fmap fromQoS topics
-    toQoS Nothing            = QoS0
-    toQoS (Just AtLeastOnce) = QoS1
-    toQoS (Just ExactlyOnce) = QoS2
-    fromQoS (x, QoS0)        = (x, Nothing)
-    fromQoS (x, QoS1)        = (x, Just AtLeastOnce)
-    fromQoS (x, QoS2)        = (x, Just ExactlyOnce)
+        m = Subscribe i topics
 
 unsubscribe :: MqttClient -> [TopicFilter] -> IO ()
 unsubscribe client [] = pure ()

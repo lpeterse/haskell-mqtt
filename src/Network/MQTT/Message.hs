@@ -46,6 +46,12 @@ data QualityOfService
    | ExactlyOnce
    deriving (Eq, Ord, Show, Enum)
 
+data QoS
+  = QoS0
+  | QoS1
+  | QoS2
+  deriving (Eq, Ord, Show)
+
 data ConnectionRefusal
    = UnacceptableProtocolVersion
    | IdentifierRejected
@@ -82,8 +88,8 @@ data RawMessage
    | PublishReceived              PacketIdentifier
    | PublishRelease               PacketIdentifier
    | PublishComplete              PacketIdentifier
-   | Subscribe                    PacketIdentifier [(TopicFilter, Maybe QualityOfService)]
-   | SubscribeAcknowledgement     PacketIdentifier [Maybe (Maybe QualityOfService)]
+   | Subscribe                    PacketIdentifier [(TopicFilter, QoS)]
+   | SubscribeAcknowledgement     PacketIdentifier [Maybe QoS]
    | Unsubscribe                  PacketIdentifier [TopicFilter]
    | UnsubscribeAcknowledgement   PacketIdentifier
    | PingRequest
@@ -227,9 +233,9 @@ pSubscribe len hflags
     pTopicFilter = (,)
       <$> pUtf8String
       <*> ( A.anyWord8 >>= \qos-> case qos of
-        0x00 -> pure Nothing
-        0x01 -> pure $ Just AtLeastOnce
-        0x02 -> pure $ Just ExactlyOnce
+        0x00 -> pure QoS0
+        0x01 -> pure QoS1
+        0x02 -> pure QoS2
         _    -> fail $ "pSubscribe: Violation of [MQTT-3.8.3-4]." ++ show qos )
 
 pSubscribeAcknowledgement :: Int -> Word8 -> A.Parser RawMessage
@@ -242,9 +248,9 @@ pSubscribeAcknowledgement len hflags
     pReturnCode = do
       c <- A.anyWord8
       case c of
-        0x00 -> pure $ Just Nothing
-        0x01 -> pure $ Just $ Just AtLeastOnce
-        0x02 -> pure $ Just $ Just ExactlyOnce
+        0x00 -> pure $ Just QoS0
+        0x01 -> pure $ Just QoS1
+        0x02 -> pure $ Just QoS2
         0x80 -> pure Nothing
         _    -> fail "pSubscribeAcknowledgement: Violation of [MQTT-3.9.3-2]."
 
@@ -342,18 +348,18 @@ bRawMessage (Subscribe (PacketIdentifier p) tf)  =
   BS.word8 0x82 <> bRemainingLength len <> BS.word16BE (fromIntegral p) <> mconcat ( map f tf )
   where
     f (t, q) = (bUtf8String t <>) $ BS.word8 $ case q of
-      Nothing          -> 0x00
-      Just AtLeastOnce -> 0x01
-      Just ExactlyOnce -> 0x02
+      QoS0 -> 0x00
+      QoS1 -> 0x01
+      QoS2 -> 0x02
     len  = 2 + length tf * 3 + sum ( map (BS.length . T.encodeUtf8 . fst) tf )
 bRawMessage (SubscribeAcknowledgement (PacketIdentifier p) rcs) =
   BS.word8 0x90 <> bRemainingLength (2 + length rcs)
     <> BS.word16BE (fromIntegral p) <> mconcat ( map ( BS.word8 . f ) rcs )
   where
-    f Nothing                   = 0x80
-    f (Just Nothing)            = 0x00
-    f (Just (Just AtLeastOnce)) = 0x01
-    f (Just (Just ExactlyOnce)) = 0x02
+    f Nothing     = 0x80
+    f (Just QoS0) = 0x00
+    f (Just QoS1) = 0x01
+    f (Just QoS2) = 0x02
 bRawMessage (Unsubscribe (PacketIdentifier p) tfs) =
   BS.word8 0xa2 <> bRemainingLength len
     <> BS.word16BE (fromIntegral p) <> mconcat ( map bUtf8String tfs )
