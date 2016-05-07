@@ -69,9 +69,12 @@ newtype InboundState = NotReleasedPublish Message
 
 -- | Disconnects the client.
 --   * The operation returns after the DISCONNECT packet has been written to the
---     connection and the connection has been closed. (FIXME it doesn't do so right now).
+--     connection and the connection has been closed.
 disconnect :: MqttClient -> IO ()
-disconnect c = putMVar (clientOutput c) (Left Disconnect)
+disconnect c = do
+  t <- readMVar (clientThreads c)
+  putMVar (clientOutput c) (Left Disconnect)
+  wait t
 
 connect :: MqttClient -> IO ()
 connect c = modifyMVar_ (clientThreads c) $ \p->
