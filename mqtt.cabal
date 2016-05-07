@@ -34,6 +34,7 @@ library
                        base >=4.8 && <4.9,
                        bytestring,
                        exceptions,
+                       random,
                        text,
                        containers
   hs-source-dirs:      src

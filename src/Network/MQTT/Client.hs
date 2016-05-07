@@ -18,12 +18,15 @@ import qualified Data.ByteString as BS
 import qualified Data.ByteString.Builder as BS
 import qualified Data.ByteString.Lazy as LBS
 import qualified Data.Attoparsec.ByteString as A
+import qualified Data.Text as T
 
 import Control.Exception
 import Control.Monad
 import Control.Concurrent
 import Control.Concurrent.MVar
 import Control.Concurrent.Async
+
+import System.Random
 
 import Network.MQTT
 import Network.MQTT.Message
@@ -46,7 +49,7 @@ data MqttClient
 
 newMqttClient :: IO Connection -> IO MqttClient
 newMqttClient ioc = MqttClient
-  <$> newMVar ""
+  <$> (newMVar =<< ClientIdentifier . T.pack . take 23 . ("haskell-" ++) . randomRs ('a','z') <$> newStdGen)
   <*> newMVar 60
   <*> newMVar Nothing
   <*> newMVar Nothing
@@ -113,7 +116,7 @@ connect c = modifyMVar_ (clientThreads c) $ \p->
           cu <- readMVar (clientUsernamePassword c)
           send connection $ LBS.toStrict $ BS.toLazyByteString $ bRawMessage Connect
             { connectClientIdentifier = ci
-            , connectCleanSession     = True
+            , connectCleanSession     = False
             , connectKeepAlive        = ck
             , connectWill             = cw
             , connectUsernamePassword = cu
