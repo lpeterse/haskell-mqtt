@@ -23,9 +23,15 @@ main = do
   connect mqtt
   subscribe mqtt [("$SYS/#", QoS0)]
   ms <- messages mqtt
+  forkIO (sendIndefinitely mqtt 0)
   forever $ do
     m <- message ms
     print m
+  where
+    sendIndefinitely mqtt i = do
+      when (mod i 10000 == 0) (print i)
+      publish mqtt $ Message QoS1 False "/foo/bar" ""
+      sendIndefinitely mqtt $ succ i
 
 newConnection :: IO Connection
 newConnection = do

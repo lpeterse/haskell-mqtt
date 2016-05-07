@@ -14,6 +14,7 @@ cabal-version:       >=1.10
 
 executable hummingbird
   main-is:            app/hummingbird.hs
+  ghc-options:        -O2 -rtsopts
   build-depends:      base,
                       bytestring,
                       mqtt,
@@ -23,6 +24,7 @@ executable hummingbird
 library
   exposed-modules:     Network.MQTT,
                        Network.MQTT.Client,
+                       Network.MQTT.Server,
                        Network.MQTT.SubscriptionTree,
                        Network.MQTT.Message,
                        Network.MQTT.Message.Blob,

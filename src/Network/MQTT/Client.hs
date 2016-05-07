@@ -105,7 +105,6 @@ connect c = modifyMVar_ (clientThreads c) $ \p->
   where
     handleConnection :: ClientSessionPresent -> Connection -> IO (Async ())
     handleConnection clientSessionPresent connection = do
-      print "Y"
       sendConnect >> receiveConnectAcknowledgement >>= maintainConnection
       where
         sendConnect :: IO ()
@@ -124,7 +123,6 @@ connect c = modifyMVar_ (clientThreads c) $ \p->
 
         receiveConnectAcknowledgement :: IO BS.ByteString
         receiveConnectAcknowledgement = do
-          print "C"
           result <- A.parseWith (receive connection) pRawMessage =<< receive connection
           case result of
             A.Done j message -> f message >> pure j
@@ -147,7 +145,6 @@ connect c = modifyMVar_ (clientThreads c) $ \p->
 
         maintainConnection :: BS.ByteString -> IO (Async ())
         maintainConnection i = async $ do
-          print "M"
           keepAlive `race_` handleOutput `race_` handleInput i
           where
             -- The keep alive thread wakes up every `keepAlive/2` seconds.
@@ -159,14 +156,12 @@ connect c = modifyMVar_ (clientThreads c) $ \p->
             keepAlive = do
               interval <- (500000*) . fromIntegral <$> readMVar (clientKeepAlive c)
               forever $ do
-                print "keepAlive"
                 threadDelay interval
                 activity <- swapMVar (clientRecentActivity c) False
                 unless activity $ putMVar (clientOutput c) $ Left PingRequest
 
             handleOutput :: IO ()
             handleOutput = forever $ do
-              print "handleOutput"
               void $ swapMVar (clientRecentActivity c) True
               x <- takeMVar (clientOutput c)
               case x of
