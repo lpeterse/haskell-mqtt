@@ -141,7 +141,7 @@ connect c = modifyMVar_ (clientThreads c) $ \p->
                 Right _      -> undefined
               case x of
                 Left Disconnect -> close connection
-                _               -> handleOutput
+                _ -> handleOutput
 
             handleInput :: BS.ByteString -> IO ()
             handleInput i = do
@@ -158,7 +158,22 @@ connect c = modifyMVar_ (clientThreads c) $ \p->
                     , topic    = publishTopic msg
                     , payload  = publishBody msg
                     }
-                  Just (AtLeastOnce, i) -> undefined
+                  Just (AtLeastOnce, i) -> do
+                    publishLocal c Message
+                      { qos      = QoS1
+                      , retained = publishRetain msg
+                      , topic    = publishTopic msg
+                      , payload  = publishBody msg
+                      }
+                    putMVar (clientOutput c) $ Left $ PublishAcknowledgement i
+                  Just (ExactlyOnce, PacketIdentifier i) ->
+                    modifyMVar_ (clientNotAcknowledgedInbound c) $
+                      pure . IM.insert i (NotReleasedPublish Message
+                        { qos      = QoS2
+                        , retained = publishRetain msg
+                        , topic    = publishTopic msg
+                        , payload  = publishBody msg
+                        })
                   Just (ExactlyOnce, i) -> undefined
                 -- The following packet types are responses to earlier requests.
                 -- We need to dispatch them to the waiting threads.
