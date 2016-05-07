@@ -136,11 +136,22 @@ connect c = modifyMVar_ (clientThreads c) $ \p->
               void $ swapMVar (clientRecentActivity c) True
               x <- takeMVar (clientOutput c)
               case x of
-                Left message -> send connection $ LBS.toStrict $ BS.toLazyByteString $ bRawMessage message
-                Right _      -> undefined
-              case x of
-                Left Disconnect -> close connection
-                _ -> handleOutput
+                Left message ->
+                  send connection $ LBS.toStrict $ BS.toLazyByteString $ bRawMessage message
+                Right imessage ->
+                  send connection . LBS.toStrict . BS.toLazyByteString . bRawMessage =<< assignPacketIdentifier imessage
+              where
+                assignPacketIdentifier :: (PacketIdentifier -> (RawMessage, NotAcknowledgedOutbound)) -> IO RawMessage
+                assignPacketIdentifier f = do
+                  mm <- modifyMVar (clientNotAcknowledgedOutbound c) (`g` [0x0000 .. 0xffff])
+                  case mm of
+                    Nothing -> threadDelay 100000 >> assignPacketIdentifier f
+                    Just m  -> pure m
+                  where
+                    g p []      = pure (p, Nothing)
+                    g p (i:is)  | IM.member i p = g p is
+                                | otherwise    = let (m, a) = f (PacketIdentifier i)
+                                                 in pure (IM.insert i a p, Just m)
 
             handleInput :: BS.ByteString -> IO ()
             handleInput i = do
