@@ -24,17 +24,17 @@ import Test.Tasty.HUnit
 import Test.Tasty.QuickCheck as QC
 
 main :: IO ()
-main  = defaultMain $ testGroup "Network" [ testGroup "MQTT" [tgMessage]]
+main  = defaultMain $ testGroup "Network" [ testGroup "MQTT" [tgRawMessage]]
 
-tgMessage :: TestTree
-tgMessage = testGroup "Message"
-  [ tgMessageRemainingLength
-  , tgMessageUtf8String
-  , tgMessageAll
+tgRawMessage :: TestTree
+tgRawMessage = testGroup "RawMessage"
+  [ tgRawMessageRemainingLength
+  , tgRawMessageUtf8String
+  , tgRawMessageAll
   ]
 
-tgMessageUtf8String :: TestTree
-tgMessageUtf8String =
+tgRawMessageUtf8String :: TestTree
+tgRawMessageUtf8String =
   testGroup "Utf8String"
   [ testCase "empty string" $ assertEqual ""
       ( Right "" )
@@ -77,8 +77,8 @@ tgMessageUtf8String =
       ( A.parseOnly pUtf8String (LBS.toStrict $ BS.toLazyByteString (bUtf8String txt)))
   ]
 
-tgMessageRemainingLength :: TestTree
-tgMessageRemainingLength =
+tgRawMessageRemainingLength :: TestTree
+tgRawMessageRemainingLength =
   testGroup "pRemainingLength, sRemainingLength"
   [ testCase "p [193,2] == 321" $ assertEqual ""
       ( Right 321 )
@@ -127,11 +127,11 @@ tgMessageRemainingLength =
               (LBS.toStrict $ BS.toLazyByteString (bRemainingLength i'))
   ]
 
-tgMessageAll :: TestTree
-tgMessageAll = QC.testProperty "pMessage . bMessage == id" $ \msg->
-  Right msg === A.parseOnly pMessage (LBS.toStrict $ BS.toLazyByteString $ bMessage msg)
+tgRawMessageAll :: TestTree
+tgRawMessageAll = QC.testProperty "pRawMessage . bRawMessage == id" $ \msg->
+  Right msg === A.parseOnly pRawMessage (LBS.toStrict $ BS.toLazyByteString $ bRawMessage msg)
 
-instance Arbitrary Message where
+instance Arbitrary RawMessage where
   arbitrary = oneof
     [ arbitraryConnect
     , arbitraryConnectAcknowledgment
@@ -180,7 +180,7 @@ instance Arbitrary Message where
       arbitraryUnsubscribeAcknowledgement = UnsubscribeAcknowledgement
         <$> arbitrary
 
-instance Arbitrary QoS where
+instance Arbitrary QualityOfService where
   arbitrary = elements [ AtLeastOnce, ExactlyOnce ]
 
 instance Arbitrary ClientIdentifier where

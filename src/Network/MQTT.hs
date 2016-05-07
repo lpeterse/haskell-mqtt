@@ -9,8 +9,10 @@
 --------------------------------------------------------------------------------
 module Network.MQTT where
 
-import Data.Typeable
 import Control.Exception
+
+import Data.Typeable
+import qualified Data.ByteString as BS
 
 import Network.MQTT.Message
 
@@ -27,6 +29,13 @@ data QoS
    | QoS1
    | QoS2
    deriving (Eq, Ord, Show)
+
+data Connection
+  = Connection
+    { receive :: IO BS.ByteString
+    , send    :: BS.ByteString -> IO ()
+    , close   :: IO ()
+    }
 
 data MqttException
    = ParserError String

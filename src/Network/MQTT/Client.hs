@@ -42,7 +42,7 @@ data MqttClient
      , clientNotAcknowledgedInbound  :: MVar (IM.IntMap NotAcknowledgedInbound)
      , clientNotAcknowledgedOutbound :: MVar (IM.IntMap NotAcknowledgedOutbound)
      , clientMessages                :: MVar Tail
-     , clientNewConnection           :: IO Connection
+     , clientNewConnection           :: MVar (IO Connection)
      , clientThreads                 :: MVar (Async ())
      }
 
@@ -71,13 +71,6 @@ data NotAcknowledgedOutbound
 newtype NotAcknowledgedInbound
       = NotReleasedPublish      Message
 
-data Connection
-   = Connection
-     { receive :: IO BS.ByteString
-     , send    :: BS.ByteString -> IO ()
-     , close   :: IO ()
-     }
-
 -- | Disconnects the client.
 --   * The operation returns after the DISCONNECT packet has been written to the
 --     connection and the connection has been closed. (FIXME it doesn't do so right now).
@@ -90,7 +83,7 @@ connect c = modifyMVar_ (clientThreads c) $ \p->
     -- Processing thread is stil running, no need to connect.
     Nothing -> pure p
     -- Processing thread not running, create a new one with new connection
-    Just _  -> clientNewConnection c >>= async . handleConnection
+    Just _  -> join (readMVar (clientNewConnection c)) >>= async . handleConnection
   where
     handleConnection :: Connection -> IO ()
     handleConnection connection =
