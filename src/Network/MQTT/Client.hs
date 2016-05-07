@@ -32,19 +32,18 @@ import Network.MQTT.PacketIdentifier
 
 data MqttClient
    = MqttClient
-     { clientIdentifier              :: ClientIdentifier
-     , clientKeepAlive               :: KeepAlive
-     , clientWill                    :: Maybe Will
-     , clientUsernamePassword        :: Maybe (Username, Maybe Password)
-     , clientNewConnection           :: IO Connection
-     , clientAutomaticReconnect      :: MVar Bool
+     { clientIdentifier              :: MVar ClientIdentifier
+     , clientKeepAlive               :: MVar KeepAlive
+     , clientWill                    :: MVar (Maybe Will)
+     , clientUsernamePassword        :: MVar (Maybe (Username, Maybe Password))
      , clientRecentActivity          :: MVar Bool
      , clientOutputQueue             :: MVar RawMessage
      , clientOutput                  :: MVar (Either RawMessage (PacketIdentifier -> (RawMessage, NotAcknowledgedOutbound)))
-     , clientProcessor               :: MVar (Async ())
      , clientNotAcknowledgedInbound  :: MVar (IM.IntMap NotAcknowledgedInbound)
      , clientNotAcknowledgedOutbound :: MVar (IM.IntMap NotAcknowledgedOutbound)
      , clientMessages                :: MVar Tail
+     , clientNewConnection           :: IO Connection
+     , clientThreads                 :: MVar (Async ())
      }
 
 newtype Tail
@@ -86,7 +85,7 @@ disconnect :: MqttClient -> IO ()
 disconnect c = putMVar (clientOutput c) (Left Disconnect)
 
 connect :: MqttClient -> IO ()
-connect c = modifyMVar_ (clientProcessor c) $ \p->
+connect c = modifyMVar_ (clientThreads c) $ \p->
   poll p >>= \m-> case m of
     -- Processing thread is stil running, no need to connect.
     Nothing -> pure p
@@ -98,13 +97,17 @@ connect c = modifyMVar_ (clientProcessor c) $ \p->
       sendConnect >> receiveConnectAcknowledgement >>= maintainConnection
       where
         sendConnect :: IO ()
-        sendConnect =
+        sendConnect = do
+          ci <- readMVar (clientIdentifier c)
+          ck <- readMVar (clientKeepAlive c)
+          cw <- readMVar (clientWill c)
+          cu <- readMVar (clientUsernamePassword c)
           send connection $ LBS.toStrict $ BS.toLazyByteString $ bRawMessage Connect
-            { connectClientIdentifier = clientIdentifier c
+            { connectClientIdentifier = ci
             , connectCleanSession     = False
-            , connectKeepAlive        = clientKeepAlive c
-            , connectWill             = clientWill c
-            , connectUsernamePassword = clientUsernamePassword c
+            , connectKeepAlive        = ck
+            , connectWill             = cw
+            , connectUsernamePassword = cu
             }
 
         receiveConnectAcknowledgement :: IO BS.ByteString
@@ -130,10 +133,12 @@ connect c = modifyMVar_ (clientProcessor c) $ \p->
             -- server. The interval between the last message and the PINGREQ is at
             -- most `keepAlive` seconds (assuming we get woken up on time by the RTS).
             keepAlive :: IO ()
-            keepAlive = forever $ do
-              threadDelay $ 500000 * fromIntegral (clientKeepAlive c)
-              activity <- swapMVar (clientRecentActivity c) False
-              unless activity $ putMVar (clientOutputQueue c) PingRequest
+            keepAlive = do
+              interval <- (500000*) . fromIntegral <$> readMVar (clientKeepAlive c)
+              forever $ do
+                threadDelay interval
+                activity <- swapMVar (clientRecentActivity c) False
+                unless activity $ putMVar (clientOutputQueue c) PingRequest
 
             handleOutput :: IO ()
             handleOutput = do
