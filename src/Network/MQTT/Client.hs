@@ -142,11 +142,14 @@ connect c = modifyMVar_ (clientThreads c) $ \p->
                   send connection . LBS.toStrict . BS.toLazyByteString . bRawMessage =<< assignPacketIdentifier imessage
               where
                 assignPacketIdentifier :: (PacketIdentifier -> (RawMessage, NotAcknowledgedOutbound)) -> IO RawMessage
-                assignPacketIdentifier f = do
-                  mm <- modifyMVar (clientNotAcknowledgedOutbound c) (`g` [0x0000 .. 0xffff])
-                  case mm of
+                assignPacketIdentifier f =
+                  modifyMVar (clientNotAcknowledgedOutbound c) (`g` [0x0000 .. 0xffff]) >>= \mm-> case mm of
+                    Just m -> pure m
+                    -- We cannot easily wait for when packet identifiers are available again.
+                    -- On the other hand throwing an exception seems too drastic. So (for the
+                    -- extremely unlikely) case of packet identifier exhaustion, we shall wait
+                    -- 100ms and then try again.
                     Nothing -> threadDelay 100000 >> assignPacketIdentifier f
-                    Just m  -> pure m
                   where
                     g p []      = pure (p, Nothing)
                     g p (i:is)  | IM.member i p = g p is
@@ -274,10 +277,7 @@ publishLocal client msg = modifyMVar_ (clientMessages client) $
 
 {-
       withoutIdentifier qos = do
-        -- We cannot easily wait for when packet identifiers are available again.
-        -- On the other hand throwing an exception seems too drastic. So (for the
-        -- extremely unlikely) case of packet identifier exhaustion, we shall wait
-        -- 1 second and then try again.
+
         threadDelay 1000000
         publish client (Just qos) retain topic body
 -}
