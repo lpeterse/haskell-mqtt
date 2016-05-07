@@ -1,58 +1,39 @@
 {-# LANGUAGE OverloadedStrings #-}
 module Main where
 
-import Control.Concurrent.Async
-import Control.Concurrent.Chan
-import Control.Exception ( bracket, catch )
-import Control.Monad ( forever, void )
+import Control.Monad
+import Control.Concurrent
 
-import Data.Function ( fix )
-import qualified Data.Source as S
-import qualified Data.Source.Attoparsec as S
 import qualified Data.ByteString as BS
+import qualified Data.ByteString.Lazy as LBS
 
-import System.Socket
-import System.Socket.Family.Inet6
-import System.Socket.Type.Stream
-import System.Socket.Protocol.TCP
+import qualified System.Socket as S
+import qualified System.Socket.Family.Inet6 as S
+import qualified System.Socket.Type.Stream as S
+import qualified System.Socket.Protocol.TCP as S
 
 import Network.MQTT
+import Network.MQTT.Client
 import Network.MQTT.Message
-import Network.MQTT.SubscriptionTree
 
 main :: IO ()
 main = do
-  stree <- newSubscriptionTree
-  bracket
-    ( socket :: IO (Socket Inet6 Stream TCP) )
-    ( \s-> do
-      close s
-      putStrLn "Listening socket closed."
-    )
-    ( \s-> do
-      setSocketOption s (ReuseAddress True)
-      setSocketOption s (V6Only False)
-      bind s (SocketAddressInet6 inet6Any 1883 0 0)
-      listen s 5
-      putStrLn "Listening socket ready..."
-      forever $ acceptAndHandle stree s `catch` \e-> print (e :: SocketException)
-    )
+  mqtt <- newMqttClient newConnection
+  print "abc"
+  connect mqtt
+  subscribe mqtt [("$SYS/#", QoS0)]
+  ms <- messages mqtt
+  forever $ do
+    m <- message ms
+    print m
 
-acceptAndHandle :: SubscriptionTree Message -> Socket Inet6 Stream TCP -> IO ()
-acceptAndHandle stree s = bracket
-  ( accept s )
-  ( \(sock, addr)-> do
-    close sock
-    putStrLn $ "Closed connection to " ++ show addr
-  )
-  ( \(sock, addr)-> do
-    out <- newChan :: IO (Chan BS.ByteString)
-    S.drain $ S.each (void . \x-> send sock x mempty) $ fmap (const "") $ S.each print $ S.parse pMessage $ toSource sock
-  )
-
-toSource :: Socket f Stream p -> S.Source IO BS.ByteString BS.ByteString
-toSource sock = S.Source $ do
-  bs <- receive sock 4096 mempty
-  S.pull $ if BS.null bs
-    then S.complete id
-    else S.prepend bs $ toSource sock
+newConnection :: IO Connection
+newConnection = do
+  sock <- S.socket :: IO (S.Socket S.Inet6 S.Stream S.TCP)
+  addrInfo:_ <- S.getAddressInfo (Just "localhost") (Just "1883") mempty :: IO [S.AddressInfo S.Inet6 S.Stream S.TCP]
+  S.connect sock (S.socketAddress addrInfo)
+  pure Connection
+    { send    = \bs-> S.sendAll sock (LBS.fromChunks [bs]) S.msgNoSignal
+    , receive = S.receive sock 4096 S.msgNoSignal
+    , close   = S.close sock
+    }

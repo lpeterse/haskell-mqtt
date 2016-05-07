@@ -44,6 +44,22 @@ data MqttClient
      , clientThreads                 :: MVar (Async ())
      }
 
+newMqttClient :: IO Connection -> IO MqttClient
+newMqttClient ioc = MqttClient
+  <$> newMVar ""
+  <*> newMVar 60
+  <*> newMVar Nothing
+  <*> newMVar Nothing
+  <*> newMVar False
+  <*> newEmptyMVar
+  <*> newMVar IM.empty
+  <*> newMVar IM.empty
+  <*> (newMVar =<< (Tail <$> newEmptyMVar))
+  <*> newMVar ioc
+  <*> (newMVar =<< async (pure ()))
+
+type ClientSessionPresent = Bool
+
 newtype Tail
       = Tail (MVar (Tail, Message))
 
@@ -82,10 +98,11 @@ connect c = modifyMVar_ (clientThreads c) $ \p->
     -- Processing thread is stil running, no need to connect.
     Nothing -> pure p
     -- Processing thread not running, create a new one with new connection
-    Just _  -> join (readMVar (clientNewConnection c)) >>= async . handleConnection
+    Just _  -> join (readMVar (clientNewConnection c)) >>= handleConnection False
   where
-    handleConnection :: Connection -> IO ()
-    handleConnection connection =
+    handleConnection :: ClientSessionPresent -> Connection -> IO (Async ())
+    handleConnection clientSessionPresent connection = do
+      print "Y"
       sendConnect >> receiveConnectAcknowledgement >>= maintainConnection
       where
         sendConnect :: IO ()
@@ -96,7 +113,7 @@ connect c = modifyMVar_ (clientThreads c) $ \p->
           cu <- readMVar (clientUsernamePassword c)
           send connection $ LBS.toStrict $ BS.toLazyByteString $ bRawMessage Connect
             { connectClientIdentifier = ci
-            , connectCleanSession     = False
+            , connectCleanSession     = True
             , connectKeepAlive        = ck
             , connectWill             = cw
             , connectUsernamePassword = cu
@@ -104,6 +121,7 @@ connect c = modifyMVar_ (clientThreads c) $ \p->
 
         receiveConnectAcknowledgement :: IO BS.ByteString
         receiveConnectAcknowledgement = do
+          print "C"
           result <- A.parseWith (receive connection) pRawMessage =<< receive connection
           case result of
             A.Done j message -> f message >> pure j
@@ -111,12 +129,22 @@ connect c = modifyMVar_ (clientThreads c) $ \p->
             A.Partial _      -> throwIO $ ParserError "Expected CONNACK, got end of input."
           where
             f (ConnectAcknowledgement a) = case a of
-                Right sessionPresent   -> pure ()
+                Right serverSessionPresent
+                  | serverSessionPresent && not clientSessionPresent ->
+                      -- This should not happen unless an old client identifier
+                      -- has been chosen or the server is wicked.
+                      throwIO ClientLostSession
+                  | not serverSessionPresent && clientSessionPresent ->
+                      -- This may happen if the server lost its memory, either
+                      -- acidentially or for administrative reasons.
+                      throwIO ServerLostSession
+                  | otherwise -> pure ()
                 Left connectionRefusal -> throwIO $ ConnectionRefused connectionRefusal
             f _ = throwIO $ ProtocolViolation "Expected CONNACK, got something else."
 
-        maintainConnection :: BS.ByteString -> IO ()
-        maintainConnection i =
+        maintainConnection :: BS.ByteString -> IO (Async ())
+        maintainConnection i = async $ do
+          print "M"
           keepAlive `race_` handleOutput `race_` handleInput i
           where
             -- The keep alive thread wakes up every `keepAlive/2` seconds.
@@ -128,12 +156,14 @@ connect c = modifyMVar_ (clientThreads c) $ \p->
             keepAlive = do
               interval <- (500000*) . fromIntegral <$> readMVar (clientKeepAlive c)
               forever $ do
+                print "keepAlive"
                 threadDelay interval
                 activity <- swapMVar (clientRecentActivity c) False
                 unless activity $ putMVar (clientOutput c) $ Left PingRequest
 
             handleOutput :: IO ()
-            handleOutput = do
+            handleOutput = forever $ do
+              print "handleOutput"
               void $ swapMVar (clientRecentActivity c) True
               x <- takeMVar (clientOutput c)
               case x of
@@ -225,28 +255,29 @@ connect c = modifyMVar_ (clientThreads c) $ \p->
                 f (SubscribeAcknowledgement (PacketIdentifier i) as) =
                   modifyMVar_ (clientOutboundState c) $ \im->
                     case IM.lookup i im of
-                      Nothing ->
-                        pure im
+                      Nothing -> pure im
                       Just (NotAcknowledgedSubscribe m x) -> do
                         putMVar x as
                         pure (IM.delete i im)
-                      _ ->
-                        throwIO $ ProtocolViolation "Expected PUBCOMP, got something else."
+                      _ -> throwIO $ ProtocolViolation "Expected PUBCOMP, got something else."
                 f (UnsubscribeAcknowledgement (PacketIdentifier i)) =
                   modifyMVar_ (clientOutboundState c) $ \im->
                     case IM.lookup i im of
-                      Nothing                               ->
-                        pure im
+                      Nothing -> pure im
                       Just (NotAcknowledgedUnsubscribe m x) -> do
                         putMVar x ()
                         pure (IM.delete i im)
-                      _ ->
-                        throwIO $ ProtocolViolation "Expected PUBCOMP, got something else."
-                f PingResponse =
-                  pure ()
+                      _ -> throwIO $ ProtocolViolation "Expected PUBCOMP, got something else."
+                f PingResponse = pure ()
                 -- The following packets must not be sent from the server to the client.
-                _ =
-                  throwIO $ ProtocolViolation "Unexpected packet type received from the server."
+                _ = throwIO $ ProtocolViolation "Unexpected packet type received from the server."
+
+publishLocal :: MqttClient -> Message -> IO ()
+publishLocal client msg = modifyMVar_ (clientMessages client) $
+  \(Tail currentTail)-> do
+    nextTail <- Tail <$> newEmptyMVar     -- a new (unresolved) tail
+    putMVar currentTail (nextTail, msg)   -- resolve the current head
+    pure nextTail                         -- new tail replaces current
 
 publish :: MqttClient -> Message -> IO ()
 publish client (Message qos !retain !topic !body) = case qos of
@@ -269,20 +300,6 @@ publish client (Message qos !retain !topic !body) = case qos of
       publishTopic     = topic,
       publishBody      = body }
 
-publishLocal :: MqttClient -> Message -> IO ()
-publishLocal client msg = modifyMVar_ (clientMessages client) $
-  \(Tail currentTail)-> do
-    nextTail <- Tail <$> newEmptyMVar     -- a new (unresolved) tail
-    putMVar currentTail (nextTail, msg)   -- resolve the current head
-    pure nextTail                         -- new tail replaces current
-
-{-
-      withoutIdentifier qos = do
-
-        threadDelay 1000000
-        publish client (Just qos) retain topic body
--}
-
 subscribe :: MqttClient -> [(TopicFilter, QoS)] -> IO [Maybe QoS]
 subscribe client [] = pure []
 subscribe client topics = do
@@ -290,9 +307,9 @@ subscribe client topics = do
   putMVar (clientOutput client) $ Right $ f response
   takeMVar response
   where
-    f response i = (m, NotAcknowledgedSubscribe m response)
-      where
-        m = Subscribe i topics
+    f response i =
+      let message = Subscribe i topics
+      in (message, NotAcknowledgedSubscribe message response)
 
 unsubscribe :: MqttClient -> [TopicFilter] -> IO ()
 unsubscribe client [] = pure ()
@@ -301,6 +318,6 @@ unsubscribe client topics = do
   putMVar (clientOutput client) $ Right $ f confirmation
   takeMVar confirmation
   where
-    f confirmation i = (m, NotAcknowledgedUnsubscribe m confirmation)
-      where
-        m = Unsubscribe i topics
+    f confirmation i =
+      let message = Unsubscribe i topics
+      in (message, NotAcknowledgedUnsubscribe message confirmation)

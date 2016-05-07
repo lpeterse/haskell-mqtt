@@ -12,6 +12,14 @@ build-type:          Simple
 -- extra-source-files:
 cabal-version:       >=1.10
 
+executable hummingbird
+  main-is:            app/hummingbird.hs
+  build-depends:      base,
+                      bytestring,
+                      mqtt,
+                      socket,
+                      text
+
 library
   exposed-modules:     Network.MQTT,
                        Network.MQTT.Client,
