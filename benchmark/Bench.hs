@@ -48,6 +48,6 @@ main = defaultMain
     ]
     where
       pb x = [
-          bench "parse" (whnf (A.parseOnly pMessage) (LBS.toStrict $ BS.toLazyByteString $ bMessage x))
-        , bench "build" (whnf (LBS.toStrict . BS.toLazyByteString . bMessage) x)
+          bench "parse" (whnf (A.parseOnly pRawMessage) (LBS.toStrict $ BS.toLazyByteString $ bRawMessage x))
+        , bench "build" (whnf (LBS.toStrict . BS.toLazyByteString . bRawMessage) x)
         ]
