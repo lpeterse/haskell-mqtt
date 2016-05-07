@@ -174,7 +174,6 @@ connect c = modifyMVar_ (clientThreads c) $ \p->
                         , topic    = publishTopic msg
                         , payload  = publishBody msg
                         })
-                  Just (ExactlyOnce, i) -> undefined
                 -- The following packet types are responses to earlier requests.
                 -- We need to dispatch them to the waiting threads.
                 f (PublishAcknowledgement (PacketIdentifier i)) =
