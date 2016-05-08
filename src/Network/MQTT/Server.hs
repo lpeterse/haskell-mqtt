@@ -1,4 +1,4 @@
-{-# LANGUAGE OverloadedStrings, TypeFamilies, BangPatterns #-}
+{-# LANGUAGE OverloadedStrings #-}
 --------------------------------------------------------------------------------
 -- |
 -- Module      :  Network.MQTT
@@ -33,14 +33,14 @@ import Network.MQTT
 import Network.MQTT.Message
 import Network.MQTT.Message.RemainingLength
 
-data  MqttSessions
-   =  MqttSessions
-      { sessions                       :: MVar (M.Map ClientIdentifier MqttSession)
-      , sessionsAuthentication         :: Maybe (Username, Maybe Password) -> IO (Maybe Identity)
+data  MqttServer
+   =  MqttServer
+      { serverSessions                :: MVar (M.Map ClientIdentifier MqttServerSession)
+      , serverAuthenticate            :: Maybe (Username, Maybe Password) -> IO (Maybe Identity)
       }
 
-data  MqttSession
-    = MqttSession
+data  MqttServerSession
+    = MqttServerSession
       { sessionConnection              :: MVar (Async ())
       , sessionOutputBuffer            :: MVar RawMessage
       , sessionBestEffortQueue         :: BC.BoundedChan Message
@@ -65,7 +65,7 @@ data MConnection
      , mclose   :: IO ()
      }
 
-publish :: MqttSession -> Message -> IO ()
+publish :: MqttServerSession -> Message -> IO ()
 publish session message = case qos message of
   -- For QoS0 messages, the queue will simply overflow and messages will get
   -- lost. This is the desired behaviour and allowed by contract.
@@ -78,18 +78,18 @@ publish session message = case qos message of
     success <- BC.tryWriteChan (sessionGuaranteedDeliveryQueue session) message
     unless success $ sessionTerminate session
 
-dispatchConnection :: Connection -> MqttSessions -> IO ()
-dispatchConnection connection ms =
+dispatchConnection :: MqttServer -> Connection -> IO ()
+dispatchConnection server connection =
   withConnect $ \clientIdentifier cleanSession keepAlive mwill muser j-> do
     -- Client sent a valid CONNECT packet. Next, authenticate the client.
-    midentity <- sessionsAuthentication ms muser
+    midentity <- serverAuthenticate server muser
     case midentity of
       -- Client authentication failed. Send CONNACK with `NotAuthorized`.
       Nothing -> send $ ConnectAcknowledgement $ Left NotAuthorized
       -- Cient authenticaion successfull.
       Just identity -> do
         -- Retrieve session; create new one if necessary.
-        (session, sessionPresent) <- getSession ms clientIdentifier
+        (session, sessionPresent) <- getSession server clientIdentifier
         -- Now knowing the session state, we can send the success CONNACK.
         send $ ConnectAcknowledgement $ Right sessionPresent
         -- Replace (and shutdown) existing connections.
@@ -105,15 +105,15 @@ dispatchConnection connection ms =
     send :: RawMessage -> IO ()
     send  = undefined
 
-    maintainConnection :: MqttSession -> IO ()
+    maintainConnection :: MqttServerSession -> IO ()
     maintainConnection session =
       processKeepAlive `race_` processInput `race_` processOutput
         `race_` processBestEffortQueue `race_` processGuaranteedDeliveryQueue
 
       where
         processKeepAlive = undefined
-        processInput  = undefined
-        processOutput = undefined
+        processInput     = undefined
+        processOutput    = undefined
         processBestEffortQueue = forever $ do
           message <- BC.readChan (sessionBestEffortQueue session)
           putMVar (sessionOutputBuffer session) Publish
@@ -125,21 +125,22 @@ dispatchConnection connection ms =
             }
         processGuaranteedDeliveryQueue = undefined
 
-getSession :: MqttSessions -> ClientIdentifier -> IO (MqttSession, SessionPresent)
-getSession mqttSessions clientIdentifier =
-  modifyMVar (sessions mqttSessions) $ \ms->
+getSession :: MqttServer -> ClientIdentifier -> IO (MqttServerSession, SessionPresent)
+getSession server clientIdentifier =
+  modifyMVar (serverSessions server) $ \ms->
     case M.lookup clientIdentifier ms of
       Just session -> pure (ms, (session, True))
       Nothing      -> do
         mthread <- newMVar =<< async (pure ())
-        session <- MqttSession
+        session <- MqttServerSession
           <$> pure mthread
           <*> newEmptyMVar
           <*> BC.newBoundedChan 1000
           <*> BC.newBoundedChan 1000
-          <*> BC.newBoundedChan 1000
+          <*> newEmptyMVar
+          <*> newEmptyMVar
           <*> pure (removeSession >> withMVar mthread cancel)
         pure (M.insert clientIdentifier session ms, (session, False))
   where
     removeSession =
-      modifyMVar_ (sessions mqttSessions) $ pure . M.delete clientIdentifier
+      modifyMVar_ (serverSessions server) $ pure . M.delete clientIdentifier
