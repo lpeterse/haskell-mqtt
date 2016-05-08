@@ -41,7 +41,8 @@ data  MqttServer
 
 data  MqttServerSession
     = MqttServerSession
-      { sessionConnection              :: MVar (Async ())
+      { sessionServer                  :: MqttServer
+      , sessionConnection              :: MVar (Async ())
       , sessionOutputBuffer            :: MVar RawMessage
       , sessionBestEffortQueue         :: BC.BoundedChan Message
       , sessionGuaranteedDeliveryQueue :: BC.BoundedChan Message
@@ -133,7 +134,8 @@ getSession server clientIdentifier =
       Nothing      -> do
         mthread <- newMVar =<< async (pure ())
         session <- MqttServerSession
-          <$> pure mthread
+          <$> pure server
+          <*> pure mthread
           <*> newEmptyMVar
           <*> BC.newBoundedChan 1000
           <*> BC.newBoundedChan 1000
