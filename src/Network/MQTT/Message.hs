@@ -285,7 +285,7 @@ pPacketIdentifier :: A.Parser PacketIdentifier
 pPacketIdentifier = do
   msb <- A.anyWord8
   lsb <- A.anyWord8
-  pure $  PacketIdentifier $ (fromIntegral msb * 256) + fromIntegral lsb
+  pure $  PacketIdentifier $ (fromIntegral msb `unsafeShiftL` 8) .|. fromIntegral lsb
 
 bRawMessage :: RawMessage -> BS.Builder
 bRawMessage (Connect (ClientIdentifier i) cleanSession keepAlive will credentials) =

@@ -1,25 +1,28 @@
 {-# LANGUAGE OverloadedStrings #-}
-module Network.MQTT.SubscriptionTree
-  ( SubscriptionTree
-  , newSubscriptionTree
-  , subscribe
-  , unsubscribe
-  , publish ) where
+module Network.MQTT.SubscriptionTree where
 
 import Control.Concurrent.MVar
 import Data.Unique
 
+import qualified Data.IntMap as IM
+import qualified Data.IntSet as IS
 import qualified Data.Map as M
 import qualified Data.Text as T
 
-type TopicLevel  = T.Text
+
+type TopicLevel    = T.Text
 
 data Tree a        = Tree (Subscribers a) (Subtree a)
 type Subtree a     = M.Map TopicLevel (Tree a)
 type Subscribers a = M.Map Unique (a -> IO ())
 
-newtype SubscriptionTree a = SubscriptionTree (MVar (Tree a))
+data SubscriptionTree
+   = SubscriptionTree
+     { subscribers :: IS.IntSet
+     , subtree     :: M.Map TopicLevel SubscriptionTree
+     }
 
+{-
 newSubscriptionTree :: IO (SubscriptionTree a)
 newSubscriptionTree =
   SubscriptionTree <$> newMVar (Tree M.empty M.empty)
@@ -67,3 +70,4 @@ publish (SubscriptionTree mtree) ts msg = do
       case M.lookup  t  subtrees of
         Nothing      -> return ()
         Just subtree -> publish' subtree ts
+-}

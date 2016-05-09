@@ -13,6 +13,7 @@ module Network.MQTT.Server where
 import Data.Int
 import Data.Typeable
 import qualified Data.Map as M
+import qualified Data.Set as S
 import qualified Data.IntMap as IM
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Builder as BS
@@ -32,10 +33,21 @@ import System.Random
 import Network.MQTT
 import Network.MQTT.Message
 import Network.MQTT.Message.RemainingLength
+import Network.MQTT.SubscriptionTree
+
+type  SessionIdentifier = Int
+
+data  MqttServerSessions
+   =  MqttServerSessions
+      { maxSession    :: SessionIdentifier
+      , subscriptions :: SubscriptionTree
+      , session       :: IM.IntMap MqttServerSession
+      }
 
 data  MqttServer
    =  MqttServer
-      { serverSessions                :: MVar (M.Map ClientIdentifier MqttServerSession)
+      { serverMaxSessionIdentifier    :: MVar SessionIdentifier
+      , serverSessions                :: MVar (IM.IntMap MqttServerSession)
       , serverAuthenticate            :: Maybe (Username, Maybe Password) -> IO (Maybe Identity)
       }
 
@@ -48,7 +60,7 @@ data  MqttServerSession
       , sessionGuaranteedDeliveryQueue :: BC.BoundedChan Message
       , sessionInboundPacketState      :: MVar (IM.IntMap InboundPacketState)
       , sessionOutboundPacketState     :: MVar (IM.IntMap OutboundPacketState)
-      , sessionTerminate               :: IO ()
+      , sessionSubscriptions           :: S.Set TopicFilter
       }
 
 data  Identity
@@ -77,7 +89,7 @@ publish session message = case qos message of
   -- unable to further serve the contract.
   _ -> do
     success <- BC.tryWriteChan (sessionGuaranteedDeliveryQueue session) message
-    unless success $ sessionTerminate session
+    unless success undefined -- sessionTerminate session
 
 dispatchConnection :: MqttServer -> Connection -> IO ()
 dispatchConnection server connection =
@@ -127,7 +139,8 @@ dispatchConnection server connection =
         processGuaranteedDeliveryQueue = undefined
 
 getSession :: MqttServer -> ClientIdentifier -> IO (MqttServerSession, SessionPresent)
-getSession server clientIdentifier =
+getSession server clientIdentifier = undefined
+{--
   modifyMVar (serverSessions server) $ \ms->
     case M.lookup clientIdentifier ms of
       Just session -> pure (ms, (session, True))
@@ -141,8 +154,5 @@ getSession server clientIdentifier =
           <*> BC.newBoundedChan 1000
           <*> newEmptyMVar
           <*> newEmptyMVar
-          <*> pure (removeSession >> withMVar mthread cancel)
         pure (M.insert clientIdentifier session ms, (session, False))
-  where
-    removeSession =
-      modifyMVar_ (serverSessions server) $ pure . M.delete clientIdentifier
+-}
