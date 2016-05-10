@@ -27,6 +27,7 @@ library
                        Network.MQTT.Client,
                        Network.MQTT.Server,
                        Network.MQTT.SubscriptionTree,
+                       Network.MQTT.IO,
                        Network.MQTT.Message,
                        Network.MQTT.Message.Blob,
                        Network.MQTT.Message.RemainingLength,

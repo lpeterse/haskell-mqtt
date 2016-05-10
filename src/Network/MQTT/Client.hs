@@ -35,6 +35,7 @@ import Control.Concurrent.Async
 import System.Random
 
 import Network.MQTT
+import Network.MQTT.IO
 import Network.MQTT.Message
 import Network.MQTT.Message.RemainingLength
 
@@ -167,54 +168,24 @@ connect c = modifyMVar_ (clientThreads c) $ \p->
                 unless activity $ putMVar (clientOutput c) $ Left PingRequest
 
             handleOutput :: IO ()
-            handleOutput = bracket
-              ( mallocBytes bufferSize )
-              ( free )
-              ( withBuffer )
+            handleOutput = bufferedOutput getMessage getMaybeMessage (send connection)
               where
-                bufferSize :: Int
-                bufferSize  = 8192
-
-                withBuffer :: Ptr Word8 -> IO ()
-                withBuffer buffer = forever $ do
+                getMessage :: IO RawMessage
+                getMessage = do
+                  msg <- f =<< takeMVar (clientOutput c)
                   void $ swapMVar (clientRecentActivity c) True
-                  emsg <- takeMVar (clientOutput c)
-                  case emsg of
-                    Left msg -> uncurry f =<< BS.runBuilder (bRawMessage msg) buffer bufferSize
-                    Right imessage -> sendIMessage imessage
-                  where
-                    f written next
-                      | written >= bufferSize = sendBuffer written >>  g 0 next
-                      | otherwise             = g written next
-                    -- Message has been written completely and buffer is not yet full.
-                    -- Fetch the next message from the queue if possible
-                    g written BS.Done = do
-                      -- yield -- might give performance boost
-                      mmsg <- tryTakeMVar (clientOutput c)
-                      case mmsg of
-                        Nothing   -> sendBuffer written
-                        Just emsg' -> case emsg' of
-                          Left msg -> do
-                            (written',next) <- BS.runBuilder (bRawMessage msg) (plusPtr buffer written) (bufferSize - written)
-                            f (written + written') next
-                          Right imessage -> do
-                            sendBuffer written
-                            sendIMessage imessage
-                    g written (BS.More minBufferSize writer)
-                      | (bufferSize - written) >= minBufferSize = do
-                          (written', next) <- writer (plusPtr buffer written) (bufferSize - written)
-                          f (written + written') next
-                      | otherwise = do
-                          sendBuffer written
-                    g written (BS.Chunk chunk writer) = do
-                      sendBuffer written
-                      send connection chunk
-                    sendBuffer :: Int -> IO ()
-                    sendBuffer written = do
-                      BS.unsafePackCStringLen (castPtr buffer, written) >>= send connection
+                  pure msg
 
-                    sendIMessage imessage =
-                      send connection . LBS.toStrict . BS.toLazyByteString . bRawMessage =<< assignPacketIdentifier imessage
+                getMaybeMessage :: IO (Maybe RawMessage)
+                getMaybeMessage = do
+                  memsg <- tryTakeMVar (clientOutput c)
+                  case memsg of
+                    Nothing   -> pure Nothing
+                    Just emsg -> Just <$> f emsg
+
+                f :: Either RawMessage (PacketIdentifier -> (RawMessage, OutboundState)) -> IO RawMessage
+                f (Left msg)   = pure msg
+                f (Right imsg) = assignPacketIdentifier imsg
 
                 assignPacketIdentifier :: (PacketIdentifier -> (RawMessage, OutboundState)) -> IO RawMessage
                 assignPacketIdentifier f =

@@ -30,7 +30,7 @@ main = do
   where
     sendIndefinitely mqtt i = do
       when (mod i 1000000 == 0) (print i)
-      publish mqtt $ Message QoS0 False "/foo/bar" "hjkhjhkjhjhhhk"
+      publish mqtt $ Message QoS0 False "/foo/bar" ""
       sendIndefinitely mqtt $ succ i
 
 newConnection :: IO Connection
