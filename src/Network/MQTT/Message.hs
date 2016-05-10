@@ -1,5 +1,23 @@
 {-# LANGUAGE TupleSections, GeneralizedNewtypeDeriving #-}
-module Network.MQTT.Message where
+module Network.MQTT.Message
+  ( ClientIdentifier (..)
+  , SessionPresent
+  , CleanSession
+  , Retain
+  , KeepAlive
+  , Username
+  , Password
+  , TopicFilter
+  , Topic (..)
+  , Payload
+  , PacketIdentifier (..)
+  , QoS (..)
+  , QualityOfService (..)
+  , ConnectionRefusal (..)
+  , Will (..)
+  , RawMessage (..)
+  , bRawMessage
+  , pRawMessage ) where
 
 import Control.Applicative
 import Control.Concurrent.MVar
@@ -22,7 +40,7 @@ import qualified Data.Text.Encoding as T
 import qualified Data.Text.Lazy as LT
 import qualified Data.Text.Lazy.Encoding as LT
 
-import Network.MQTT.Message.Blob
+--import Network.MQTT.Message.Blob
 import Network.MQTT.Message.RemainingLength
 import Network.MQTT.Message.Utf8String
 import Network.MQTT.Message.Position
@@ -36,9 +54,11 @@ type Retain           = Bool
 type KeepAlive        = Word16
 type Username         = T.Text
 type Password         = BS.ByteString
-type Topic            = T.Text
 type TopicFilter      = T.Text
 type Payload          = BS.ByteString
+
+newtype Topic            = Topic BS.ByteString
+  deriving (Eq, Ord, Show)
 
 newtype PacketIdentifier = PacketIdentifier Int
   deriving (Eq, Show)
@@ -82,7 +102,7 @@ data RawMessage
    | Publish
      { publishDuplicate        :: Bool
      , publishRetain           :: Bool
-     , publishTopic            :: T.Text
+     , publishTopic            :: Topic
      , publishQoS              :: Maybe (QualityOfService, PacketIdentifier)
      , publishBody             :: BS.ByteString
      }
@@ -98,6 +118,17 @@ data RawMessage
    | PingResponse
    | Disconnect
    deriving (Eq, Show)
+
+pBlob :: A.Parser BS.ByteString
+pBlob = do
+  msb <- A.anyWord8
+  lsb <- A.anyWord8
+  let len = (fromIntegral msb * 256) + fromIntegral lsb :: Int
+  A.take len
+
+bBlob :: BS.ByteString -> BS.Builder
+bBlob bs = BS.word16BE (fromIntegral $ BS.length bs) <> BS.byteString bs
+{-# INLINE bBlob #-}
 
 pRawMessage :: A.Parser RawMessage
 pRawMessage = do
@@ -195,7 +226,7 @@ pPublish len hflags = do
   Publish
     ( hflags .&. 0x08 /= 0 ) -- duplicate flag
     ( hflags .&. 0x01 /= 0 ) -- retain flag
-    <$> pUtf8String
+    <$> ( Topic <$> pBlob )
     <*> case hflags .&. 0x06 of
       0x00 -> pure Nothing
       0x02 -> Just . (AtLeastOnce,) <$> pPacketIdentifier
@@ -320,7 +351,7 @@ bRawMessage (ConnectAcknowledgement crs) =
   BS.word32BE $ 0x20020000 .|. case crs of
     Left cr -> fromIntegral $ fromEnum cr + 1
     Right s -> if s then 0x0100 else 0
-bRawMessage (Publish d r t mqp b) =
+bRawMessage (Publish d r (Topic t) mqp b) =
   BS.word8 ( 0x30
     .|. ( if d then 0x08 else 0 )
     .|. ( if r then 0x01 else 0 )
@@ -331,13 +362,13 @@ bRawMessage (Publish d r t mqp b) =
         ExactlyOnce -> 0x04
     )
   <> bRemainingLength len
-  <> bUtf8String t
+  <> bBlob t
   <> case mqp of
        Nothing                      -> mempty
        Just (_, PacketIdentifier p) -> BS.word16BE (fromIntegral p)
   <> BS.byteString b
   where
-    len = 2 + BS.length (T.encodeUtf8 t) + BS.length b + maybe 0 (const 2) mqp
+    len = 2 + BS.length t + BS.length b + maybe 0 (const 2) mqp
 bRawMessage (PublishAcknowledgement (PacketIdentifier p)) =
   BS.word16BE 0x4002 <> BS.word16BE (fromIntegral p)
 bRawMessage (PublishReceived (PacketIdentifier p)) =

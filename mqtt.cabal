@@ -29,7 +29,6 @@ library
                        Network.MQTT.SubscriptionTree,
                        Network.MQTT.IO,
                        Network.MQTT.Message,
-                       Network.MQTT.Message.Blob,
                        Network.MQTT.Message.RemainingLength,
                        Network.MQTT.Message.Utf8String,
                        Network.MQTT.Message.Position
