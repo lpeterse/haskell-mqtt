@@ -77,6 +77,6 @@ bufferedOutput getMessage getMaybeMessage sendByteString =
           uncurry finishWriter =<< writer buffer bufferSize
     flushBuffer :: Ptr Word8 -> Int -> IO ()
     flushBuffer buffer pos = do
-      print pos
+      --print pos
       BS.unsafePackCStringLen (castPtr buffer, pos) >>= sendByteString
 {-# INLINE bufferedOutput #-}
