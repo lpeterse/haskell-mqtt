@@ -1,4 +1,4 @@
-{-# LANGUAGE OverloadedStrings, TypeFamilies, BangPatterns #-}
+{-# LANGUAGE OverloadedStrings, TypeFamilies, BangPatterns, TupleSections #-}
 --------------------------------------------------------------------------------
 -- |
 -- Module      :  Network.MQTT
@@ -48,7 +48,7 @@ data MqttClient
      , clientRecentActivity          :: MVar Bool
      , clientOutput                  :: MVar (Either RawMessage (PacketIdentifier -> (RawMessage, OutboundState)))
      , clientInboundState            :: MVar (IM.IntMap InboundState)
-     , clientOutboundState           :: MVar (IM.IntMap OutboundState)
+     , clientOutboundState           :: MVar ([Int], IM.IntMap OutboundState)
      , clientMessages                :: MVar Tail
      , clientNewConnection           :: MVar (IO Connection)
      , clientThreads                 :: MVar (Async ())
@@ -63,7 +63,7 @@ newMqttClient ioc = MqttClient
   <*> newMVar False
   <*> newEmptyMVar
   <*> newMVar IM.empty
-  <*> newMVar IM.empty
+  <*> newMVar ([0..100], IM.empty)
   <*> (newMVar =<< (Tail <$> newEmptyMVar))
   <*> newMVar ioc
   <*> (newMVar =<< async (pure ()))
@@ -188,19 +188,18 @@ connect c = modifyMVar_ (clientThreads c) $ \p->
                 f (Right imsg) = assignPacketIdentifier imsg
 
                 assignPacketIdentifier :: (PacketIdentifier -> (RawMessage, OutboundState)) -> IO RawMessage
-                assignPacketIdentifier f =
-                  modifyMVar (clientOutboundState c) (`g` [0x0000 .. 0xffff]) >>= \mm-> case mm of
+                assignPacketIdentifier x =
+                  modifyMVar (clientOutboundState c) assign >>= \mm-> case mm of
                     Just m -> pure m
                     -- We cannot easily wait for when packet identifiers are available again.
                     -- On the other hand throwing an exception seems too drastic. So (for the
                     -- extremely unlikely) case of packet identifier exhaustion, we shall wait
                     -- 100ms and then try again.
-                    Nothing -> threadDelay 100000 >> assignPacketIdentifier f
+                    Nothing -> threadDelay 100000 >> assignPacketIdentifier x
                   where
-                    g p []      = pure (p, Nothing)
-                    g p (i:is)  | IM.member i p = g p is
-                                | otherwise    = let (m, a) = f (PacketIdentifier i)
-                                                 in pure (IM.insert i a p, Just m)
+                    assign im@([], _) = pure (im, Nothing)
+                    assign (i:is, m)  = let (msg, st) = x (PacketIdentifier i)
+                                        in  pure ((is, IM.insert i st m), Just msg)
 
             handleInput :: BS.ByteString -> IO ()
             handleInput i = do
@@ -236,16 +235,16 @@ connect c = modifyMVar_ (clientThreads c) $ \p->
                 -- The following packet types are responses to earlier requests.
                 -- We need to dispatch them to the waiting threads.
                 f (PublishAcknowledgement (PacketIdentifier i)) =
-                  modifyMVar_ (clientOutboundState c) $ \im->
+                  modifyMVar_ (clientOutboundState c) $ \(is,im)->
                     case IM.lookup i im of
-                      Just (NotAcknowledgedPublish _ x) ->
-                        putMVar x () >> pure (IM.delete i im)
+                      Just (NotAcknowledgedPublish _ promise) ->
+                        putMVar promise () >> pure (i:is, IM.delete i im)
                       _ -> throwIO $ ProtocolViolation "Expected PUBACK, got something else."
                 f (PublishReceived (PacketIdentifier i)) = do
-                  modifyMVar_ (clientOutboundState c) $ \im->
+                  modifyMVar_ (clientOutboundState c) $ \(is,im)->
                     case IM.lookup i im of
-                      Just (NotReceivedPublish _ x) ->
-                        pure (IM.insert i (NotCompletePublish x) im)
+                      Just (NotReceivedPublish _ promise) ->
+                        pure (is, IM.insert i (NotCompletePublish promise) im)
                       _ -> throwIO $ ProtocolViolation "Expected PUBREC, got something else."
                   putMVar (clientOutput c) (Left $ PublishRelease (PacketIdentifier i))
                 f (PublishRelease (PacketIdentifier i)) = do
@@ -258,30 +257,30 @@ connect c = modifyMVar_ (clientThreads c) $ \p->
                         pure im
                   putMVar (clientOutput c) (Left $ PublishComplete (PacketIdentifier i))
                 f (PublishComplete (PacketIdentifier i)) = do
-                  modifyMVar_ (clientOutboundState c) $ \im->
+                  modifyMVar_ (clientOutboundState c) $ \p@(is,im)->
                     case IM.lookup i im of
                       Nothing ->
-                        pure im
-                      Just (NotCompletePublish x) ->
-                        pure (IM.delete i im)
+                        pure p
+                      Just (NotCompletePublish future) -> do
+                        putMVar future ()
+                        pure (i:is, IM.delete i im)
                       _ ->
                         throwIO $ ProtocolViolation "Expected PUBCOMP, got something else."
-                  putMVar (clientOutput c) (Left $ PublishComplete (PacketIdentifier i))
                 f (SubscribeAcknowledgement (PacketIdentifier i) as) =
-                  modifyMVar_ (clientOutboundState c) $ \im->
+                  modifyMVar_ (clientOutboundState c) $ \p@(is,im)->
                     case IM.lookup i im of
-                      Nothing -> pure im
-                      Just (NotAcknowledgedSubscribe m x) -> do
-                        putMVar x as
-                        pure (IM.delete i im)
+                      Nothing -> pure p
+                      Just (NotAcknowledgedSubscribe m promise) -> do
+                        putMVar promise as
+                        pure (i:is, IM.delete i im)
                       _ -> throwIO $ ProtocolViolation "Expected PUBCOMP, got something else."
                 f (UnsubscribeAcknowledgement (PacketIdentifier i)) =
-                  modifyMVar_ (clientOutboundState c) $ \im->
+                  modifyMVar_ (clientOutboundState c) $ \p@(is,im)->
                     case IM.lookup i im of
-                      Nothing -> pure im
-                      Just (NotAcknowledgedUnsubscribe m x) -> do
-                        putMVar x ()
-                        pure (IM.delete i im)
+                      Nothing -> pure p
+                      Just (NotAcknowledgedUnsubscribe m promise) -> do
+                        putMVar promise ()
+                        pure (i:is, IM.delete i im)
                       _ -> throwIO $ ProtocolViolation "Expected PUBCOMP, got something else."
                 f PingResponse = pure ()
                 -- The following packets must not be sent from the server to the client.

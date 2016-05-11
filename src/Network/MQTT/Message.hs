@@ -160,6 +160,7 @@ pRawMessage = do
         fail $ "pRawMessage: Remaining length does not match expectation. Expected: "
           ++ show len  ++ ". Parsed: " ++ show (end - begin)
       pure a
+    {-# INLINE assureCorrentLength #-}
 
 pConnect :: Int -> Word8 -> A.Parser RawMessage
 pConnect len hflags
@@ -317,6 +318,7 @@ pPacketIdentifier = do
   msb <- A.anyWord8
   lsb <- A.anyWord8
   pure $  PacketIdentifier $ (fromIntegral msb `unsafeShiftL` 8) .|. fromIntegral lsb
+{-# INLINE pPacketIdentifier #-}
 
 bRawMessage :: RawMessage -> BS.Builder
 bRawMessage (Connect (ClientIdentifier i) cleanSession keepAlive will credentials) =

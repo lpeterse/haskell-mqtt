@@ -30,7 +30,7 @@ main = do
 
 sendQoS1 :: MqttClient -> IO ()
 sendQoS1 mqtt = do
-  mapM_ (forkIO . f 0) [1..100]
+  mapM_ (forkIO . f 0) [1..1000]
   where
     f i t = do
       when (mod i 1000 == 0) (putStrLn $ show t ++ ": " ++ show i)
