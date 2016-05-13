@@ -63,7 +63,7 @@ newMqttClient ioc = MqttClient
   <*> newMVar False
   <*> newEmptyMVar
   <*> newMVar IM.empty
-  <*> newMVar ([0..100], IM.empty)
+  <*> newMVar ([0..10000], IM.empty)
   <*> (newMVar =<< (Tail <$> newEmptyMVar))
   <*> newMVar ioc
   <*> (newMVar =<< async (pure ()))
