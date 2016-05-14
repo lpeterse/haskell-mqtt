@@ -100,11 +100,11 @@ data RawMessage
      }
    | ConnectAcknowledgement         (Either ConnectionRefusal SessionPresent)
    | Publish
-     { publishDuplicate        :: Bool
-     , publishRetain           :: Bool
-     , publishTopic            :: Topic
-     , publishQoS              :: Maybe (QualityOfService, PacketIdentifier)
-     , publishBody             :: BS.ByteString
+     { publishDuplicate        :: !Bool
+     , publishRetain           :: !Bool
+     , publishTopic            :: !Topic
+     , publishQoS              :: !(Maybe (QualityOfService, PacketIdentifier))
+     , publishBody             :: !BS.ByteString
      }
    | PublishAcknowledgement       PacketIdentifier
    | PublishReceived              PacketIdentifier
@@ -353,24 +353,43 @@ bRawMessage (ConnectAcknowledgement crs) =
   BS.word32BE $ 0x20020000 .|. case crs of
     Left cr -> fromIntegral $ fromEnum cr + 1
     Right s -> if s then 0x0100 else 0
+-- bRawMessage (Publish False False (Topic t) Nothing b) =
+--  b0 <> b1 <> b2
+--  where
+--    b0   = BS.word32BE 0x30120008
+--    b1   = BS.word64BE 0x4141414141414141
+--    b2   = BS.word64BE 0x4141414141414141
 bRawMessage (Publish d r (Topic t) mqp b) =
-  BS.word8 ( 0x30
-    .|. ( if d then 0x08 else 0 )
-    .|. ( if r then 0x01 else 0 )
-    .|. case mqp of
-      Nothing    -> 0
-      Just (q,_) -> case q of
-        AtLeastOnce -> 0x02
-        ExactlyOnce -> 0x04
-    )
-  <> bRemainingLength len
-  <> bBlob t
-  <> case mqp of
-       Nothing                      -> mempty
-       Just (_, PacketIdentifier p) -> BS.word16BE (fromIntegral p)
-  <> BS.byteString b
-  where
-    len = 2 + BS.length t + BS.length b + maybe 0 (const 2) mqp
+  case mqp of
+    Nothing ->
+      let len = 2 + BS.length t + BS.length b
+          h   = fromIntegral $ (if r then 0x31000000 else 0x30000000)
+                .|. (len `unsafeShiftL` 16)
+                .|. (BS.length t)
+      in if len < 128
+        then h `seq` BS.word32BE h
+          <> BS.byteString t
+          <> BS.byteString b
+        else BS.word8 ( if r then 0x31 else 0x30 )
+          <> bRemainingLength len
+          <> BS.word16BE ( fromIntegral $ BS.length t )
+          <> BS.byteString t
+          <> BS.byteString b
+    Just (q, PacketIdentifier p) ->
+      let len = 4 + BS.length t + BS.length b
+      in BS.word8 ( 0x30
+        .|. ( if d then 0x08 else 0 )
+        .|. ( if r then 0x01 else 0 )
+        .|. case q of
+            AtLeastOnce -> 0x02
+            ExactlyOnce -> 0x04
+        )
+      <> bRemainingLength len
+      <> BS.word16BE ( fromIntegral $ BS.length t )
+      <> BS.byteString t
+      <> BS.word16BE (fromIntegral p)
+      <> BS.byteString b
+
 bRawMessage (PublishAcknowledgement (PacketIdentifier p)) =
   BS.word16BE 0x4002 <> BS.word16BE (fromIntegral p)
 bRawMessage (PublishReceived (PacketIdentifier p)) =

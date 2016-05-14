@@ -31,11 +31,13 @@ import Control.Monad
 import Control.Concurrent
 import Control.Concurrent.MVar
 
+import System.Socket as S
+
 import Network.MQTT
 import Network.MQTT.Message
 
-bufferedOutput :: IO RawMessage -> IO (Maybe RawMessage) -> (BS.ByteString -> IO ()) -> IO ()
-bufferedOutput getMessage getMaybeMessage sendByteString =
+bufferedOutput :: Connection -> IO RawMessage -> IO (Maybe RawMessage) -> (BS.ByteString -> IO ()) -> IO ()
+bufferedOutput connection getMessage getMaybeMessage sendByteString =
   bracket ( mallocBytes bufferSize ) free waitForMessage
   where
     bufferSize :: Int
@@ -78,5 +80,5 @@ bufferedOutput getMessage getMaybeMessage sendByteString =
     flushBuffer :: Ptr Word8 -> Int -> IO ()
     flushBuffer buffer pos = do
       --print pos
-      BS.unsafePackCStringLen (castPtr buffer, pos) >>= sendByteString
+      BS.unsafePackCStringLen (castPtr buffer, pos) >>= \bs-> S.send (sock connection) bs S.msgNoSignal >> pure ()
 {-# INLINE bufferedOutput #-}

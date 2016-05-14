@@ -33,6 +33,7 @@ import Control.Concurrent.MVar
 import Control.Concurrent.Async
 
 import System.Random
+import qualified System.Socket as S
 
 import Network.MQTT
 import Network.MQTT.IO
@@ -168,7 +169,7 @@ connect c = modifyMVar_ (clientThreads c) $ \p->
                 unless activity $ putMVar (clientOutput c) $ Left PingRequest
 
             handleOutput :: IO ()
-            handleOutput = bufferedOutput getMessage getMaybeMessage (send connection)
+            handleOutput = bufferedOutput connection getMessage getMaybeMessage (send connection)
               where
                 getMessage :: IO RawMessage
                 getMessage = do
@@ -203,7 +204,7 @@ connect c = modifyMVar_ (clientThreads c) $ \p->
 
             handleInput :: BS.ByteString -> IO ()
             handleInput i = do
-              result <- A.parseWith (receive connection) pRawMessage i
+              result <- A.parseWith (S.receive (sock connection) 4096 S.msgNoSignal) pRawMessage i
               case result of
                 A.Done j message -> f message >> handleInput j
                 A.Fail _ _ e     -> throwIO $ ParserError e
