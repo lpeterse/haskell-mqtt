@@ -31,7 +31,7 @@ pRemainingLength = do
                               fromIntegral (b1 .&. 127) * 128 +
                               fromIntegral (b0 .&. 127)
                 else fail "pRemainingLength: invalid input"
-{-# INLINE pRemainingLength #-}
+--{-# INLINE pRemainingLength #-}
 
 bRemainingLength :: Int -> BS.Builder
 bRemainingLength i

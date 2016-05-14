@@ -22,6 +22,7 @@ import qualified Data.ByteString.Builder.Extra as BS
 import qualified Data.ByteString.Lazy as LBS
 import qualified Data.Attoparsec.ByteString as A
 import qualified Data.Text as T
+import qualified Data.Serialize.Get as SG
 
 import Foreign.Ptr
 import Foreign.Marshal.Alloc
@@ -131,11 +132,11 @@ connect c = modifyMVar_ (clientThreads c) $ \p->
 
         receiveConnectAcknowledgement :: IO BS.ByteString
         receiveConnectAcknowledgement = do
-          result <- A.parseWith (receive connection) pRawMessage =<< receive connection
-          case result of
-            A.Done j message -> f message >> pure j
-            A.Fail _ _ e     -> throwIO $ ParserError e
-            A.Partial _      -> throwIO $ ParserError "Expected CONNACK, got end of input."
+          bs <- S.receive (sock connection) 4096 S.msgNoSignal
+          case SG.runGetPartial pRawMessage bs of
+            SG.Done message bs' -> f message >> pure bs'
+            SG.Fail e bs'       -> throwIO $ ParserError e
+            SG.Partial _        -> throwIO $ ParserError "Expected CONNACK, got end of input."
           where
             f (ConnectAcknowledgement a) = case a of
                 Right serverSessionPresent
@@ -153,7 +154,8 @@ connect c = modifyMVar_ (clientThreads c) $ \p->
 
         maintainConnection :: BS.ByteString -> IO (Async ())
         maintainConnection i = async $ do
-          keepAlive `race_` handleOutput `race_` handleInput i
+          print "MAINTAIN"
+          keepAlive `race_` handleOutput `race_` (handleInput i `catch` \e-> print (e :: SomeException))
           where
             -- The keep alive thread wakes up every `keepAlive/2` seconds.
             -- It reads and unsets the recent-activity flag.
@@ -203,13 +205,26 @@ connect c = modifyMVar_ (clientThreads c) $ \p->
                                         in  pure ((is, IM.insert i st m), Just msg)
 
             handleInput :: BS.ByteString -> IO ()
-            handleInput i = do
-              result <- A.parseWith (S.receive (sock connection) 4096 S.msgNoSignal) pRawMessage i
-              case result of
-                A.Done j message -> f message >> handleInput j
-                A.Fail _ _ e     -> throwIO $ ParserError e
-                A.Partial _      -> throwIO $ ParserError "Unexpected end of input."
+            handleInput bs
+              | BS.null bs = handleInput' =<< S.receive (sock connection) 4096 S.msgNoSignal
+              | otherwise  = handleInput' bs
               where
+                handleInput' bs' = do
+                  -- print $ "handle input" ++ show (BS.unpack bs')
+                  g (SG.runGetPartial pRawMessage bs')
+                g (SG.Done message bs') = do
+                  -- print message
+                  f message >> handleInput' bs'
+                g (SG.Partial     cont) = do
+                  --print "Partial"
+                  bs' <- S.receive (sock connection) 4096 S.msgNoSignal
+                  if BS.null bs'
+                    then throwIO ConnectionClosed
+                    else g $ cont bs'
+                g (SG.Fail         e _) = do
+                  --print $ "FAIL" ++ show e
+                  throwIO $ ParserError e
+
                 f msg@Publish {} = case publishQoS msg of
                   Nothing -> publishLocal c Message
                     { qos      = QoS0

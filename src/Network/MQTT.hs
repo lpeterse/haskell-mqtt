@@ -40,6 +40,7 @@ data MqttException
    = ParserError String
    | ProtocolViolation String
    | ConnectionRefused ConnectionRefusal
+   | ConnectionClosed
    | ClientLostSession
    | ServerLostSession
    deriving (Eq, Ord, Show, Typeable)

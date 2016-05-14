@@ -31,6 +31,7 @@ import Data.Function (fix)
 import Data.String
 import Data.Word
 import Data.Typeable
+import qualified Data.Serialize.Get as SG
 import qualified Data.Attoparsec.ByteString as A
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Builder as BS
@@ -130,42 +131,31 @@ bBlob :: BS.ByteString -> BS.Builder
 bBlob bs = BS.word16BE (fromIntegral $ BS.length bs) <> BS.byteString bs
 {-# INLINE bBlob #-}
 
-pRawMessage :: A.Parser RawMessage
+pRawMessage :: SG.Get RawMessage
 pRawMessage = do
-  h   <- A.anyWord8
-  len <- pRemainingLength
-  let flags = h .&. 0x0f
-  assureCorrentLength len $ ($ flags) $ ($ len) $ case h .&. 0xf0 of
-    0x10 -> pConnect
+  SG.lookAhead SG.getWord8 >>= \h-> case h .&. 0xf0 of
+--    0x10 -> pConnect                     flags
     0x20 -> pConnectAcknowledgement
     0x30 -> pPublish
     0x40 -> pPublishAcknowledgement
     0x50 -> pPublishReceived
-    0x60 -> pPublishRelease
+--    0x60 -> pPublishRelease
     0x70 -> pPublishComplete
-    0x80 -> pSubscribe
+--    0x80 -> pSubscribe
     0x90 -> pSubscribeAcknowledgement
-    0xa0 -> pUnsubscribe
-    0xb0 -> pUnsubscribeAcknowledgement
-    0xc0 -> pPingRequest
-    0xd0 -> pPingResponse
-    0xe0 -> pDisconnect
-    _    -> const $ fail "pRawMessage: Packet type not implemented."
-  where
-    assureCorrentLength len parser = do
-      begin <- pPosition
-      a <- parser
-      end <- pPosition
-      when (end - begin /= len) $
-        fail $ "pRawMessage: Remaining length does not match expectation. Expected: "
-          ++ show len  ++ ". Parsed: " ++ show (end - begin)
-      pure a
-    {-# INLINE assureCorrentLength #-}
+--    0xa0 -> pUnsubscribe
+--    0xb0 -> pUnsubscribeAcknowledgement
+--    0xc0 -> pPingRequest
+--    0xd0 -> pPingResponse
+--    0xe0 -> pDisconnect
+    _    -> fail "pRawMessage: Packet type not implemented."
 
-pConnect :: Int -> Word8 -> A.Parser RawMessage
-pConnect len hflags
-  | hflags /= 0 = fail "pConnect: The header flags are reserved and MUST be set to 0."
-  | otherwise   = do
+{-
+pConnect :: A.Parser RawMessage
+pConnect = do
+    hflags <- (.&. 0x0f) <$> A.anyWord8
+    when (hflags /= 0) (fail "pConnect: The header flags are reserved and MUST be set to 0.")
+    len    <- pRemainingLength
     pProtocolName
     pProtocolLevel
     flags <- pConnectFlags
@@ -205,56 +195,76 @@ pConnect len hflags
     pPassword flags
       | flags .&. 0x40 == 0 = pure Nothing
       | otherwise           = Just <$> pBlob
+-}
 
-pConnectAcknowledgement :: Int -> Word8 -> A.Parser RawMessage
-pConnectAcknowledgement len hflags
-  | hflags /= 0 = fail "pConnectAcknowledgement: The header flags are reserved and MUST be set to 0."
-  | otherwise   = do
-    flags <- A.anyWord8
+pConnectAcknowledgement :: SG.Get RawMessage
+pConnectAcknowledgement = do
+  _ <- SG.getWord32be
+  pure $ ConnectAcknowledgement $ Right False
+
+{-
+    hflags <- (.&. 0x0f) <$> SG.getWord8
+    when (hflags /= 0) (fail "pConnectAcknowledgement: The header flags are reserved and MUST be set to 0.")
+    len   <- fromIntegral <$> SG.getWord8
+    flags <- SG.getWord8
     when (flags .&. 0xfe /= 0) $
       fail "pConnectAcknowledgement: The flags 7-1 are reserved and MUST be set to 0."
-    A.anyWord8 >>= f (flags /= 0)
+    SG.getWord8 >>= f (flags /= 0)
   where
     f sessionPresent returnCode
       | returnCode == 0 = pure $ ConnectAcknowledgement $ Right sessionPresent
       | sessionPresent  = fail "pConnectAcknowledgement: Violation of [MQTT-3.2.2-4]."
       | returnCode <= 5 = pure $ ConnectAcknowledgement $ Left $ toEnum (fromIntegral returnCode - 1)
       | otherwise       = fail "pConnectAcknowledgement: Invalid (reserved) return code."
+-}
 
-pPublish :: Int -> Word8 -> A.Parser RawMessage
-pPublish len hflags = do
-  begin <- pPosition
+pPublish :: SG.Get RawMessage
+pPublish = do
+  hflags <- (.&. 0x0f) <$> SG.getWord8
+  len    <- pRemLen
+  tlen   <- fromIntegral <$> SG.getWord16be
+  blen   <- pure (len - 2 - tlen)
   Publish
     ( hflags .&. 0x08 /= 0 ) -- duplicate flag
     ( hflags .&. 0x01 /= 0 ) -- retain flag
-    <$> ( Topic <$> pBlob )
+    <$> ( Topic <$> SG.getByteString tlen )
     <*> case hflags .&. 0x06 of
       0x00 -> pure Nothing
-      0x02 -> Just . (AtLeastOnce,) <$> pPacketIdentifier
-      0x04 -> Just . (ExactlyOnce,) <$> pPacketIdentifier
+      0x02 -> Just . (AtLeastOnce,) . PacketIdentifier . fromIntegral <$> SG.getWord16be
+      0x04 -> Just . (ExactlyOnce,) . PacketIdentifier . fromIntegral <$> SG.getWord16be
       _    -> fail "pPublish: Violation of [MQTT-3.3.1-4]."
-    <*> (pPosition >>= \end-> A.take (len - (end - begin)))
+    <*> ( SG.getByteString blen )
 
-pPublishAcknowledgement :: Int -> Word8 -> A.Parser RawMessage
-pPublishAcknowledgement len hflags
-  | hflags /= 0 = fail "pPubAck: The header flags are reserved and MUST be set to 0."
-  | otherwise   = PublishAcknowledgement <$> pPacketIdentifier
+pRemLen :: SG.Get Int
+pRemLen  = do
+  b0 <- fromIntegral <$> SG.getWord8
+  if b0 < 128
+    then pure b0
+    else do
+      b1 <- fromIntegral <$> SG.getWord8
+      pure $ (b1 * 128) + (b0 .|. 127)
 
-pPublishReceived :: Int -> Word8 -> A.Parser RawMessage
-pPublishReceived len hflags
-  | hflags /= 0 = fail "pPublishReceived: The header flags are reserved and MUST be set to 0."
-  | otherwise   = PublishReceived <$> pPacketIdentifier
+pPublishAcknowledgement :: SG.Get RawMessage
+pPublishAcknowledgement = do
+    w32 <- SG.getWord32be
+    pure $ PublishAcknowledgement $ PacketIdentifier $ fromIntegral $ w32 .&. 0xffff
 
-pPublishRelease :: Int -> Word8 -> A.Parser RawMessage
-pPublishRelease len hflags
-  | hflags /= 2 = fail "pPublishRelease: The header flags are reserved and MUST be set to 2."
-  | otherwise   = PublishRelease <$> pPacketIdentifier
+pPublishReceived :: SG.Get RawMessage
+pPublishReceived = do
+    w32 <- SG.getWord32be
+    pure $ PublishReceived $ PacketIdentifier $ fromIntegral $ w32 .&. 0xffff
 
-pPublishComplete :: Int -> Word8 -> A.Parser RawMessage
-pPublishComplete len hflags
-  | hflags /= 0 = fail "pPublishComplete: The header flags are reserved and MUST be set to 0."
-  | otherwise   = PublishComplete <$> pPacketIdentifier
+pPublishRelease :: SG.Get RawMessage
+pPublishRelease = do
+    w32 <- SG.getWord32be
+    pure $ PublishRelease $ PacketIdentifier $ fromIntegral $ w32 .&. 0xffff
 
+pPublishComplete :: SG.Get RawMessage
+pPublishComplete = do
+    w32 <- SG.getWord32be
+    pure $ PublishComplete $ PacketIdentifier $ fromIntegral $ w32 .&. 0xffff
+
+{-
 pSubscribe :: Int -> Word8 -> A.Parser RawMessage
 pSubscribe len hflags
   | hflags /= 2 = fail "pSubscribe: The header flags are reserved and MUST be set to 2."
@@ -271,23 +281,21 @@ pSubscribe len hflags
         0x01 -> pure QoS1
         0x02 -> pure QoS2
         _    -> fail $ "pSubscribe: Violation of [MQTT-3.8.3-4]." ++ show qos )
+-}
 
-pSubscribeAcknowledgement :: Int -> Word8 -> A.Parser RawMessage
-pSubscribeAcknowledgement len hflags
-  | hflags /= 0 = fail "pSubscribeAcknowledgement: The header flags are reserved and MUST be set to 0."
-  | otherwise   = SubscribeAcknowledgement
-      <$> pPacketIdentifier
-      <*> pManyWithLimit (len - 2) pReturnCode
+pSubscribeAcknowledgement :: SG.Get RawMessage
+pSubscribeAcknowledgement = do
+  _   <- SG.getWord8
+  len <- fromIntegral <$> SG.getWord8
+  pid <- PacketIdentifier . fromIntegral <$> SG.getWord16be
+  SubscribeAcknowledgement pid <$> (map f . BS.unpack <$> SG.getBytes (len - 2))
   where
-    pReturnCode = do
-      c <- A.anyWord8
-      case c of
-        0x00 -> pure $ Just QoS0
-        0x01 -> pure $ Just QoS1
-        0x02 -> pure $ Just QoS2
-        0x80 -> pure Nothing
-        _    -> fail "pSubscribeAcknowledgement: Violation of [MQTT-3.9.3-2]."
+    f 0x00 = Just QoS0
+    f 0x01 = Just QoS1
+    f 0x02 = Just QoS2
+    f    _ = Nothing
 
+{-
 pUnsubscribe :: Int -> Word8 -> A.Parser RawMessage
 pUnsubscribe len hflags
   | hflags /= 2 = fail "pUnsubscribe: The header flags are reserved and MUST be set to 2."
@@ -312,13 +320,7 @@ pDisconnect :: Int -> Word8 -> A.Parser RawMessage
 pDisconnect len hflags
   | hflags /= 0 = fail "pDisconnect: The header flags are reserved and MUST be set to 0."
   | otherwise   = pure Disconnect
-
-pPacketIdentifier :: A.Parser PacketIdentifier
-pPacketIdentifier = do
-  msb <- A.anyWord8
-  lsb <- A.anyWord8
-  pure $  PacketIdentifier $ (fromIntegral msb `unsafeShiftL` 8) .|. fromIntegral lsb
-{-# INLINE pPacketIdentifier #-}
+-}
 
 bRawMessage :: RawMessage -> BS.Builder
 bRawMessage (Connect (ClientIdentifier i) cleanSession keepAlive will credentials) =
@@ -349,25 +351,21 @@ bRawMessage (Connect (ClientIdentifier i) cleanSession keepAlive will credential
       + maybe 0 ( \(u,mp)->
           2 + BS.length ( T.encodeUtf8 u ) + maybe 0 ( (2 +) . BS.length ) mp
         ) credentials
+
 bRawMessage (ConnectAcknowledgement crs) =
   BS.word32BE $ 0x20020000 .|. case crs of
     Left cr -> fromIntegral $ fromEnum cr + 1
     Right s -> if s then 0x0100 else 0
--- bRawMessage (Publish False False (Topic t) Nothing b) =
---  b0 <> b1 <> b2
---  where
---    b0   = BS.word32BE 0x30120008
---    b1   = BS.word64BE 0x4141414141414141
---    b2   = BS.word64BE 0x4141414141414141
+
 bRawMessage (Publish d r (Topic t) mqp b) =
   case mqp of
     Nothing ->
       let len = 2 + BS.length t + BS.length b
-          h   = fromIntegral $ (if r then 0x31000000 else 0x30000000)
-                .|. (len `unsafeShiftL` 16)
-                .|. (BS.length t)
+          h   = fromIntegral $ ( if r then 0x31000000 else 0x30000000 )
+                .|. ( len `unsafeShiftL` 16 )
+                .|. ( BS.length t )
       in if len < 128
-        then h `seq` BS.word32BE h
+        then BS.word32BE h
           <> BS.byteString t
           <> BS.byteString b
         else BS.word8 ( if r then 0x31 else 0x30 )

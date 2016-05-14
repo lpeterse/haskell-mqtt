@@ -3,6 +3,7 @@ module Main where
 
 import Control.Monad
 import Control.Concurrent
+import Control.Exception
 
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Lazy as LBS
@@ -21,10 +22,12 @@ main = do
   mqtt <- newMqttClient newConnection
   print "ABC"
   connect mqtt
+  -- threadDelay 1000000
+  print "CONNECTED"
+  foobar <- BS.readFile "topic.txt"
+  forkIO $ (sendQoS1 mqtt foobar) `onException` print "DIED"
   subscribe mqtt [("$SYS/#", QoS0)]
   ms <- messages mqtt
-  foobar <- BS.readFile "topic.txt"
-  forkIO (sendQoS1 mqtt foobar)
   forever $ do
     m <- message ms
     print m
@@ -35,7 +38,7 @@ sendQoS1 mqtt foobar = do
   where
     f i t = do
       when (mod i 100000 == 0) (putStrLn $ show t ++ ": " ++ show i)
-      publish mqtt $ Message QoS1 False (Topic foobar) foobar
+      publish mqtt $ Message QoS0 False (Topic foobar) foobar
       f (succ i) t
 
 newConnection :: IO Connection

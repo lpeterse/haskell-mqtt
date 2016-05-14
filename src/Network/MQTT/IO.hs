@@ -61,6 +61,7 @@ bufferedOutput connection getMessage getMaybeMessage sendByteString =
         Just msg -> sendMessage buffer pos msg
     sendMessage :: Ptr Word8 -> Int -> RawMessage -> IO ()
     sendMessage buffer pos msg = do
+      -- print msg
       pos' <- runBuilder >>= \(written, next)-> finishWriter (pos + written) next
       case msg of
         Disconnect -> flushBuffer buffer pos'
@@ -79,6 +80,6 @@ bufferedOutput connection getMessage getMaybeMessage sendByteString =
           uncurry finishWriter =<< writer buffer bufferSize
     flushBuffer :: Ptr Word8 -> Int -> IO ()
     flushBuffer buffer pos = do
-      --print pos
+      -- print pos
       BS.unsafePackCStringLen (castPtr buffer, pos) >>= \bs-> S.send (sock connection) bs S.msgNoSignal >> pure ()
 {-# INLINE bufferedOutput #-}
