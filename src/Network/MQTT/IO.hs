@@ -20,8 +20,6 @@ import qualified Data.ByteString.Unsafe as BS
 import qualified Data.ByteString.Builder as BS
 import qualified Data.ByteString.Builder.Extra as BS
 import qualified Data.ByteString.Lazy as LBS
-import qualified Data.Attoparsec.ByteString as A
-import qualified Data.Text as T
 
 import Foreign.Ptr
 import Foreign.Marshal.Alloc
@@ -32,6 +30,7 @@ import Control.Concurrent
 import Control.Concurrent.MVar
 
 import System.Socket as S
+import System.Socket.Type.Stream as S
 
 import Network.MQTT
 import Network.MQTT.Message
@@ -41,7 +40,7 @@ bufferedOutput connection getMessage getMaybeMessage sendByteString =
   bracket ( mallocBytes bufferSize ) free waitForMessage
   where
     bufferSize :: Int
-    bufferSize  = 4096
+    bufferSize  = 32768
     waitForMessage :: Ptr Word8 -> IO ()
     waitForMessage buffer =
       getMessage >>= sendMessage buffer 0
@@ -81,5 +80,5 @@ bufferedOutput connection getMessage getMaybeMessage sendByteString =
     flushBuffer :: Ptr Word8 -> Int -> IO ()
     flushBuffer buffer pos = do
       -- print pos
-      BS.unsafePackCStringLen (castPtr buffer, pos) >>= \bs-> S.send (sock connection) bs S.msgNoSignal >> pure ()
+      BS.unsafePackCStringLen (castPtr buffer, pos) >>= \bs-> S.sendAll (sock connection) (LBS.fromChunks [bs]) S.msgNoSignal >> pure ()
 {-# INLINE bufferedOutput #-}

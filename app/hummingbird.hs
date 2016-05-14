@@ -34,7 +34,7 @@ main = do
 
 sendQoS1 :: MqttClient -> BS.ByteString -> IO ()
 sendQoS1 mqtt foobar = do
-  mapM_ (forkIO . f 0) [1..100]
+  mapM_ (forkIO . f 0) [1..10]
   where
     f i t = do
       when (mod i 100000 == 0) (putStrLn $ show t ++ ": " ++ show i)

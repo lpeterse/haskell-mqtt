@@ -14,7 +14,7 @@ cabal-version:       >=1.10
 
 executable hummingbird
   main-is:            app/hummingbird.hs
-  ghc-options:        -O2 -rtsopts -prof -fprof-auto -fforce-recomp -threaded
+  ghc-options:        -O2 -rtsopts -prof -fprof-auto -fforce-recomp
   build-depends:      base,
                       bytestring,
                       mqtt,
