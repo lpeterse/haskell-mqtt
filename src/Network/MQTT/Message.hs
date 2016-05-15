@@ -190,24 +190,15 @@ pConnect = do
 
 pConnectAcknowledgement :: SG.Get RawMessage
 pConnectAcknowledgement = do
-  _ <- SG.getWord32be
-  pure $ ConnectAcknowledgement $ Right False
-
-{-
-    hflags <- (.&. 0x0f) <$> SG.getWord8
-    when (hflags /= 0) (fail "pConnectAcknowledgement: The header flags are reserved and MUST be set to 0.")
-    len   <- fromIntegral <$> SG.getWord8
-    flags <- SG.getWord8
-    when (flags .&. 0xfe /= 0) $
-      fail "pConnectAcknowledgement: The flags 7-1 are reserved and MUST be set to 0."
-    SG.getWord8 >>= f (flags /= 0)
-  where
-    f sessionPresent returnCode
-      | returnCode == 0 = pure $ ConnectAcknowledgement $ Right sessionPresent
-      | sessionPresent  = fail "pConnectAcknowledgement: Violation of [MQTT-3.2.2-4]."
-      | returnCode <= 5 = pure $ ConnectAcknowledgement $ Left $ toEnum (fromIntegral returnCode - 1)
-      | otherwise       = fail "pConnectAcknowledgement: Invalid (reserved) return code."
--}
+  x <- SG.getWord32be
+  ConnectAcknowledgement <$> case x .&. 0xff of
+    0 -> pure $ Right (x .&. 0x0100 /= 0)
+    1 -> pure $ Left UnacceptableProtocolVersion
+    2 -> pure $ Left IdentifierRejected
+    3 -> pure $ Left ServerUnavailable
+    4 -> pure $ Left BadUsernameOrPassword
+    5 -> pure $ Left NotAuthorized
+    _ -> fail "pConnectAcknowledgement: Invalid (reserved) return code."
 
 pPublish :: SG.Get RawMessage
 pPublish = do
