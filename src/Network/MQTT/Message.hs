@@ -380,13 +380,13 @@ bRawMessage (Publish d r (Topic t) mqp b) =
       <> BS.byteString b
 
 bRawMessage (PublishAcknowledgement (PacketIdentifier p)) =
-  BS.word16BE 0x4002 <> BS.word16BE (fromIntegral p)
+  BS.word32BE $ fromIntegral $ 0x40020000 .|. p
 bRawMessage (PublishReceived (PacketIdentifier p)) =
-  BS.word16BE 0x5002 <> BS.word16BE (fromIntegral p)
+  BS.word32BE $ fromIntegral $ 0x50020000 .|. p
 bRawMessage (PublishRelease (PacketIdentifier p)) =
-  BS.word16BE 0x6202 <> BS.word16BE (fromIntegral p)
+  BS.word32BE $ fromIntegral $ 0x62020000 .|. p
 bRawMessage (PublishComplete (PacketIdentifier p)) =
-  BS.word16BE 0x7002 <> BS.word16BE (fromIntegral p)
+  BS.word32BE $ fromIntegral $ 0x70020000 .|. p
 bRawMessage (Subscribe (PacketIdentifier p) tf)  =
   BS.word8 0x82 <> bRemainingLength len <> BS.word16BE (fromIntegral p) <> mconcat ( map f tf )
   where
