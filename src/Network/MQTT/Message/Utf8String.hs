@@ -10,8 +10,8 @@ import qualified Data.Text.Encoding as T
 import qualified Data.Text.Encoding.Error as T
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Builder as BS
-import qualified Data.Attoparsec.ByteString as A
 
+{-
 pUtf8String :: A.Parser T.Text
 pUtf8String = do
   msb <- A.anyWord8
@@ -22,6 +22,7 @@ pUtf8String = do
   case T.decodeUtf8' str of
     Right txt -> return txt
     _         -> fail "pUtf8String: Violation of [MQTT-1.5.3]."
+-}
 
 bUtf8String :: T.Text -> BS.Builder
 bUtf8String txt =

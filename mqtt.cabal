@@ -1,15 +1,11 @@
 name:                mqtt
 version:             0.1.0.0
--- synopsis:
--- description:
 license:             MIT
 license-file:        LICENSE
 author:              Lars Petersen
 maintainer:          info@lars-petersen.net
--- copyright:
 category:            Network, IoT
 build-type:          Simple
--- extra-source-files:
 cabal-version:       >=1.10
 
 executable hummingbird
@@ -30,10 +26,8 @@ library
                        Network.MQTT.IO,
                        Network.MQTT.Message,
                        Network.MQTT.Message.RemainingLength,
-                       Network.MQTT.Message.Utf8String,
-                       Network.MQTT.Message.Position
+                       Network.MQTT.Message.Utf8String
   build-depends:       async,
-                       attoparsec,
                        base >=4.8 && <4.9,
                        BoundedChan,
                        bytestring,

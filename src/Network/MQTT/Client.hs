@@ -20,7 +20,6 @@ import qualified Data.ByteString.Unsafe as BS
 import qualified Data.ByteString.Builder as BS
 import qualified Data.ByteString.Builder.Extra as BS
 import qualified Data.ByteString.Lazy as LBS
-import qualified Data.Attoparsec.ByteString as A
 import qualified Data.Text as T
 import qualified Data.Serialize.Get as SG
 

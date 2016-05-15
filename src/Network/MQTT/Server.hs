@@ -18,7 +18,6 @@ import qualified Data.IntMap as IM
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Builder as BS
 import qualified Data.ByteString.Lazy as LBS
-import qualified Data.Attoparsec.ByteString as A
 import qualified Data.Text as T
 
 import Control.Exception

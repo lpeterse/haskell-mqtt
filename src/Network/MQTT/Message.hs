@@ -32,7 +32,6 @@ import Data.String
 import Data.Word
 import Data.Typeable
 import qualified Data.Serialize.Get as SG
-import qualified Data.Attoparsec.ByteString as A
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Builder as BS
 import qualified Data.ByteString.Lazy as LBS
@@ -41,10 +40,8 @@ import qualified Data.Text.Encoding as T
 import qualified Data.Text.Lazy as LT
 import qualified Data.Text.Lazy.Encoding as LT
 
---import Network.MQTT.Message.Blob
 import Network.MQTT.Message.RemainingLength
 import Network.MQTT.Message.Utf8String
-import Network.MQTT.Message.Position
 
 newtype ClientIdentifier = ClientIdentifier T.Text
   deriving (Eq, Ord, Show, IsString)
@@ -120,12 +117,6 @@ data RawMessage
    | Disconnect
    deriving (Eq, Show)
 
-pBlob :: A.Parser BS.ByteString
-pBlob = do
-  msb <- A.anyWord8
-  lsb <- A.anyWord8
-  let len = (fromIntegral msb * 256) + fromIntegral lsb :: Int
-  A.take len
 
 bBlob :: BS.ByteString -> BS.Builder
 bBlob bs = BS.word16BE (fromIntegral $ BS.length bs) <> BS.byteString bs

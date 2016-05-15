@@ -5,8 +5,8 @@ import Data.Monoid
 import Data.Word
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Builder as BS
-import qualified Data.Attoparsec.ByteString as A
 
+{-
 pRemainingLength:: A.Parser Int
 pRemainingLength = do
   b0 <- A.anyWord8
@@ -31,6 +31,7 @@ pRemainingLength = do
                               fromIntegral (b1 .&. 127) * 128 +
                               fromIntegral (b0 .&. 127)
                 else fail "pRemainingLength: invalid input"
+-}
 --{-# INLINE pRemainingLength #-}
 
 bRemainingLength :: Int -> BS.Builder
