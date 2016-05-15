@@ -130,15 +130,15 @@ pRawMessage = do
     0x30 -> pPublish
     0x40 -> pPublishAcknowledgement
     0x50 -> pPublishReceived
---    0x60 -> pPublishRelease
+    0x60 -> pPublishRelease
     0x70 -> pPublishComplete
---    0x80 -> pSubscribe
+    0x80 -> pSubscribe
     0x90 -> pSubscribeAcknowledgement
---    0xa0 -> pUnsubscribe
---    0xb0 -> pUnsubscribeAcknowledgement
---    0xc0 -> pPingRequest
---    0xd0 -> pPingResponse
---    0xe0 -> pDisconnect
+    0xa0 -> pUnsubscribe
+    0xb0 -> pUnsubscribeAcknowledgement
+    0xc0 -> pPingRequest
+    0xd0 -> pPingResponse
+    0xe0 -> pDisconnect
     _    -> fail "pRawMessage: Packet type not implemented."
 
 {-
@@ -255,63 +255,69 @@ pPublishComplete = do
     w32 <- SG.getWord32be
     pure $ PublishComplete $ PacketIdentifier $ fromIntegral $ w32 .&. 0xffff
 
-{-
-pSubscribe :: Int -> Word8 -> A.Parser RawMessage
-pSubscribe len hflags
-  | hflags /= 2 = fail "pSubscribe: The header flags are reserved and MUST be set to 2."
-  | otherwise = do
-      stop <- (+ len) <$> pPosition
-      Subscribe
-        <$> pPacketIdentifier
-        <*> pManyWithLimit (len - 2) pTopicFilter
+pSubscribe :: SG.Get RawMessage
+pSubscribe = do
+  _    <- SG.getWord8
+  rlen <- pRemLen
+  pid  <- PacketIdentifier . fromIntegral <$> SG.getWord16be
+  Subscribe pid <$> getTopics (rlen - 2) []
   where
-    pTopicFilter = (,)
-      <$> pUtf8String
-      <*> ( A.anyWord8 >>= \qos-> case qos of
+    getTopics 0 ts = pure (reverse ts)
+    getTopics r ts = do
+      qos <- getQoS
+      len <- fromIntegral <$> SG.getWord16be
+      t   <- SG.getByteString len
+      getTopics ( r - 3 - len ) ( ( T.decodeUtf8 t, qos ) : ts )
+    getQoS = SG.getWord8 >>= \w-> case w of
         0x00 -> pure QoS0
         0x01 -> pure QoS1
         0x02 -> pure QoS2
-        _    -> fail $ "pSubscribe: Violation of [MQTT-3.8.3-4]." ++ show qos )
--}
+        _    -> fail $ "pSubscribe: Violation of [MQTT-3.8.3-4]."
 
 pSubscribeAcknowledgement :: SG.Get RawMessage
 pSubscribeAcknowledgement = do
-  _   <- SG.getWord8
-  len <- fromIntegral <$> SG.getWord8
-  pid <- PacketIdentifier . fromIntegral <$> SG.getWord16be
-  SubscribeAcknowledgement pid <$> (map f . BS.unpack <$> SG.getBytes (len - 2))
+  _    <- SG.getWord8
+  rlen <- pRemLen
+  pid  <- PacketIdentifier . fromIntegral <$> SG.getWord16be
+  SubscribeAcknowledgement pid <$> (map f . BS.unpack <$> SG.getBytes (rlen - 2))
   where
     f 0x00 = Just QoS0
     f 0x01 = Just QoS1
     f 0x02 = Just QoS2
     f    _ = Nothing
 
-{-
-pUnsubscribe :: Int -> Word8 -> A.Parser RawMessage
-pUnsubscribe len hflags
-  | hflags /= 2 = fail "pUnsubscribe: The header flags are reserved and MUST be set to 2."
-  | otherwise   = Unsubscribe <$> pPacketIdentifier <*> pManyWithLimit (len - 2) pUtf8String
+pUnsubscribe :: SG.Get RawMessage
+pUnsubscribe = do
+  header <- SG.getWord8
+  rlen   <- pRemLen
+  pid    <- SG.getWord16be
+  Unsubscribe (PacketIdentifier $ fromIntegral pid) <$> f (rlen - 2) []
+  where
+    f 0 ts = pure (reverse ts)
+    f r ts = do
+      len <- fromIntegral <$> SG.getWord16be
+      t   <- SG.getByteString len
+      f (r - 2 - len) (T.decodeUtf8 t:ts)
 
-pUnsubscribeAcknowledgement :: Int -> Word8 -> A.Parser RawMessage
-pUnsubscribeAcknowledgement len hflags
-  | hflags /= 0 = fail "pUnsubscribeAcknowledgement: The header flags are reserved and MUST be set to 0."
-  | otherwise   = UnsubscribeAcknowledgement <$> pPacketIdentifier
+pUnsubscribeAcknowledgement :: SG.Get RawMessage
+pUnsubscribeAcknowledgement = do
+  x <- fromIntegral <$> SG.getWord32be
+  pure $ UnsubscribeAcknowledgement $ PacketIdentifier (x .&. 0xffff)
 
-pPingRequest :: Int -> Word8 -> A.Parser RawMessage
-pPingRequest len hflags
-  | hflags /= 0 = fail "pPingRequest: The header flags are reserved and MUST be set to 0."
-  | otherwise   = pure PingRequest
+pPingRequest :: SG.Get RawMessage
+pPingRequest = do
+  _ <- SG.getWord16be
+  pure PingRequest
 
-pPingResponse :: Int -> Word8 -> A.Parser RawMessage
-pPingResponse len hflags
-  | hflags /= 0 = fail "pPingResponse: The header flags are reserved and MUST be set to 0."
-  | otherwise   = pure PingResponse
+pPingResponse :: SG.Get RawMessage
+pPingResponse = do
+  _ <- SG.getWord16be
+  pure PingResponse
 
-pDisconnect :: Int -> Word8 -> A.Parser RawMessage
-pDisconnect len hflags
-  | hflags /= 0 = fail "pDisconnect: The header flags are reserved and MUST be set to 0."
-  | otherwise   = pure Disconnect
--}
+pDisconnect :: SG.Get RawMessage
+pDisconnect = do
+  _ <- SG.getWord16be
+  pure Disconnect
 
 bRawMessage :: RawMessage -> BS.Builder
 bRawMessage (Connect (ClientIdentifier i) cleanSession keepAlive will credentials) =
