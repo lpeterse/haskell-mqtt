@@ -90,11 +90,11 @@ data Will
 
 data RawMessage
    = Connect
-     { connectClientIdentifier :: ClientIdentifier
-     , connectCleanSession     :: CleanSession
-     , connectKeepAlive        :: KeepAlive
-     , connectWill             :: Maybe Will
-     , connectUsernamePassword :: Maybe (Username, Maybe Password)
+     { connectClientIdentifier :: !ClientIdentifier
+     , connectCleanSession     :: !CleanSession
+     , connectKeepAlive        :: !KeepAlive
+     , connectWill             :: !(Maybe Will)
+     , connectCredentials      :: !(Maybe (Username, Maybe Password))
      }
    | ConnectAcknowledgement         (Either ConnectionRefusal SessionPresent)
    | Publish
@@ -125,7 +125,7 @@ bBlob bs = BS.word16BE (fromIntegral $ BS.length bs) <> BS.byteString bs
 pRawMessage :: SG.Get RawMessage
 pRawMessage = do
   SG.lookAhead SG.getWord8 >>= \h-> case h .&. 0xf0 of
---    0x10 -> pConnect                     flags
+    0x10 -> pConnect
     0x20 -> pConnectAcknowledgement
     0x30 -> pPublish
     0x40 -> pPublishAcknowledgement
@@ -141,52 +141,37 @@ pRawMessage = do
     0xe0 -> pDisconnect
     _    -> fail "pRawMessage: Packet type not implemented."
 
-{-
-pConnect :: A.Parser RawMessage
+pConnect :: SG.Get RawMessage
 pConnect = do
-    hflags <- (.&. 0x0f) <$> A.anyWord8
-    when (hflags /= 0) (fail "pConnect: The header flags are reserved and MUST be set to 0.")
-    len    <- pRemainingLength
-    pProtocolName
-    pProtocolLevel
-    flags <- pConnectFlags
-    keepAlive <- pKeepAlive
-    Connect
-      <$> pClientIdentifier
-      <*> pure (flags .&. 0x02 /= 0)
-      <*> pure keepAlive
-      <*> pWill flags
-      <*> pUsernamePassword flags
-  where
-    pProtocolName  = A.word8 0x00 >> A.word8 0x04 >> A.word8 0x4d >>
-                     A.word8 0x51 >> A.word8 0x54 >> A.word8 0x54 >> pure ()
-    pProtocolLevel = A.word8 0x04 >> pure ()
-    pConnectFlags  = A.anyWord8
-    pKeepAlive     = (\msb lsb-> (fromIntegral msb * 256) + fromIntegral lsb)
-                     <$> A.anyWord8 <*> A.anyWord8
-    pClientIdentifier = ClientIdentifier <$> do
-      txt <- pUtf8String
-      when (T.null txt) $
-        fail "pConnect: Client identifier MUST not be empty (in this implementation)."
-      return txt
-    pWill flags
-      | flags .&. 0x04 == 0 = pure Nothing
-      | otherwise           = (Just <$>) $  Will
-        <$> pUtf8String
-        <*> pBlob
-        <*> case flags .&. 0x18 of
-              0x00 -> pure Nothing
-              0x08 -> pure $ Just AtLeastOnce
-              0x10 -> pure $ Just ExactlyOnce
-              _    -> fail "pConnect: Violation of [MQTT-3.1.2-14]."
-        <*> pure (flags .&. 0x20 /= 0)
-    pUsernamePassword flags
-      | flags .&. 0x80 == 0 = pure Nothing
-      | otherwise           = Just <$> ((,) <$> pUtf8String <*> pPassword flags)
-    pPassword flags
-      | flags .&. 0x40 == 0 = pure Nothing
-      | otherwise           = Just <$> pBlob
--}
+  x    <- SG.getWord16be
+  when (x .&. 0x0f00 /= 0) $
+    fail "pConnect: The header flags are reserved and MUST be set to 0."
+  rlen <- pRemLen
+  y    <- SG.getWord64be
+  when (y .&. 0xffffffffffffff00 /= 0x00044d5154540400) $
+    fail "pConnect: Unexpected protocol initialization."
+  let cleanSession = y .&. 0x01 /= 0
+  keepAlive <- SG.getWord16be
+  clientId  <- ClientIdentifier <$> pUtf8String
+  will      <- if y .&. 0x04 == 0
+    then pure Nothing
+    else Just <$> ( Will
+      <$> pUtf8String
+      <*> ( SG.getWord16be >>= SG.getByteString . fromIntegral )
+      <*> case y .&. 0x18 of
+            0x00 -> pure Nothing
+            0x08 -> pure $ Just AtLeastOnce
+            0x10 -> pure $ Just ExactlyOnce
+            _    -> fail "pConnect: Violation of [MQTT-3.1.2-14]."
+      <*> pure ( y .&. 0x20 /= 0 ) )
+  userpass  <- if y .&. 0x80 == 0
+    then pure Nothing
+    else Just <$> ( (,)
+      <$> pUtf8String
+      <*> if y .&. 0x40 == 0
+            then pure Nothing
+            else Just <$> (SG.getWord16be >>= SG.getByteString . fromIntegral) )
+  pure ( Connect clientId cleanSession keepAlive will userpass )
 
 pConnectAcknowledgement :: SG.Get RawMessage
 pConnectAcknowledgement = do

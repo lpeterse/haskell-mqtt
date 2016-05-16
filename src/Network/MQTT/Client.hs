@@ -126,7 +126,7 @@ connect c = modifyMVar_ (clientThreads c) $ \p->
             , connectCleanSession     = False
             , connectKeepAlive        = ck
             , connectWill             = cw
-            , connectUsernamePassword = cu
+            , connectCredentials      = cu
             }
 
         receiveConnectAcknowledgement :: IO BS.ByteString
