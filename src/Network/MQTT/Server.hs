@@ -31,7 +31,6 @@ import System.Random
 
 import Network.MQTT
 import Network.MQTT.Message
-import Network.MQTT.Message.RemainingLength
 import Network.MQTT.SubscriptionTree
 
 type  SessionIdentifier = Int
@@ -131,7 +130,7 @@ dispatchConnection server connection =
           putMVar (sessionOutputBuffer session) Publish
             { publishDuplicate = False
             , publishRetain    = retained message
-            , publishQoS       = Nothing
+            , publishQoS       = undefined -- Nothing
             , publishTopic     = topic message
             , publishBody      = payload message
             }

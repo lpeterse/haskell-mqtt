@@ -14,10 +14,15 @@ module Network.MQTT.Message
   , QoS (..)
   , QualityOfService (..)
   , ConnectionRefusal (..)
+  , PublishQoS (..)
   , Will (..)
   , RawMessage (..)
   , bRawMessage
-  , pRawMessage ) where
+  , pRawMessage
+  , pRemainingLength
+  , bRemainingLength
+  , pUtf8String
+  , bUtf8String ) where
 
 import Control.Applicative
 import Control.Concurrent.MVar
@@ -25,6 +30,7 @@ import Control.Exception
 import Control.Monad.Catch (MonadThrow (..))
 import Control.Monad
 
+import Data.Maybe
 import Data.Monoid
 import Data.Bits
 import Data.Function (fix)
@@ -40,15 +46,13 @@ import qualified Data.Text.Encoding as T
 import qualified Data.Text.Lazy as LT
 import qualified Data.Text.Lazy.Encoding as LT
 
-import Network.MQTT.Message.RemainingLength
-import Network.MQTT.Message.Utf8String
-
 newtype ClientIdentifier = ClientIdentifier T.Text
   deriving (Eq, Ord, Show, IsString)
 
 type SessionPresent   = Bool
 type CleanSession     = Bool
 type Retain           = Bool
+type Duplicate        = Bool
 type KeepAlive        = Word16
 type Username         = T.Text
 type Password         = BS.ByteString
@@ -56,10 +60,10 @@ type TopicFilter      = T.Text
 type Payload          = BS.ByteString
 
 newtype Topic            = Topic BS.ByteString
-  deriving (Eq, Ord, Show)
+  deriving (Eq, Ord, Show, IsString)
 
 newtype PacketIdentifier = PacketIdentifier Int
-  deriving (Eq, Show)
+  deriving (Eq, Ord, Show)
 
 data QualityOfService
    = AtLeastOnce
@@ -88,6 +92,12 @@ data Will
      , willRetain  :: Bool
      } deriving (Eq, Show)
 
+data PublishQoS
+   = PublishQoS0
+   | PublishQoS1 !Duplicate !PacketIdentifier
+   | PublishQoS2            !PacketIdentifier
+   deriving (Eq, Ord, Show)
+
 data RawMessage
    = Connect
      { connectClientIdentifier :: !ClientIdentifier
@@ -101,7 +111,7 @@ data RawMessage
      { publishDuplicate        :: !Bool
      , publishRetain           :: !Bool
      , publishTopic            :: !Topic
-     , publishQoS              :: !(Maybe (QualityOfService, PacketIdentifier))
+     , publishQoS              :: !PublishQoS
      , publishBody             :: !BS.ByteString
      }
    | PublishAcknowledgement       PacketIdentifier
@@ -143,14 +153,14 @@ pRawMessage = do
 
 pConnect :: SG.Get RawMessage
 pConnect = do
-  x    <- SG.getWord16be
-  when (x .&. 0x0f00 /= 0) $
+  h    <- SG.getWord8
+  when (h .&. 0x0f /= 0) $
     fail "pConnect: The header flags are reserved and MUST be set to 0."
-  rlen <- pRemLen
+  rlen <- pRemainingLength
   y    <- SG.getWord64be
   when (y .&. 0xffffffffffffff00 /= 0x00044d5154540400) $
     fail "pConnect: Unexpected protocol initialization."
-  let cleanSession = y .&. 0x01 /= 0
+  let cleanSession = y .&. 0x02 /= 0
   keepAlive <- SG.getWord16be
   clientId  <- ClientIdentifier <$> pUtf8String
   will      <- if y .&. 0x04 == 0
@@ -187,29 +197,21 @@ pConnectAcknowledgement = do
 
 pPublish :: SG.Get RawMessage
 pPublish = do
-  hflags <- (.&. 0x0f) <$> SG.getWord8
-  len    <- pRemLen
+  hflags <- SG.getWord8
+  let dup = hflags .&. 0x08 /= 0 -- duplicate flag
+  let ret = hflags .&. 0x01 /= 0 -- retain flag
+  rlen   <- pRemainingLength
   tlen   <- fromIntegral <$> SG.getWord16be
-  blen   <- pure (len - 2 - tlen)
-  Publish
-    ( hflags .&. 0x08 /= 0 ) -- duplicate flag
-    ( hflags .&. 0x01 /= 0 ) -- retain flag
-    <$> ( Topic <$> SG.getByteString tlen )
-    <*> case hflags .&. 0x06 of
-      0x00 -> pure Nothing
-      0x02 -> Just . (AtLeastOnce,) . PacketIdentifier . fromIntegral <$> SG.getWord16be
-      0x04 -> Just . (ExactlyOnce,) . PacketIdentifier . fromIntegral <$> SG.getWord16be
-      _    -> fail "pPublish: Violation of [MQTT-3.3.1-4]."
-    <*> ( SG.getByteString blen )
-
-pRemLen :: SG.Get Int
-pRemLen  = do
-  b0 <- fromIntegral <$> SG.getWord8
-  if b0 < 128
-    then pure b0
-    else do
-      b1 <- fromIntegral <$> SG.getWord8
-      pure $ (b1 * 128) + (b0 .|. 127)
+  t      <- Topic <$> SG.getByteString tlen
+  qos    <- case hflags .&. 0x06 of
+    0x00 -> pure PublishQoS0
+    0x02 -> PublishQoS1 dup . PacketIdentifier . fromIntegral <$> SG.getWord16be
+    0x04 -> PublishQoS2     . PacketIdentifier . fromIntegral <$> SG.getWord16be
+    _    -> fail "pPublish: Violation of [MQTT-3.3.1-4]."
+  p      <- case qos of
+    PublishQoS0 -> SG.getByteString ( rlen - tlen - 2 )
+    _           -> SG.getByteString ( rlen - tlen - 4 )
+  pure $ Publish dup ret t qos p
 
 pPublishAcknowledgement :: SG.Get RawMessage
 pPublishAcknowledgement = do
@@ -234,15 +236,15 @@ pPublishComplete = do
 pSubscribe :: SG.Get RawMessage
 pSubscribe = do
   _    <- SG.getWord8
-  rlen <- pRemLen
+  rlen <- pRemainingLength
   pid  <- PacketIdentifier . fromIntegral <$> SG.getWord16be
   Subscribe pid <$> getTopics (rlen - 2) []
   where
     getTopics 0 ts = pure (reverse ts)
     getTopics r ts = do
-      qos <- getQoS
       len <- fromIntegral <$> SG.getWord16be
       t   <- SG.getByteString len
+      qos <- getQoS
       getTopics ( r - 3 - len ) ( ( T.decodeUtf8 t, qos ) : ts )
     getQoS = SG.getWord8 >>= \w-> case w of
         0x00 -> pure QoS0
@@ -253,7 +255,7 @@ pSubscribe = do
 pSubscribeAcknowledgement :: SG.Get RawMessage
 pSubscribeAcknowledgement = do
   _    <- SG.getWord8
-  rlen <- pRemLen
+  rlen <- pRemainingLength
   pid  <- PacketIdentifier . fromIntegral <$> SG.getWord16be
   SubscribeAcknowledgement pid <$> (map f . BS.unpack <$> SG.getBytes (rlen - 2))
   where
@@ -265,7 +267,7 @@ pSubscribeAcknowledgement = do
 pUnsubscribe :: SG.Get RawMessage
 pUnsubscribe = do
   header <- SG.getWord8
-  rlen   <- pRemLen
+  rlen   <- pRemainingLength
   pid    <- SG.getWord16be
   Unsubscribe (PacketIdentifier $ fromIntegral pid) <$> f (rlen - 2) []
   where
@@ -330,9 +332,9 @@ bRawMessage (ConnectAcknowledgement crs) =
     Left cr -> fromIntegral $ fromEnum cr + 1
     Right s -> if s then 0x0100 else 0
 
-bRawMessage (Publish d r (Topic t) mqp b) =
-  case mqp of
-    Nothing ->
+bRawMessage (Publish d r (Topic t) qos b) =
+  case qos of
+    PublishQoS0 ->
       let len = 2 + BS.length t + BS.length b
           h   = fromIntegral $ ( if r then 0x31000000 else 0x30000000 )
                 .|. ( len `unsafeShiftL` 16 )
@@ -346,19 +348,26 @@ bRawMessage (Publish d r (Topic t) mqp b) =
           <> BS.word16BE ( fromIntegral $ BS.length t )
           <> BS.byteString t
           <> BS.byteString b
-    Just (q, PacketIdentifier p) ->
+    PublishQoS1 dup (PacketIdentifier pid) ->
       let len = 4 + BS.length t + BS.length b
       in BS.word8 ( 0x30
-        .|. ( if d then 0x08 else 0 )
+        .|. ( if dup then 0x08 else 0 )
         .|. ( if r then 0x01 else 0 )
-        .|. case q of
-            AtLeastOnce -> 0x02
-            ExactlyOnce -> 0x04
-        )
+        .|. 0x02 )
       <> bRemainingLength len
       <> BS.word16BE ( fromIntegral $ BS.length t )
       <> BS.byteString t
-      <> BS.word16BE (fromIntegral p)
+      <> BS.word16BE (fromIntegral pid)
+      <> BS.byteString b
+    PublishQoS2 (PacketIdentifier pid) ->
+      let len = 4 + BS.length t + BS.length b
+      in BS.word8 ( 0x30
+        .|. ( if r then 0x01 else 0 )
+        .|. 0x04 )
+      <> bRemainingLength len
+      <> BS.word16BE ( fromIntegral $ BS.length t )
+      <> BS.byteString t
+      <> BS.word16BE (fromIntegral pid)
       <> BS.byteString b
 
 bRawMessage (PublishAcknowledgement (PacketIdentifier p)) =
@@ -399,3 +408,71 @@ bRawMessage PingResponse =
   BS.word16BE 0xd000
 bRawMessage Disconnect =
   BS.word16BE 0xe000
+
+--------------------------------------------------------------------------------
+-- Utils
+--------------------------------------------------------------------------------
+
+pUtf8String :: SG.Get T.Text
+pUtf8String = do
+  str <- SG.getWord16be >>= SG.getByteString . fromIntegral
+  when (BS.elem 0x00 str) (fail "pUtf8String: Violation of [MQTT-1.5.3-2].")
+  case T.decodeUtf8' str of
+    Right txt -> return txt
+    _         -> fail "pUtf8String: Violation of [MQTT-1.5.3]."
+
+bUtf8String :: T.Text -> BS.Builder
+bUtf8String txt =
+  if len > 0xffff
+    then error "bUtf8String: Encoded size must be <= 0xffff."
+    else BS.word16BE (fromIntegral len) <> BS.byteString bs
+  where
+    bs  = T.encodeUtf8 txt
+    len = BS.length bs
+
+pRemainingLength:: SG.Get Int
+pRemainingLength = do
+  b0 <- SG.getWord8
+  if b0 < 128
+    then return $ fromIntegral b0
+     else do
+       b1 <- SG.getWord8
+       if b1 < 128
+        then return $ fromIntegral b1 * 128 +
+                      fromIntegral (b0 .&. 127)
+        else do
+          b2 <- SG.getWord8
+          if b2 < 128
+            then return $ fromIntegral b2 * 128 * 128 +
+                          fromIntegral (b1 .&. 127) * 128 +
+                          fromIntegral (b0 .&. 127)
+            else do
+              b3 <- SG.getWord8
+              if b3 < 128
+                then return $ fromIntegral b3 * 128 * 128 * 128 +
+                              fromIntegral (b2 .&. 127) * 128 * 128 +
+                              fromIntegral (b1 .&. 127) * 128 +
+                              fromIntegral (b0 .&. 127)
+                else fail "pRemainingLength: invalid input"
+{-# INLINE pRemainingLength #-}
+
+bRemainingLength :: Int -> BS.Builder
+bRemainingLength i
+  | i < 0x80                = BS.word8    ( fromIntegral i )
+  | i < 0x80*0x80           = BS.word16LE $ fromIntegral $ 0x0080 -- continuation bit
+                                         .|.              ( i .&. 0x7f      )
+                                         .|. unsafeShiftL ( i .&. 0x3f80    )  1
+  | i < 0x80*0x80*0x80      = BS.word16LE ( fromIntegral $ 0x8080
+                                         .|.              ( i .&. 0x7f      )
+                                         .|. unsafeShiftL ( i .&. 0x3f80    )  1
+                                          )
+                           <> BS.word8    ( fromIntegral
+                                          $ unsafeShiftR ( i .&. 0x1fc000   ) 14
+                                          )
+  | i < 0x80*0x80*0x80*0x80 = BS.word32LE $ fromIntegral $ 0x00808080
+                                         .|.              ( i .&. 0x7f      )
+                                         .|. unsafeShiftL ( i .&. 0x3f80    )  1
+                                         .|. unsafeShiftL ( i .&. 0x1fc000  )  2
+                                         .|. unsafeShiftL ( i .&. 0x0ff00000)  3
+  | otherwise               = error "sRemainingLength: invalid input"
+{-# INLINE bRemainingLength #-}

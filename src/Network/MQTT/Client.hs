@@ -38,7 +38,6 @@ import qualified System.Socket as S
 import Network.MQTT
 import Network.MQTT.IO
 import Network.MQTT.Message
-import Network.MQTT.Message.RemainingLength
 
 data MqttClient
    = MqttClient
@@ -225,13 +224,13 @@ connect c = modifyMVar_ (clientThreads c) $ \p->
                   throwIO $ ParserError e
 
                 f msg@Publish {} = case publishQoS msg of
-                  Nothing -> publishLocal c Message
+                  PublishQoS0 -> publishLocal c Message
                     { qos      = QoS0
                     , retained = publishRetain msg
                     , topic    = publishTopic msg
                     , payload  = publishBody msg
                     }
-                  Just (AtLeastOnce, i) -> do
+                  PublishQoS1 dup i -> do
                     publishLocal c Message
                       { qos      = QoS1
                       , retained = publishRetain msg
@@ -239,7 +238,7 @@ connect c = modifyMVar_ (clientThreads c) $ \p->
                       , payload  = publishBody msg
                       }
                     putMVar (clientOutput c) $ Left $ PublishAcknowledgement i
-                  Just (ExactlyOnce, PacketIdentifier i) ->
+                  PublishQoS2 (PacketIdentifier i) ->
                     modifyMVar_ (clientInboundState c) $
                       pure . IM.insert i (NotReleasedPublish Message
                         { qos      = QoS2
@@ -310,8 +309,8 @@ publishLocal client msg = modifyMVar_ (clientMessages client) $
 
 publish :: MqttClient -> Message -> IO ()
 publish client (Message qos !retain !topic !body) = case qos of
-  QoS0 -> putMVar (clientOutput client) $ Left $ message Nothing
-  QoS1 -> register AtLeastOnce NotAcknowledgedPublish
+  QoS0 -> undefined -- putMVar (clientOutput client) $ Left $ message Nothing
+  QoS1 -> undefined {-- register AtLeastOnce NotAcknowledgedPublish
   QoS2 -> register ExactlyOnce NotReceivedPublish
   where
     register qos' f = do
@@ -327,7 +326,7 @@ publish client (Message qos !retain !topic !body) = case qos of
       publishRetain    = retain,
       publishQoS       = mqos',
       publishTopic     = topic,
-      publishBody      = body }
+      publishBody      = body } -}
 
 subscribe :: MqttClient -> [(TopicFilter, QoS)] -> IO [Maybe QoS]
 subscribe client [] = pure []

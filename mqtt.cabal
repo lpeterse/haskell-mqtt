@@ -24,9 +24,7 @@ library
                        Network.MQTT.Server,
                        Network.MQTT.SubscriptionTree,
                        Network.MQTT.IO,
-                       Network.MQTT.Message,
-                       Network.MQTT.Message.RemainingLength,
-                       Network.MQTT.Message.Utf8String
+                       Network.MQTT.Message
   build-depends:       async,
                        base >=4.8 && <4.9,
                        BoundedChan,
@@ -51,6 +49,7 @@ test-suite test
     test.hs
   build-depends:
       base >= 4.8 && < 5
+    , cereal
     , tasty >= 0.11
     , tasty-hunit
     , tasty-quickcheck
