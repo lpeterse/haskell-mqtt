@@ -50,7 +50,7 @@ import Network.MQTT
 import Network.MQTT.IO
 import Network.MQTT.Message
 
-data Client
+data Client s
    = Client
      { clientIdentifier              :: MVar ClientIdentifier
      , clientKeepAlive               :: MVar KeepAlive
@@ -61,11 +61,11 @@ data Client
      , clientInboundState            :: MVar (IM.IntMap InboundState)
      , clientOutboundState           :: MVar ([Int], IM.IntMap OutboundState)
      , clientMessages                :: MVar Tail
-     , clientNewConnection           :: MVar (IO Connection)
+     , clientNewConnection           :: MVar (IO s)
      , clientThreads                 :: MVar (Async ())
      }
 
-new :: IO Connection -> IO Client
+new :: IO s -> IO (Client s)
 new ioc = Client
   <$> (newMVar =<< ClientIdentifier . T.pack . take 23 . ("haskell-" ++) . randomRs ('a','z') <$> newStdGen)
   <*> newMVar 60
@@ -87,7 +87,7 @@ newtype Tail
 newtype ClientEvents
       = ClientEvents (MVar Tail)
 
-streamEvents :: Client -> IO ClientEvents
+streamEvents :: Client s -> IO ClientEvents
 streamEvents client =
   ClientEvents <$> (newMVar =<< readMVar (clientMessages client))
 
@@ -107,13 +107,13 @@ newtype InboundState = NotReleasedPublish Message
 -- | Disconnects the client.
 --   * The operation returns after the DISCONNECT packet has been written to the
 --     connection and the connection has been closed.
-disconnect :: Client -> IO ()
+disconnect :: Client s -> IO ()
 disconnect c = do
   t <- readMVar (clientThreads c)
   putMVar (clientOutput c) (Left Disconnect)
   wait t
 
-connect :: Client -> IO ()
+connect :: StreamTransmitter s => Client s -> IO ()
 connect c = modifyMVar_ (clientThreads c) $ \p->
   poll p >>= \m-> case m of
     -- Processing thread is stil running, no need to connect.
@@ -127,7 +127,7 @@ connect c = modifyMVar_ (clientThreads c) $ \p->
     run :: IO ()
     run  = join (readMVar (clientNewConnection c)) >>= handleConnection False
 
-    handleConnection :: ClientSessionPresent -> Connection -> IO ()
+    handleConnection :: StreamTransmitter s => ClientSessionPresent -> s -> IO ()
     handleConnection clientSessionPresent connection =
       sendConnect >> receiveConnectAcknowledgement >>= maintainConnection
       where
@@ -147,7 +147,7 @@ connect c = modifyMVar_ (clientThreads c) $ \p->
 
         receiveConnectAcknowledgement :: IO BS.ByteString
         receiveConnectAcknowledgement = do
-          bs <- S.receive (sock connection) 4096 S.msgNoSignal
+          bs <- receive connection
           case SG.runGetPartial pRawMessage bs of
             SG.Done message bs' -> f message >> pure bs'
             SG.Fail e bs'       -> throwIO $ ParserError e
@@ -220,7 +220,7 @@ connect c = modifyMVar_ (clientThreads c) $ \p->
 
             handleInput :: BS.ByteString -> IO ()
             handleInput bs
-              | BS.null bs = handleInput' =<< S.receive (sock connection) 4096 S.msgNoSignal
+              | BS.null bs = handleInput' =<< receive connection
               | otherwise  = handleInput' bs
               where
                 handleInput' bs' = do
@@ -231,7 +231,7 @@ connect c = modifyMVar_ (clientThreads c) $ \p->
                   f message >> handleInput' bs'
                 g (SG.Partial     cont) = do
                   --print "Partial"
-                  bs' <- S.receive (sock connection) 4096 S.msgNoSignal
+                  bs' <- receive connection
                   if BS.null bs'
                     then throwIO ConnectionClosed
                     else g $ cont bs'
@@ -319,14 +319,14 @@ connect c = modifyMVar_ (clientThreads c) $ \p->
                 -- The following packets must not be sent from the server to the client.
                 _ = throwIO $ ProtocolViolation "Unexpected packet type received from the server."
 
-publishLocal :: Client -> ClientEvent -> IO ()
+publishLocal :: Client s -> ClientEvent -> IO ()
 publishLocal client msg = modifyMVar_ (clientMessages client) $
   \(Tail currentTail)-> do
     nextTail <- Tail <$> newEmptyMVar     -- a new (unresolved) tail
     putMVar currentTail (nextTail, msg)   -- resolve the current head
     pure nextTail                         -- new tail replaces current
 
-publish :: Client -> Message -> IO ()
+publish :: Client s -> Message -> IO ()
 publish client (Message !topic !body qos retain duplicate) = case qos of
   QoS0 -> undefined -- putMVar (clientOutput client) $ Left $ message Nothing
   QoS1 -> undefined {-- register AtLeastOnce NotAcknowledgedPublish
@@ -347,7 +347,7 @@ publish client (Message !topic !body qos retain duplicate) = case qos of
       publishTopic     = topic,
       publishBody      = body } -}
 
-subscribe :: Client -> [(TopicFilter, QoS)] -> IO [Maybe QoS]
+subscribe :: Client s -> [(TopicFilter, QoS)] -> IO [Maybe QoS]
 subscribe client [] = pure []
 subscribe client topics = do
   response <- newEmptyMVar
@@ -358,7 +358,7 @@ subscribe client topics = do
       let message = Subscribe i topics
       in (message, NotAcknowledgedSubscribe message response)
 
-unsubscribe :: Client -> [TopicFilter] -> IO ()
+unsubscribe :: Client s -> [TopicFilter] -> IO ()
 unsubscribe client [] = pure ()
 unsubscribe client topics = do
   confirmation <- newEmptyMVar
@@ -374,8 +374,6 @@ data ClientEvent
    | Disconnected
    | Received Message
    deriving (Eq, Ord, Show)
-
-
 
 data ClientException
    = ParserError String

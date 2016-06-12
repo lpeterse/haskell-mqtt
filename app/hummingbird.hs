@@ -1,4 +1,4 @@
-{-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE OverloadedStrings, TypeFamilies #-}
 module Main where
 
 import Control.Monad
@@ -27,14 +27,17 @@ main = do
   forever $ do
     takeEvent events >>= print
 
-newConnection :: IO Connection
+newConnection :: IO TcpSocket
 newConnection = do
   s <- S.socket :: IO (S.Socket S.Inet S.Stream S.TCP)
   addrInfo:_ <- S.getAddressInfo (Just "environment.dev") (Just "1883") mempty :: IO [S.AddressInfo S.Inet S.Stream S.TCP]
   S.connect s (S.socketAddress addrInfo)
-  pure Connection
-    { send    = \bs-> S.send s bs S.msgNoSignal >> pure ()
-    , receive = S.receive s 4096 S.msgNoSignal
-    , close   = S.close s
-    , sock    = s
-    }
+  pure (TcpSocket s)
+
+newtype TcpSocket = TcpSocket (S.Socket S.Inet S.Stream S.TCP)
+
+instance StreamTransmitter TcpSocket where
+  type StreamTransmitterException TcpSocket = S.SocketException
+  send (TcpSocket s) bs = S.sendAll s (LBS.fromChunks [bs]) S.msgNoSignal >> pure ()
+  receive (TcpSocket s) = S.receive s 4096 S.msgNoSignal
+  close (TcpSocket s)   = S.close s

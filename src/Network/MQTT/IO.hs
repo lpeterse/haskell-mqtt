@@ -29,14 +29,11 @@ import Control.Monad
 import Control.Concurrent
 import Control.Concurrent.MVar
 
-import System.Socket as S
-import System.Socket.Type.Stream as S
-
 import Network.MQTT
 import Network.MQTT.Message
 
-bufferedOutput :: Connection -> IO RawMessage -> IO (Maybe RawMessage) -> (BS.ByteString -> IO ()) -> IO ()
-bufferedOutput connection getMessage getMaybeMessage sendByteString =
+bufferedOutput :: StreamTransmitter s => s -> IO RawMessage -> IO (Maybe RawMessage) -> (BS.ByteString -> IO ()) -> IO ()
+bufferedOutput transmitter getMessage getMaybeMessage sendByteString =
   bracket ( mallocBytes bufferSize ) free waitForMessage
   where
     bufferSize :: Int
@@ -78,7 +75,6 @@ bufferedOutput connection getMessage getMaybeMessage sendByteString =
           sendByteString chunk
           uncurry finishWriter =<< writer buffer bufferSize
     flushBuffer :: Ptr Word8 -> Int -> IO ()
-    flushBuffer buffer pos = do
-      -- print pos
-      BS.unsafePackCStringLen (castPtr buffer, pos) >>= \bs-> S.sendAll (sock connection) (LBS.fromChunks [bs]) S.msgNoSignal >> pure ()
+    flushBuffer buffer pos =
+      BS.unsafePackCStringLen (castPtr buffer, pos) >>= \bs-> send transmitter bs >> pure ()
 {-# INLINE bufferedOutput #-}

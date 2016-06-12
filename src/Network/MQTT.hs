@@ -7,16 +7,13 @@
 -- Maintainer  :  info@lars-petersen.net
 -- Stability   :  experimental
 --------------------------------------------------------------------------------
+{-# LANGUAGE TypeFamilies #-}
 module Network.MQTT where
 
 import Control.Exception
 
 import Data.Typeable
 import qualified Data.ByteString as BS
-import System.Socket as S
-import System.Socket.Family.Inet as S
-import System.Socket.Type.Stream as S
-import System.Socket.Protocol.TCP as S
 
 import Network.MQTT.Message
 
@@ -29,10 +26,8 @@ data Message = Message
      }
    deriving (Eq, Ord, Show)
 
-data Connection
-  = Connection
-    { receive :: IO BS.ByteString
-    , send    :: BS.ByteString -> IO ()
-    , close   :: IO ()
-    , sock    :: !(S.Socket S.Inet S.Stream S.TCP)
-    }
+class StreamTransmitter s where
+  type StreamTransmitterException s
+  send    :: s -> BS.ByteString -> IO ()
+  receive :: s -> IO BS.ByteString
+  close   :: s -> IO ()
