@@ -19,6 +19,8 @@ import Network.MQTT.Message
 
 main :: IO ()
 main = do
+  undefined
+  {-
   mqtt <- newMqttClient newConnection
   print "ABC"
   connect mqtt
@@ -52,3 +54,4 @@ newConnection = do
     , close   = S.close s
     , sock    = s
     }
+-}

@@ -127,7 +127,6 @@ data RawMessage
    | Disconnect
    deriving (Eq, Show)
 
-
 bBlob :: BS.ByteString -> BS.Builder
 bBlob bs = BS.word16BE (fromIntegral $ BS.length bs) <> BS.byteString bs
 {-# INLINE bBlob #-}

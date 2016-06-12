@@ -33,6 +33,7 @@ import Network.MQTT
 import Network.MQTT.Message
 import Network.MQTT.SubscriptionTree
 
+{-
 type  SessionIdentifier = Int
 
 data  MqttServerSessions
@@ -137,8 +138,7 @@ dispatchConnection server connection =
         processGuaranteedDeliveryQueue = undefined
 
 getSession :: MqttServer -> ClientIdentifier -> IO (MqttServerSession, SessionPresent)
-getSession server clientIdentifier = undefined
-{--
+getSession server clientIdentifier = 
   modifyMVar (serverSessions server) $ \ms->
     case M.lookup clientIdentifier ms of
       Just session -> pure (ms, (session, True))

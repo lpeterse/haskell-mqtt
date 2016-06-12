@@ -8,7 +8,17 @@
 -- Maintainer  :  info@lars-petersen.net
 -- Stability   :  experimental
 --------------------------------------------------------------------------------
-module Network.MQTT.Client where
+module Network.MQTT.Client
+  ( Client ()
+  , ClientEvents ()
+  , ClientEvent (..)
+  , nextEvents
+  , nextEvent
+  , ClientException (..)
+  , new
+  , connect
+  , disconnect
+  ) where
 
 import Data.Int
 import Data.Word
@@ -39,8 +49,8 @@ import Network.MQTT
 import Network.MQTT.IO
 import Network.MQTT.Message
 
-data MqttClient
-   = MqttClient
+data Client
+   = Client
      { clientIdentifier              :: MVar ClientIdentifier
      , clientKeepAlive               :: MVar KeepAlive
      , clientWill                    :: MVar (Maybe Will)
@@ -54,8 +64,8 @@ data MqttClient
      , clientThreads                 :: MVar (Async ())
      }
 
-newMqttClient :: IO Connection -> IO MqttClient
-newMqttClient ioc = MqttClient
+new :: IO Connection -> IO Client
+new ioc = Client
   <$> (newMVar =<< ClientIdentifier . T.pack . take 23 . ("haskell-" ++) . randomRs ('a','z') <$> newStdGen)
   <*> newMVar 60
   <*> newMVar Nothing
@@ -71,17 +81,17 @@ newMqttClient ioc = MqttClient
 type ClientSessionPresent = Bool
 
 newtype Tail
-      = Tail (MVar (Tail, Message))
+      = Tail (MVar (Tail, ClientEvent))
 
-newtype Messages
-      = Messages (MVar Tail)
+newtype ClientEvents
+      = ClientEvents (MVar Tail)
 
-messages :: MqttClient -> IO Messages
-messages client =
-  Messages <$> (newMVar =<< readMVar (clientMessages client))
+nextEvents :: Client -> IO ClientEvents
+nextEvents client =
+  ClientEvents <$> (newMVar =<< readMVar (clientMessages client))
 
-message  :: Messages -> IO Message
-message (Messages mt) =
+nextEvent  :: ClientEvents -> IO ClientEvent
+nextEvent (ClientEvents mt) =
   modifyMVar mt $ \(Tail next)-> readMVar next
 
 data OutboundState
@@ -96,13 +106,13 @@ newtype InboundState = NotReleasedPublish Message
 -- | Disconnects the client.
 --   * The operation returns after the DISCONNECT packet has been written to the
 --     connection and the connection has been closed.
-disconnect :: MqttClient -> IO ()
+disconnect :: Client -> IO ()
 disconnect c = do
   t <- readMVar (clientThreads c)
   putMVar (clientOutput c) (Left Disconnect)
   wait t
 
-connect :: MqttClient -> IO ()
+connect :: Client -> IO ()
 connect c = modifyMVar_ (clientThreads c) $ \p->
   poll p >>= \m-> case m of
     -- Processing thread is stil running, no need to connect.
@@ -224,14 +234,14 @@ connect c = modifyMVar_ (clientThreads c) $ \p->
                   throwIO $ ParserError e
 
                 f msg@Publish {} = case publishQoS msg of
-                  PublishQoS0 -> publishLocal c Message
+                  PublishQoS0 -> publishLocal c $ Received Message
                     { qos      = QoS0
                     , retained = publishRetain msg
                     , topic    = publishTopic msg
                     , payload  = publishBody msg
                     }
                   PublishQoS1 dup i -> do
-                    publishLocal c Message
+                    publishLocal c $ Received Message
                       { qos      = QoS1
                       , retained = publishRetain msg
                       , topic    = publishTopic msg
@@ -265,7 +275,7 @@ connect c = modifyMVar_ (clientThreads c) $ \p->
                   modifyMVar_ (clientInboundState c) $ \im->
                     case IM.lookup i im of
                       Just (NotReleasedPublish msg) -> do
-                        publishLocal c msg -- Publish exactly once here!
+                        publishLocal c $ Received msg -- Publish exactly once here!
                         pure (IM.delete i im)
                       Nothing -> -- Duplicate, don't publish again.
                         pure im
@@ -300,15 +310,15 @@ connect c = modifyMVar_ (clientThreads c) $ \p->
                 -- The following packets must not be sent from the server to the client.
                 _ = throwIO $ ProtocolViolation "Unexpected packet type received from the server."
 
-publishLocal :: MqttClient -> Message -> IO ()
+publishLocal :: Client -> ClientEvent -> IO ()
 publishLocal client msg = modifyMVar_ (clientMessages client) $
   \(Tail currentTail)-> do
     nextTail <- Tail <$> newEmptyMVar     -- a new (unresolved) tail
     putMVar currentTail (nextTail, msg)   -- resolve the current head
     pure nextTail                         -- new tail replaces current
 
-publish :: MqttClient -> Message -> IO ()
-publish client (Message qos !retain !topic !body) = case qos of
+publish :: Client -> Message -> IO ()
+publish client (Message !topic !body qos retain duplicate) = case qos of
   QoS0 -> undefined -- putMVar (clientOutput client) $ Left $ message Nothing
   QoS1 -> undefined {-- register AtLeastOnce NotAcknowledgedPublish
   QoS2 -> register ExactlyOnce NotReceivedPublish
@@ -328,7 +338,7 @@ publish client (Message qos !retain !topic !body) = case qos of
       publishTopic     = topic,
       publishBody      = body } -}
 
-subscribe :: MqttClient -> [(TopicFilter, QoS)] -> IO [Maybe QoS]
+subscribe :: Client -> [(TopicFilter, QoS)] -> IO [Maybe QoS]
 subscribe client [] = pure []
 subscribe client topics = do
   response <- newEmptyMVar
@@ -339,7 +349,7 @@ subscribe client topics = do
       let message = Subscribe i topics
       in (message, NotAcknowledgedSubscribe message response)
 
-unsubscribe :: MqttClient -> [TopicFilter] -> IO ()
+unsubscribe :: Client -> [TopicFilter] -> IO ()
 unsubscribe client [] = pure ()
 unsubscribe client topics = do
   confirmation <- newEmptyMVar
@@ -349,3 +359,22 @@ unsubscribe client topics = do
     f confirmation i =
       let message = Unsubscribe i topics
       in (message, NotAcknowledgedUnsubscribe message confirmation)
+
+data ClientEvent
+   = Connected
+   | Disconnected
+   | Received Message
+   deriving (Eq, Ord, Show)
+
+
+
+data ClientException
+   = ParserError String
+   | ProtocolViolation String
+   | ConnectionRefused ConnectionRefusal
+   | ConnectionClosed
+   | ClientLostSession
+   | ServerLostSession
+   deriving (Eq, Ord, Show, Typeable)
+
+instance Exception ClientException where

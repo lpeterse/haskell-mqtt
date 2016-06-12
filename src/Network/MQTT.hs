@@ -20,13 +20,14 @@ import System.Socket.Protocol.TCP as S
 
 import Network.MQTT.Message
 
-data Message
-   = Message
-     { qos      :: QoS
-     , retained :: Bool
-     , topic    :: Topic
-     , payload  :: Payload
-     } deriving (Eq, Ord, Show)
+data Message = Message
+     { topic     :: Topic
+     , payload   :: Payload
+     , qos       :: QoS
+     , retained  :: Bool
+     , duplicate :: Bool
+     }
+   deriving (Eq, Ord, Show)
 
 data Connection
   = Connection
@@ -35,14 +36,3 @@ data Connection
     , close   :: IO ()
     , sock    :: !(S.Socket S.Inet S.Stream S.TCP)
     }
-
-data MqttException
-   = ParserError String
-   | ProtocolViolation String
-   | ConnectionRefused ConnectionRefusal
-   | ConnectionClosed
-   | ClientLostSession
-   | ServerLostSession
-   deriving (Eq, Ord, Show, Typeable)
-
-instance Exception MqttException where
