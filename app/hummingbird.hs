@@ -19,29 +19,12 @@ import Network.MQTT.Message
 
 main :: IO ()
 main = do
-  undefined
-  {-
-  mqtt <- newMqttClient newConnection
-  print "ABC"
+  mqtt <- new newConnection
   connect mqtt
-  -- threadDelay 1000000
-  print "CONNECTED"
-  foobar <- BS.readFile "topic.txt"
-  forkIO $ (sendQoS1 mqtt foobar) `onException` print "DIED"
   subscribe mqtt [("$SYS/#", QoS0)]
-  ms <- messages mqtt
+  events <- streamEvents mqtt
   forever $ do
-    m <- message ms
-    print m
-
-sendQoS1 :: MqttClient -> BS.ByteString -> IO ()
-sendQoS1 mqtt foobar = do
-  mapM_ (forkIO . f 0) [1..10]
-  where
-    f i t = do
-      when (mod i 100000 == 0) (putStrLn $ show t ++ ": " ++ show i)
-      publish mqtt $ Message QoS0 False (Topic foobar) foobar
-      f (succ i) t
+    takeEvent events >>= print
 
 newConnection :: IO Connection
 newConnection = do
@@ -54,4 +37,3 @@ newConnection = do
     , close   = S.close s
     , sock    = s
     }
--}

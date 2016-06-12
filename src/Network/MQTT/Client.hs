@@ -12,12 +12,13 @@ module Network.MQTT.Client
   ( Client ()
   , ClientEvents ()
   , ClientEvent (..)
-  , nextEvents
-  , nextEvent
   , ClientException (..)
   , new
   , connect
   , disconnect
+  , subscribe
+  , streamEvents
+  , takeEvent
   ) where
 
 import Data.Int
@@ -86,12 +87,12 @@ newtype Tail
 newtype ClientEvents
       = ClientEvents (MVar Tail)
 
-nextEvents :: Client -> IO ClientEvents
-nextEvents client =
+streamEvents :: Client -> IO ClientEvents
+streamEvents client =
   ClientEvents <$> (newMVar =<< readMVar (clientMessages client))
 
-nextEvent  :: ClientEvents -> IO ClientEvent
-nextEvent (ClientEvents mt) =
+takeEvent :: ClientEvents -> IO ClientEvent
+takeEvent (ClientEvents mt) =
   modifyMVar mt $ \(Tail next)-> readMVar next
 
 data OutboundState
