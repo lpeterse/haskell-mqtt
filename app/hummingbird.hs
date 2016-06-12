@@ -24,7 +24,7 @@ main = do
   subscribe mqtt [("$SYS/#", QoS0)]
   events <- streamEvents mqtt
   forever $ do
-    takeEvent events >>= print
+    (takeEvent events >>= print) `catch` (\e-> print $ "a" ++ show (e :: SomeException))
 
 newConnection :: IO Connection
 newConnection = do
