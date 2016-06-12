@@ -119,11 +119,17 @@ connect c = modifyMVar_ (clientThreads c) $ \p->
     -- Processing thread is stil running, no need to connect.
     Nothing -> pure p
     -- Processing thread not running, create a new one with new connection
-    Just _  -> join (readMVar (clientNewConnection c)) >>= handleConnection False
+    Just _  -> async $ forever $ do
+          run `catch` (\e-> print (e :: SomeException) >> print "RECONNECT")
+          threadDelay 1000000
+
   where
-    handleConnection :: ClientSessionPresent -> Connection -> IO (Async ())
-    handleConnection clientSessionPresent connection = do
-      (sendConnect >> receiveConnectAcknowledgement >>= maintainConnection)
+    run :: IO ()
+    run  = join (readMVar (clientNewConnection c)) >>= handleConnection False
+
+    handleConnection :: ClientSessionPresent -> Connection -> IO ()
+    handleConnection clientSessionPresent connection =
+      sendConnect >> receiveConnectAcknowledgement >>= maintainConnection
       where
         sendConnect :: IO ()
         sendConnect = do
@@ -161,8 +167,8 @@ connect c = modifyMVar_ (clientThreads c) $ \p->
                 Left connectionRefusal -> throwIO $ ConnectionRefused connectionRefusal
             f _ = throwIO $ ProtocolViolation "Expected CONNACK, got something else."
 
-        maintainConnection :: BS.ByteString -> IO (Async ())
-        maintainConnection i = async $
+        maintainConnection :: BS.ByteString -> IO ()
+        maintainConnection i =
           keepAlive `race_` handleOutput `race_` (handleInput i `catch` \e-> print (e :: SomeException))
           where
             -- The keep alive thread wakes up every `keepAlive/2` seconds.

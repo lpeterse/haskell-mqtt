@@ -22,6 +22,7 @@ main = do
   mqtt <- new newConnection
   connect mqtt
   subscribe mqtt [("$SYS/#", QoS0)]
+  subscribe mqtt [("#", QoS0)]
   events <- streamEvents mqtt
   forever $ do
     takeEvent events >>= print
