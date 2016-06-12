@@ -123,7 +123,7 @@ connect c = modifyMVar_ (clientThreads c) $ \p->
   where
     handleConnection :: ClientSessionPresent -> Connection -> IO (Async ())
     handleConnection clientSessionPresent connection = do
-      sendConnect >> receiveConnectAcknowledgement >>= maintainConnection
+      (sendConnect >> receiveConnectAcknowledgement >>= maintainConnection)
       where
         sendConnect :: IO ()
         sendConnect = do
@@ -162,8 +162,7 @@ connect c = modifyMVar_ (clientThreads c) $ \p->
             f _ = throwIO $ ProtocolViolation "Expected CONNACK, got something else."
 
         maintainConnection :: BS.ByteString -> IO (Async ())
-        maintainConnection i = async $ do
-          print "MAINTAIN"
+        maintainConnection i = async $
           keepAlive `race_` handleOutput `race_` (handleInput i `catch` \e-> print (e :: SomeException))
           where
             -- The keep alive thread wakes up every `keepAlive/2` seconds.
@@ -236,26 +235,29 @@ connect c = modifyMVar_ (clientThreads c) $ \p->
 
                 f msg@Publish {} = case publishQoS msg of
                   PublishQoS0 -> publishLocal c $ Received Message
-                    { qos      = QoS0
-                    , retained = publishRetain msg
-                    , topic    = publishTopic msg
+                    { topic    = publishTopic msg
                     , payload  = publishBody msg
+                    , qos      = QoS0
+                    , retained = publishRetain msg
+                    , duplicate = False
                     }
                   PublishQoS1 dup i -> do
                     publishLocal c $ Received Message
-                      { qos      = QoS1
-                      , retained = publishRetain msg
-                      , topic    = publishTopic msg
+                      { topic    = publishTopic msg
                       , payload  = publishBody msg
+                      , qos      = QoS1
+                      , retained = publishRetain msg
+                      , duplicate = False
                       }
                     putMVar (clientOutput c) $ Left $ PublishAcknowledgement i
                   PublishQoS2 (PacketIdentifier i) ->
                     modifyMVar_ (clientInboundState c) $
                       pure . IM.insert i (NotReleasedPublish Message
-                        { qos      = QoS2
-                        , retained = publishRetain msg
-                        , topic    = publishTopic msg
-                        , payload  = publishBody msg
+                        { topic     = publishTopic msg
+                        , payload   = publishBody msg
+                        , qos       = QoS2
+                        , retained  = publishRetain msg
+                        , duplicate = False
                         })
                 -- The following packet types are responses to earlier requests.
                 -- We need to dispatch them to the waiting threads.
