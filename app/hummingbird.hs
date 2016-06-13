@@ -19,7 +19,7 @@ import Network.MQTT.Message
 
 main :: IO ()
 main = do
-  mqtt <- new newConnection
+  mqtt <- new (TcpSocket <$> S.socket) ("localhost", "1883")
   C.connect mqtt
   threadDelay 1000000
   subscribe mqtt [("$SYS/#", QoS0)]
@@ -27,13 +27,6 @@ main = do
   events <- streamEvents mqtt
   forever $ do
     takeEvent events >>= print
-
-newConnection :: IO TcpSocket
-newConnection = do
-  s <- S.socket :: IO (S.Socket S.Inet6 S.Stream S.TCP)
-  addrInfo:_ <- S.getAddressInfo (Just "localhost") (Just "1883") mempty :: IO [S.AddressInfo S.Inet6 S.Stream S.TCP]
-  S.connect s (S.socketAddress addrInfo)
-  pure (TcpSocket s)
 
 newtype TcpSocket = TcpSocket (S.Socket S.Inet6 S.Stream S.TCP)
 
