@@ -27,7 +27,14 @@ data Message = Message
    deriving (Eq, Ord, Show)
 
 class StreamTransmitter s where
-  type StreamTransmitterException s
-  send    :: s -> BS.ByteString -> IO ()
+  transmit :: s -> BS.ByteString -> IO ()
+
+class StreamReceiver s where
   receive :: s -> IO BS.ByteString
+
+class Connectable s where
+  type ConnectableAddress s
+  connect :: s -> ConnectableAddress s -> IO ()
+
+class Closable s where
   close   :: s -> IO ()

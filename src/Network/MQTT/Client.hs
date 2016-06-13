@@ -44,9 +44,8 @@ import Control.Concurrent.MVar
 import Control.Concurrent.Async
 
 import System.Random
-import qualified System.Socket as S
 
-import Network.MQTT
+import Network.MQTT hiding (connect)
 import Network.MQTT.IO
 import Network.MQTT.Message
 
@@ -107,13 +106,13 @@ newtype InboundState = NotReleasedPublish Message
 -- | Disconnects the client.
 --   * The operation returns after the DISCONNECT packet has been written to the
 --     connection and the connection has been closed.
-disconnect :: Client s -> IO ()
+disconnect :: Closable s => Client s -> IO ()
 disconnect c = do
   t <- readMVar (clientThreads c)
   putMVar (clientOutput c) (Left Disconnect)
   wait t
 
-connect :: StreamTransmitter s => Client s -> IO ()
+connect :: (StreamTransmitter s, StreamReceiver s, Closable s) => Client s -> IO ()
 connect c = modifyMVar_ (clientThreads c) $ \p->
   poll p >>= \m-> case m of
     -- Processing thread is stil running, no need to connect.
@@ -127,7 +126,7 @@ connect c = modifyMVar_ (clientThreads c) $ \p->
     run :: IO ()
     run  = join (readMVar (clientNewConnection c)) >>= handleConnection False
 
-    handleConnection :: StreamTransmitter s => ClientSessionPresent -> s -> IO ()
+    handleConnection :: (StreamTransmitter s, StreamReceiver s) => ClientSessionPresent -> s -> IO ()
     handleConnection clientSessionPresent connection =
       sendConnect >> receiveConnectAcknowledgement >>= maintainConnection
       where
@@ -137,7 +136,7 @@ connect c = modifyMVar_ (clientThreads c) $ \p->
           ck <- readMVar (clientKeepAlive c)
           cw <- readMVar (clientWill c)
           cu <- readMVar (clientUsernamePassword c)
-          send connection $ LBS.toStrict $ BS.toLazyByteString $ bRawMessage Connect
+          transmit connection $ LBS.toStrict $ BS.toLazyByteString $ bRawMessage Connect
             { connectClientIdentifier = ci
             , connectCleanSession     = False
             , connectKeepAlive        = ck
@@ -185,7 +184,7 @@ connect c = modifyMVar_ (clientThreads c) $ \p->
                 unless activity $ putMVar (clientOutput c) $ Left PingRequest
 
             handleOutput :: IO ()
-            handleOutput = bufferedOutput connection getMessage getMaybeMessage (send connection)
+            handleOutput = bufferedOutput connection getMessage getMaybeMessage (transmit connection)
               where
                 getMessage :: IO RawMessage
                 getMessage = do
