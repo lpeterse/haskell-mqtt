@@ -19,10 +19,10 @@ import Network.MQTT.Message
 
 data Message = Message
      { topic     :: Topic
-     , payload   :: Payload
      , qos       :: QoS
      , retained  :: Bool
      , duplicate :: Bool
+     , payload   :: Payload
      }
    deriving (Eq, Ord, Show)
 

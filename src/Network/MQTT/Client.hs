@@ -106,18 +106,28 @@ data OutboundState
 
 newtype InboundState = NotReleasedPublish Message
 
--- | Starts the `Client`.
+-- | Starts the `Client` if it is not already running.
 --
 --   * The `Started` event will be added to the event stream.
+--   * The `Connecting` event will be added to the event stream.
+--   * A new `Connectable` will be created.
+--   * A connection will be tried to establish (includes `connect` as well as the MQTT handshake).
+--   * The `Connected` event will be added to the event stream.
+--   * Messages will be processed until a `Disconnect` occurs.
+--
+--   At every step after the `Connecting` event, a `Disconnect` may occur.
+--   The client will then try to reconnect automatically.
 start :: (Connectable s, ConnectableAddress s ~ a, StreamTransmitter s, StreamReceiver s, Closable s) => Client s a -> IO ()
 start c = modifyMVar_ (clientThreads c) $ \p->
   poll p >>= \m-> case m of
     -- Processing thread is stil running, no need to connect.
     Nothing -> pure p
     -- Processing thread not running, create a new one with new connection
-    Just _  -> async $ forever $ do
-          run -- `catch` (\e-> print (e :: SomeException) >> print "RECONNECT")
-          threadDelay 1000000
+    Just _  -> do
+      publishLocal c Started
+      async $ forever $ do
+        run -- `catch` (\e-> print (e :: SomeException) >> print "RECONNECT")
+        threadDelay 1000000
 
   where
     run :: IO ()
@@ -125,7 +135,9 @@ start c = modifyMVar_ (clientThreads c) $ \p->
 
     -- handleConnection :: (StreamTransmitter s, StreamReceiver s, Connectable s, Closable s) => ClientSessionPresent -> s -> IO ()
     handleConnection clientSessionPresent connection = do
+      publishLocal c Connecting
       connectTransmitter
+      publishLocal c Connected
       sendConnect
       receiveConnectAcknowledgement >>= maintainConnection
       where
@@ -235,7 +247,7 @@ start c = modifyMVar_ (clientThreads c) $ \p->
                   --print "Partial"
                   bs' <- receive connection
                   if BS.null bs'
-                    then throwIO ConnectionClosed
+                    then throwIO ServerClosedConnection
                     else g $ cont bs'
                 g (SG.Fail         e _) = do
                   --print $ "FAIL" ++ show e
@@ -321,7 +333,7 @@ start c = modifyMVar_ (clientThreads c) $ \p->
                 -- The following packets must not be sent from the server to the client.
                 _ = throwIO $ ProtocolViolation "Unexpected packet type received from the server."
 
--- | Stops the `Client`.
+-- | Stops the `Client` if it is not already stopped.
 --
 --   * A graceful DISCONNECT packet will be sent to the server and the
 --     connection will be `close`d.
@@ -387,6 +399,8 @@ data ClientEvent
    = Started
    | Connecting
    | Connected
+   | Ping
+   | Pong
    | Received Message
    | Disconnected ClientException
    | Stopped
@@ -395,9 +409,10 @@ data ClientEvent
 data ClientException
    = ProtocolViolation String
    | ConnectionRefused ConnectionRefusal
-   | ConnectionClosed
    | ClientLostSession
    | ServerLostSession
+   | ClientClosedConnection
+   | ServerClosedConnection
    deriving (Eq, Ord, Show, Typeable)
 
 instance Exception ClientException where

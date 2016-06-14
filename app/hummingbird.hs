@@ -20,11 +20,11 @@ import Network.MQTT.Message
 main :: IO ()
 main = do
   mqtt <- new (TcpSocket <$> S.socket) ("localhost", "1883")
+  events <- hookEventStream mqtt
   start mqtt
-  threadDelay 1000000
+  --threadDelay 1000000
   subscribe mqtt [("$SYS/#", QoS0)]
   subscribe mqtt [("#", QoS0)]
-  events <- hookEventStream mqtt
   forever $ do
     takeEvent events >>= print
 
