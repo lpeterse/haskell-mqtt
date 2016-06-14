@@ -13,6 +13,8 @@ module Network.MQTT.Client
   , ClientEventStream ()
   , ClientEvent (..)
   , ClientException (..)
+  , EventEmitter (..)
+  , EventStream ()
   , new
   , start
   , stop
@@ -416,3 +418,15 @@ data ClientException
    deriving (Eq, Ord, Show, Typeable)
 
 instance Exception ClientException where
+
+class EventEmitter a where
+  type Event a
+  hook   :: a -> EventStream a
+  listen :: EventStream a -> Event a
+
+data EventStream a
+
+instance EventEmitter (Client s a) where
+  type Event (Client s a) = ClientEvent
+  hook   = undefined
+  listen = undefined
