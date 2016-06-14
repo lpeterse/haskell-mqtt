@@ -10,14 +10,15 @@
 --------------------------------------------------------------------------------
 module Network.MQTT.Client
   ( Client ()
-  , ClientEvents ()
+  , ClientEventStream ()
   , ClientEvent (..)
   , ClientException (..)
   , new
-  , connect
-  , disconnect
+  , start
+  , stop
+  , publish
   , subscribe
-  , streamEvents
+  , hookEventStream
   , takeEvent
   ) where
 
@@ -45,8 +46,7 @@ import Control.Concurrent.Async
 
 import System.Random
 
-import Network.MQTT hiding (connect)
-import qualified Network.MQTT as M
+import Network.MQTT
 import Network.MQTT.IO
 import Network.MQTT.Message
 
@@ -86,15 +86,15 @@ type ClientSessionPresent = Bool
 newtype Tail
       = Tail (MVar (Tail, ClientEvent))
 
-newtype ClientEvents
-      = ClientEvents (MVar Tail)
+newtype ClientEventStream
+      = ClientEventStream (MVar Tail)
 
-streamEvents :: Client s a -> IO ClientEvents
-streamEvents client =
-  ClientEvents <$> (newMVar =<< readMVar (clientMessages client))
+hookEventStream :: Client s a -> IO ClientEventStream
+hookEventStream client =
+  ClientEventStream <$> (newMVar =<< readMVar (clientMessages client))
 
-takeEvent :: ClientEvents -> IO ClientEvent
-takeEvent (ClientEvents mt) =
+takeEvent :: ClientEventStream -> IO ClientEvent
+takeEvent (ClientEventStream mt) =
   modifyMVar mt $ \(Tail next)-> readMVar next
 
 data OutboundState
@@ -106,17 +106,11 @@ data OutboundState
 
 newtype InboundState = NotReleasedPublish Message
 
--- | Disconnects the client.
---   * The operation returns after the DISCONNECT packet has been written to the
---     connection and the connection has been closed.
-disconnect :: Closable s => Client s a -> IO ()
-disconnect c = do
-  t <- readMVar (clientThreads c)
-  putMVar (clientOutput c) (Left Disconnect)
-  wait t
-
-connect :: (StreamTransmitter s, StreamReceiver s, Connectable s, Closable s, ConnectableAddress s ~ a) => Client s a -> IO ()
-connect c = modifyMVar_ (clientThreads c) $ \p->
+-- | Starts the `Client`.
+--
+--   * The `Started` event will be added to the event stream.
+start :: (Connectable s, ConnectableAddress s ~ a, StreamTransmitter s, StreamReceiver s, Closable s) => Client s a -> IO ()
+start c = modifyMVar_ (clientThreads c) $ \p->
   poll p >>= \m-> case m of
     -- Processing thread is stil running, no need to connect.
     Nothing -> pure p
@@ -137,7 +131,7 @@ connect c = modifyMVar_ (clientThreads c) $ \p->
       where
         connectTransmitter :: IO ()
         connectTransmitter =
-          M.connect connection =<< readMVar (clientServerAddress c)
+          connect connection =<< readMVar (clientServerAddress c)
 
         sendConnect :: IO ()
         sendConnect = do
@@ -158,8 +152,8 @@ connect c = modifyMVar_ (clientThreads c) $ \p->
           bs <- receive connection
           case SG.runGetPartial pRawMessage bs of
             SG.Done message bs' -> f message >> pure bs'
-            SG.Fail e bs'       -> throwIO $ ParserError e
-            SG.Partial _        -> throwIO $ ParserError "Expected CONNACK, got end of input."
+            SG.Fail e bs'       -> throwIO $ ProtocolViolation e
+            SG.Partial _        -> throwIO $ ProtocolViolation "Expected CONNACK, got end of input."
           where
             f (ConnectAcknowledgement a) = case a of
                 Right serverSessionPresent
@@ -245,7 +239,7 @@ connect c = modifyMVar_ (clientThreads c) $ \p->
                     else g $ cont bs'
                 g (SG.Fail         e _) = do
                   --print $ "FAIL" ++ show e
-                  throwIO $ ParserError e
+                  throwIO $ ProtocolViolation e
 
                 f msg@Publish {} = case publishQoS msg of
                   PublishQoS0 -> publishLocal c $ Received Message
@@ -327,6 +321,18 @@ connect c = modifyMVar_ (clientThreads c) $ \p->
                 -- The following packets must not be sent from the server to the client.
                 _ = throwIO $ ProtocolViolation "Unexpected packet type received from the server."
 
+-- | Stops the `Client`.
+--
+--   * A graceful DISCONNECT packet will be sent to the server and the
+--     connection will be `close`d.
+--   * All internal client threads will be terminated.
+--   * The `Stopped` event will be added to the event stream.
+stop :: Closable s => Client s a -> IO ()
+stop c = do
+  t <- readMVar (clientThreads c)
+  putMVar (clientOutput c) (Left Disconnect)
+  wait t
+
 publishLocal :: Client s a -> ClientEvent -> IO ()
 publishLocal client msg = modifyMVar_ (clientMessages client) $
   \(Tail currentTail)-> do
@@ -334,8 +340,8 @@ publishLocal client msg = modifyMVar_ (clientMessages client) $
     putMVar currentTail (nextTail, msg)   -- resolve the current head
     pure nextTail                         -- new tail replaces current
 
-publish :: Client s a -> Message -> IO ()
-publish client (Message !topic !body qos retain duplicate) = case qos of
+publish :: Client s a -> Topic -> QoS -> Retain -> Payload -> IO ()
+publish client !topic !qos !retain !payload = case qos of
   QoS0 -> undefined -- putMVar (clientOutput client) $ Left $ message Nothing
   QoS1 -> undefined {-- register AtLeastOnce NotAcknowledgedPublish
   QoS2 -> register ExactlyOnce NotReceivedPublish
@@ -378,14 +384,16 @@ unsubscribe client topics = do
       in (message, NotAcknowledgedUnsubscribe message confirmation)
 
 data ClientEvent
-   = Connected
-   | Disconnected
+   = Started
+   | Connecting
+   | Connected
    | Received Message
+   | Disconnected ClientException
+   | Stopped
    deriving (Eq, Ord, Show)
 
 data ClientException
-   = ParserError String
-   | ProtocolViolation String
+   = ProtocolViolation String
    | ConnectionRefused ConnectionRefusal
    | ConnectionClosed
    | ClientLostSession
