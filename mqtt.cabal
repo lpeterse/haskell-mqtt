@@ -19,7 +19,8 @@ executable hummingbird
 
 library
   ghc-options:         -O2 -rtsopts -prof -fprof-auto -fforce-recomp
-  exposed-modules:     Network.MQTT,
+  exposed-modules:     Control.Concurrent.Broadcast,
+                       Network.MQTT,
                        Network.MQTT.Client,
                        Network.MQTT.Server,
                        Network.MQTT.SubscriptionTree,

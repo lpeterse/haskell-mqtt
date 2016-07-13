@@ -20,6 +20,7 @@ module Network.MQTT.Client
   , stop
   , publish
   , subscribe
+  , unsubscribe
   , hookEventStream
   , takeEvent
   ) where
