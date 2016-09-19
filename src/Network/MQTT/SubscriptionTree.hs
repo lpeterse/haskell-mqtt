@@ -4,6 +4,8 @@ module Network.MQTT.SubscriptionTree where
 import Control.Concurrent.MVar
 import Data.Unique
 
+{-
+
 import qualified Data.IntMap as IM
 import qualified Data.IntSet as IS
 import qualified Data.Map as M
@@ -22,7 +24,6 @@ data SubscriptionTree
      , subtree     :: M.Map TopicLevel SubscriptionTree
      }
 
-{-
 newSubscriptionTree :: IO (SubscriptionTree a)
 newSubscriptionTree =
   SubscriptionTree <$> newMVar (Tree M.empty M.empty)
