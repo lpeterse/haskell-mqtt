@@ -53,6 +53,8 @@ import Network.MQTT
 import Network.MQTT.IO
 import Network.MQTT.Message
 
+import qualified Network.Transceiver as T
+
 data Client s a
    = Client
      { clientServerAddress           :: MVar a
@@ -120,7 +122,7 @@ newtype InboundState = NotReleasedPublish Message
 --
 --   At every step after the `Connecting` event, a `Disconnect` may occur.
 --   The client will then try to reconnect automatically.
-start :: (Connectable s, ConnectableAddress s ~ a, StreamTransmitter s, StreamReceiver s, Closable s) => Client s a -> IO ()
+start :: (T.Connectable s, T.Address s ~ a,  T.StreamConnection s, T.Closable s, T.Data s ~ BS.ByteString) => Client s a -> IO ()
 start c = modifyMVar_ (clientThreads c) $ \p->
   poll p >>= \m-> case m of
     -- Processing thread is stil running, no need to connect.
@@ -146,7 +148,7 @@ start c = modifyMVar_ (clientThreads c) $ \p->
       where
         connectTransmitter :: IO ()
         connectTransmitter =
-          connect connection =<< readMVar (clientServerAddress c)
+          T.connect connection =<< readMVar (clientServerAddress c)
 
         sendConnect :: IO ()
         sendConnect = do
@@ -154,7 +156,7 @@ start c = modifyMVar_ (clientThreads c) $ \p->
           ck <- readMVar (clientKeepAlive c)
           cw <- readMVar (clientWill c)
           cu <- readMVar (clientUsernamePassword c)
-          transmit connection $ LBS.toStrict $ BS.toLazyByteString $ bRawMessage Connect
+          T.sendChunks connection $ BS.toLazyByteString $ bRawMessage Connect
             { connectClientIdentifier = ci
             , connectCleanSession     = False
             , connectKeepAlive        = ck
@@ -164,7 +166,7 @@ start c = modifyMVar_ (clientThreads c) $ \p->
 
         receiveConnectAcknowledgement :: IO BS.ByteString
         receiveConnectAcknowledgement = do
-          bs <- receive connection
+          bs <- T.receiveChunk connection
           case SG.runGetPartial pRawMessage bs of
             SG.Done message bs' -> f message >> pure bs'
             SG.Fail e bs'       -> throwIO $ ProtocolViolation e
@@ -202,7 +204,7 @@ start c = modifyMVar_ (clientThreads c) $ \p->
                 unless activity $ putMVar (clientOutput c) $ Left PingRequest
 
             handleOutput :: IO ()
-            handleOutput = bufferedOutput connection getMessage getMaybeMessage (transmit connection)
+            handleOutput = bufferedOutput connection getMessage getMaybeMessage (T.sendChunk connection)
               where
                 getMessage :: IO RawMessage
                 getMessage = do
@@ -237,7 +239,7 @@ start c = modifyMVar_ (clientThreads c) $ \p->
 
             handleInput :: BS.ByteString -> IO ()
             handleInput bs
-              | BS.null bs = handleInput' =<< receive connection
+              | BS.null bs = handleInput' =<< T.receiveChunk connection
               | otherwise  = handleInput' bs
               where
                 handleInput' bs' = do
@@ -248,7 +250,7 @@ start c = modifyMVar_ (clientThreads c) $ \p->
                   f message >> handleInput' bs'
                 g (SG.Partial     cont) = do
                   --print "Partial"
-                  bs' <- receive connection
+                  bs' <- T.receiveChunk connection
                   if BS.null bs'
                     then throwIO ServerClosedConnection
                     else g $ cont bs'
@@ -342,7 +344,7 @@ start c = modifyMVar_ (clientThreads c) $ \p->
 --     connection will be `close`d.
 --   * All internal client threads will be terminated.
 --   * The `Stopped` event will be added to the event stream.
-stop :: Closable s => Client s a -> IO ()
+stop :: T.Closable s => Client s a -> IO ()
 stop c = do
   t <- readMVar (clientThreads c)
   putMVar (clientOutput c) (Left Disconnect)

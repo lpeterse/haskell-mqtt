@@ -31,8 +31,9 @@ import Control.Concurrent.MVar
 
 import Network.MQTT
 import Network.MQTT.Message
+import Network.Transceiver
 
-bufferedOutput :: StreamTransmitter s => s -> IO RawMessage -> IO (Maybe RawMessage) -> (BS.ByteString -> IO ()) -> IO ()
+bufferedOutput :: (StreamConnection s, Data s ~ BS.ByteString) => s -> IO RawMessage -> IO (Maybe RawMessage) -> (BS.ByteString -> IO ()) -> IO ()
 bufferedOutput transmitter getMessage getMaybeMessage sendByteString =
   bracket ( mallocBytes bufferSize ) free waitForMessage
   where
@@ -76,5 +77,5 @@ bufferedOutput transmitter getMessage getMaybeMessage sendByteString =
           uncurry finishWriter =<< writer buffer bufferSize
     flushBuffer :: Ptr Word8 -> Int -> IO ()
     flushBuffer buffer pos =
-      BS.unsafePackCStringLen (castPtr buffer, pos) >>= \bs-> transmit transmitter bs >> pure ()
+      BS.unsafePackCStringLen (castPtr buffer, pos) >>= \bs-> sendChunk transmitter bs >> pure ()
 {-# INLINE bufferedOutput #-}
