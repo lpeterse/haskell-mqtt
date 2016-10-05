@@ -25,19 +25,18 @@ class Closable a where
 class Closable a => Creatable a where
   create      :: IO a
 
-class (Transceiver a, E.Exception (ConnectionException a), Closable a) => Connection a where
-  type ConnectionException a
-  isConnectedException            :: a -> ConnectionException a -> Bool
+class (Transceiver a, Closable a) => Connection a where
+  isConnectedException            :: a -> Exception a -> Bool
   isConnectedException         _ _ = False
-  isNotConnectedException         :: a -> ConnectionException a -> Bool
+  isNotConnectedException         :: a -> Exception a -> Bool
   isNotConnectedException      _ _ = False
-  isConnectionAbortedException    :: a -> ConnectionException a -> Bool
+  isConnectionAbortedException    :: a -> Exception a -> Bool
   isConnectionAbortedException _ _ = False
-  isConnectionRefusedException    :: a -> ConnectionException a -> Bool
+  isConnectionRefusedException    :: a -> Exception a -> Bool
   isConnectionRefusedException _ _ = False
-  isConnectionTimeoutException    :: a -> ConnectionException a -> Bool
+  isConnectionTimeoutException    :: a -> Exception a -> Bool
   isConnectionTimeoutException _ _ = False
-  isConnectionResetException      :: a -> ConnectionException a -> Bool
+  isConnectionResetException      :: a -> Exception a -> Bool
   isConnectionResetException   _ _ = False
 
 class (Connection a, Eq (Data a), Monoid (Data a)) => StreamConnection a where
@@ -53,15 +52,16 @@ class Addressable a where
 
 class (Connection a, Addressable a) => Bindable a where
   bind                              :: a -> Address a -> IO ()
-  isAddressNotAvailableException    :: a -> ConnectionException a -> Bool
+  isAddressNotAvailableException    :: a -> Exception a -> Bool
   isAddressNotAvailableException _ _ = False
 
 class (Connection a, Addressable a) => Connectable a where
   connect              :: a -> Address a -> IO ()
 
-class (Bindable a, Addressable a) => Acceptable a where
+class (Connection (AcceptedConnection a), Addressable (AcceptedConnection a)) => Acceptable a where
+  type AcceptedConnection a
   listen               :: a -> Int -> IO ()
-  accept               :: a -> IO (a, Address a)
+  accept               :: a -> IO (AcceptedConnection a, Address (AcceptedConnection a))
 
 class (Connection a) => DatagramConnection a where
   type Datagram a
@@ -97,7 +97,6 @@ instance Addressable (S.Socket f t p) where
   type Address (S.Socket f t p)   = S.SocketAddress f
 
 instance Connection (S.Socket f t p) where
-  type ConnectionException (S.Socket f t p) = S.SocketException
   isConnectedException         s = (== S.eIsConnected)
   isNotConnectedException      s = (== S.eNotConnected)
   isConnectionTimeoutException s = (== S.eTimedOut)
@@ -116,6 +115,29 @@ instance StreamConnection (S.Socket f S.Stream p) where
 instance Connectable (S.Socket S.Inet6 t p) where
   connect = S.connect
 
+instance Acceptable (S.Socket S.Inet6 t p) where
+  type AcceptedConnection (S.Socket S.Inet6 t p) = S.Socket S.Inet6 t p
+  listen = S.listen
+  accept = S.accept
+
+newtype TlsStream = TlsStream TLS.Context
+
+instance Transceiver TlsStream where
+  type Data TlsStream      = BS.ByteString
+  type Exception TlsStream = TLS.TLSException
+
+instance Closable TlsStream where
+  close (TlsStream s) = TLS.contextClose s
+
+instance Addressable TlsStream where
+  type Address TlsStream = ()
+
+instance Connection TlsStream where
+
+instance StreamConnection TlsStream where
+  sendChunk (TlsStream t) c  = TLS.sendData t (BSL.fromStrict c)
+  receiveChunk (TlsStream t) = TLS.recvData t
+
 data SecureStreamServer t
    = SecureStreamServer
      { serverParams :: TLS.ServerParams
@@ -125,11 +147,26 @@ data SecureStreamServer t
 
 data SecureStreamServerException t
    = TlsException TLS.TLSException
-   | TransportException (Exception t)
+   | TlsTransportException (Exception t)
 
 instance Transceiver t => Transceiver (SecureStreamServer t) where
   type Data (SecureStreamServer t)      = BS.ByteString
   type Exception (SecureStreamServer t) = SecureStreamServerException t
+
+instance (Acceptable t, Data (AcceptedConnection t) ~ BS.ByteString, AcceptedConnection t ~ t, StreamConnection t) => Acceptable (SecureStreamServer t) where
+  type AcceptedConnection (SecureStreamServer t) = TlsStream
+  listen = undefined
+  accept server = do
+    (connection,_) <- accept (transport server)
+    context    <- TLS.contextNew (backend connection) (serverParams server)
+    return (TlsStream context, undefined)
+    where
+      backend c = TLS.Backend {
+        TLS.backendFlush = return (),
+        TLS.backendClose = close c,
+        TLS.backendSend  = sendChunk c,
+        TLS.backendRecv  = \_-> receiveChunk c
+      }
 
 --instance (Addressable t, Bindable t) => Bindable (SecureStreamServer t) where
 --  bind t a = bind (transport t) (bindAddress t)
