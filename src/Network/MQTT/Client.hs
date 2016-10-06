@@ -36,6 +36,7 @@ import qualified Data.ByteString.Builder as BS
 import qualified Data.ByteString.Builder.Extra as BS
 import qualified Data.ByteString.Lazy as LBS
 import qualified Data.Text as T
+import qualified Data.Text.Encoding as T
 import qualified Data.Serialize.Get as SG
 
 import Foreign.Ptr
@@ -67,6 +68,43 @@ data ClientConfiguration t
      , clientMaxUnacknowlegedMessages :: Word16
      , clientNewTransceiver           :: IO t
      }
+
+validateClientConfiguration :: ClientConfiguration t -> IO ()
+validateClientConfiguration config = do
+  validateUriScheme
+  validateUriAuthority
+  where
+    validateUriScheme = case uriScheme (clientURI config) of
+      "mqtt"  -> pure ()
+      "mqtts" -> pure ()
+      "ws"    -> pure ()
+      "wss"   -> pure ()
+      _       -> err "clientURI: unsupported scheme"
+    validateUriAuthority = case uriAuthority (clientURI config) of
+      Nothing   -> err "clientURI: missing authority"
+      Just auth -> pure ()
+    err = throwIO . ClientConfigurationException
+
+data ClientConfigurationException
+   = ClientConfigurationException String
+   deriving (Typeable, Show)
+
+instance Exception ClientConfigurationException
+
+uriUsername :: URI -> Maybe Username
+uriUsername uri =
+  f $ takeWhile (/=':') . uriUserInfo  <$> uriAuthority uri
+  where
+    f (Just []) = Nothing
+    f (Just xs) = Just (T.pack xs)
+    f _         = Nothing
+
+uriPassword :: URI -> Maybe Password
+uriPassword uri = f $ drop 1 . dropWhile (/=':') . uriUserInfo <$> uriAuthority uri
+  where
+    f (Just []) = Nothing
+    f (Just xs) = Just (T.encodeUtf8 $ T.pack xs)
+    f _         = Nothing
 
 data Client t
    = Client
