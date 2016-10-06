@@ -10,19 +10,19 @@
 --------------------------------------------------------------------------------
 module Network.MQTT.Client
   ( Client ()
-  , ClientEventStream ()
+  , ClientConfiguration (..)
+  -- * Events
   , ClientEvent (..)
+  , listenEvents
+  , acceptEvent
+  -- * Exceptions
   , ClientException (..)
-  , EventEmitter (..)
-  , EventStream ()
-  , new
+  , newClient
   , start
   , stop
   , publish
   , subscribe
   , unsubscribe
-  , hookEventStream
-  , takeEvent
   ) where
 
 import Data.Int
@@ -46,61 +46,57 @@ import Control.Monad
 import Control.Concurrent
 import Control.Concurrent.MVar
 import Control.Concurrent.Async
+import Control.Concurrent.Broadcast
 
 import System.Random
 
+import Network.URI
 import Network.MQTT
 import Network.MQTT.IO
 import Network.MQTT.Message
 
 import qualified Network.Transceiver as T
 
-data Client s a
+data ClientConfiguration t
+   = ClientConfiguration
+     { -- | @mqtt://user:password\@server.example:1234@
+       clientURI                      :: URI
+     , clientWill                     :: Maybe Will
+     , clientKeepAlive                :: KeepAlive
+     , clientIdentifierPrefix         :: String
+     , clientMaxUnacknowlegedMessages :: Word16
+     , clientNewTransceiver           :: IO t
+     }
+
+data Client t
    = Client
-     { clientServerAddress           :: MVar a
-     , clientIdentifier              :: MVar ClientIdentifier
-     , clientKeepAlive               :: MVar KeepAlive
-     , clientWill                    :: MVar (Maybe Will)
-     , clientUsernamePassword        :: MVar (Maybe (Username, Maybe Password))
+     { clientIdentifier              :: ClientIdentifier
+     , clientEventBroadcast          :: Broadcast ClientEvent
+     , clientConfiguration           :: MVar (ClientConfiguration t)
      , clientRecentActivity          :: MVar Bool
      , clientOutput                  :: MVar (Either RawMessage (PacketIdentifier -> (RawMessage, OutboundState)))
      , clientInboundState            :: MVar (IM.IntMap InboundState)
      , clientOutboundState           :: MVar ([Int], IM.IntMap OutboundState)
-     , clientMessages                :: MVar Tail
-     , clientNewConnection           :: MVar (IO s)
      , clientThreads                 :: MVar (Async ())
      }
 
-new :: IO s -> a -> IO (Client s a)
-new ios a = Client
-  <$> newMVar a
-  <*> (newMVar =<< ClientIdentifier . T.pack . take 23 . ("haskell-" ++) . randomRs ('a','z') <$> newStdGen)
-  <*> newMVar 60
-  <*> newMVar Nothing
-  <*> newMVar Nothing
+newClient :: ClientConfiguration t -> IO (Client t)
+newClient configuration = Client
+  <$> (ClientIdentifier . T.pack . take clientIdentifierLength
+    . (clientIdentifierPrefix configuration ++)
+    . randomRs clientIdentifierCharacterRange <$> newStdGen)
+  <*> newBroadcast
+  <*> newMVar configuration
   <*> newMVar False
   <*> newEmptyMVar
   <*> newMVar IM.empty
-  <*> newMVar ([0..10000], IM.empty)
-  <*> (newMVar =<< (Tail <$> newEmptyMVar))
-  <*> newMVar ios
+  <*> newMVar ([0..fromIntegral (clientMaxUnacknowlegedMessages configuration)], IM.empty)
   <*> (newMVar =<< async (pure ()))
+  where
+    clientIdentifierLength = 23
+    clientIdentifierCharacterRange = ('a','z')
 
 type ClientSessionPresent = Bool
-
-newtype Tail
-      = Tail (MVar (Tail, ClientEvent))
-
-newtype ClientEventStream
-      = ClientEventStream (MVar Tail)
-
-hookEventStream :: Client s a -> IO ClientEventStream
-hookEventStream client =
-  ClientEventStream <$> (newMVar =<< readMVar (clientMessages client))
-
-takeEvent :: ClientEventStream -> IO ClientEvent
-takeEvent (ClientEventStream mt) =
-  modifyMVar mt $ \(Tail next)-> readMVar next
 
 data OutboundState
    = NotAcknowledgedPublish     RawMessage (MVar ())
@@ -122,46 +118,43 @@ newtype InboundState = NotReleasedPublish Message
 --
 --   At every step after the `Connecting` event, a `Disconnect` may occur.
 --   The client will then try to reconnect automatically.
-start :: (T.Connectable s, T.Address s ~ a,  T.StreamConnection s, T.Closable s, T.Data s ~ BS.ByteString) => Client s a -> IO ()
+start :: (T.Connectable s, T.Address s ~ a,  T.StreamConnection s, T.Closable s, T.Data s ~ BS.ByteString) => Client s -> IO ()
 start c = modifyMVar_ (clientThreads c) $ \p->
   poll p >>= \m-> case m of
     -- Processing thread is stil running, no need to connect.
     Nothing -> pure p
     -- Processing thread not running, create a new one with new connection
     Just _  -> do
-      publishLocal c Started
+      broadcast (clientEventBroadcast c) Started
       async $ forever $ do
         run -- `catch` (\e-> print (e :: SomeException) >> print "RECONNECT")
         threadDelay 1000000
 
   where
     run :: IO ()
-    run  = join (readMVar (clientNewConnection c)) >>= handleConnection False
+    run  = join (clientNewTransceiver <$> readMVar (clientConfiguration c)) >>= handleConnection False
 
     -- handleConnection :: (StreamTransmitter s, StreamReceiver s, Connectable s, Closable s) => ClientSessionPresent -> s -> IO ()
     handleConnection clientSessionPresent connection = do
-      publishLocal c Connecting
+      broadcast (clientEventBroadcast c) Connecting
       connectTransmitter
-      publishLocal c Connected
+      broadcast (clientEventBroadcast c) Connected
       sendConnect
       receiveConnectAcknowledgement >>= maintainConnection
       where
         connectTransmitter :: IO ()
         connectTransmitter =
-          T.connect connection =<< readMVar (clientServerAddress c)
+          T.connect connection =<< readMVar undefined
 
         sendConnect :: IO ()
         sendConnect = do
-          ci <- readMVar (clientIdentifier c)
-          ck <- readMVar (clientKeepAlive c)
-          cw <- readMVar (clientWill c)
-          cu <- readMVar (clientUsernamePassword c)
+          conf <- readMVar (clientConfiguration c)
           T.sendChunks connection $ BS.toLazyByteString $ bRawMessage Connect
-            { connectClientIdentifier = ci
+            { connectClientIdentifier = clientIdentifier c
             , connectCleanSession     = False
-            , connectKeepAlive        = ck
-            , connectWill             = cw
-            , connectCredentials      = cu
+            , connectKeepAlive        = clientKeepAlive conf
+            , connectWill             = clientWill conf
+            , connectCredentials      = undefined
             }
 
         receiveConnectAcknowledgement :: IO BS.ByteString
@@ -197,7 +190,7 @@ start c = modifyMVar_ (clientThreads c) $ \p->
             -- most `keepAlive` seconds (assuming we get woken up on time by the RTS).
             keepAlive :: IO ()
             keepAlive = do
-              interval <- (500000*) . fromIntegral <$> readMVar (clientKeepAlive c)
+              interval <- (500000*) . fromIntegral . clientKeepAlive <$> readMVar (clientConfiguration c)
               forever $ do
                 threadDelay interval
                 activity <- swapMVar (clientRecentActivity c) False
@@ -259,7 +252,7 @@ start c = modifyMVar_ (clientThreads c) $ \p->
                   throwIO $ ProtocolViolation e
 
                 f msg@Publish {} = case publishQoS msg of
-                  PublishQoS0 -> publishLocal c $ Received Message
+                  PublishQoS0 -> broadcast (clientEventBroadcast c) $ Received Message
                     { topic    = publishTopic msg
                     , payload  = publishBody msg
                     , qos      = QoS0
@@ -267,7 +260,7 @@ start c = modifyMVar_ (clientThreads c) $ \p->
                     , duplicate = False
                     }
                   PublishQoS1 dup i -> do
-                    publishLocal c $ Received Message
+                    broadcast (clientEventBroadcast c) $ Received Message
                       { topic    = publishTopic msg
                       , payload  = publishBody msg
                       , qos      = QoS1
@@ -303,7 +296,7 @@ start c = modifyMVar_ (clientThreads c) $ \p->
                   modifyMVar_ (clientInboundState c) $ \im->
                     case IM.lookup i im of
                       Just (NotReleasedPublish msg) -> do
-                        publishLocal c $ Received msg -- Publish exactly once here!
+                        broadcast (clientEventBroadcast c) $ Received msg -- Publish exactly once here!
                         pure (IM.delete i im)
                       Nothing -> -- Duplicate, don't publish again.
                         pure im
@@ -344,20 +337,13 @@ start c = modifyMVar_ (clientThreads c) $ \p->
 --     connection will be `close`d.
 --   * All internal client threads will be terminated.
 --   * The `Stopped` event will be added to the event stream.
-stop :: T.Closable s => Client s a -> IO ()
+stop :: T.Closable s => Client s -> IO ()
 stop c = do
   t <- readMVar (clientThreads c)
   putMVar (clientOutput c) (Left Disconnect)
   wait t
 
-publishLocal :: Client s a -> ClientEvent -> IO ()
-publishLocal client msg = modifyMVar_ (clientMessages client) $
-  \(Tail currentTail)-> do
-    nextTail <- Tail <$> newEmptyMVar     -- a new (unresolved) tail
-    putMVar currentTail (nextTail, msg)   -- resolve the current head
-    pure nextTail                         -- new tail replaces current
-
-publish :: Client s a -> Topic -> QoS -> Retain -> Payload -> IO ()
+publish :: Client s -> Topic -> QoS -> Retain -> Payload -> IO ()
 publish client !topic !qos !retain !payload = case qos of
   QoS0 -> undefined -- putMVar (clientOutput client) $ Left $ message Nothing
   QoS1 -> undefined {-- register AtLeastOnce NotAcknowledgedPublish
@@ -378,7 +364,7 @@ publish client !topic !qos !retain !payload = case qos of
       publishTopic     = topic,
       publishBody      = body } -}
 
-subscribe :: Client s a -> [(TopicFilter, QoS)] -> IO [Maybe QoS]
+subscribe :: Client s -> [(TopicFilter, QoS)] -> IO [Maybe QoS]
 subscribe client [] = pure []
 subscribe client topics = do
   response <- newEmptyMVar
@@ -389,7 +375,7 @@ subscribe client topics = do
       let message = Subscribe i topics
       in (message, NotAcknowledgedSubscribe message response)
 
-unsubscribe :: Client s a -> [TopicFilter] -> IO ()
+unsubscribe :: Client s -> [TopicFilter] -> IO ()
 unsubscribe client [] = pure ()
 unsubscribe client topics = do
   confirmation <- newEmptyMVar
@@ -399,6 +385,12 @@ unsubscribe client topics = do
     f confirmation i =
       let message = Unsubscribe i topics
       in (message, NotAcknowledgedUnsubscribe message confirmation)
+
+listenEvents :: Client s -> IO (BroadcastListener ClientEvent)
+listenEvents c = listen (clientEventBroadcast c)
+
+acceptEvent  :: BroadcastListener ClientEvent -> IO ClientEvent
+acceptEvent   = accept
 
 data ClientEvent
    = Started
@@ -421,15 +413,3 @@ data ClientException
    deriving (Eq, Ord, Show, Typeable)
 
 instance Exception ClientException where
-
-class EventEmitter a where
-  type Event a
-  hook   :: a -> EventStream a
-  listen :: EventStream a -> Event a
-
-data EventStream a
-
-instance EventEmitter (Client s a) where
-  type Event (Client s a) = ClientEvent
-  hook   = undefined
-  listen = undefined
