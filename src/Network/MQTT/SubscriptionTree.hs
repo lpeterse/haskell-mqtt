@@ -38,29 +38,27 @@ difference (SubscriptionTree s1 m1) (SubscriptionTree s2 m2) =
               diff = difference t1 t2
 
 subscribe :: Unique -> [FilterComponent] -> SubscriptionTree -> SubscriptionTree
-subscribe unique [] (SubscriptionTree subscriberSet' subtreeMap') =
-  SubscriptionTree (S.insert unique subscriberSet') subtreeMap'
-subscribe unique (t:ts) (SubscriptionTree subscriberSet' subtreeMap') =
-  SubscriptionTree subscriberSet' $ M.insert t (subscribe unique ts
-  $ fromMaybe mempty $ M.lookup t subtreeMap') subtreeMap'
+subscribe unique [] (SubscriptionTree s m) =
+  SubscriptionTree (S.insert unique s) m
+subscribe unique (t:ts) (SubscriptionTree s m) =
+  SubscriptionTree s $ M.insert t (subscribe unique ts
+  $ fromMaybe mempty $ M.lookup t m) m
 
 unsubscribe :: Unique -> [FilterComponent] -> SubscriptionTree -> SubscriptionTree
 unsubscribe unique ts tree
   = difference tree $ subscribe unique ts mempty
 
 subscribers :: SubscriptionTree -> [TopicComponent] -> S.Set Unique
-subscribers  (SubscriptionTree subscribers _) [] =
-  subscribers
-subscribers  (SubscriptionTree _ subtrees) tts@(t:ts) =
-  match <> skipOne <> skipMany
+subscribers  (SubscriptionTree s _) [] = s
+subscribers  (SubscriptionTree _ m) (t:ts) =
+  matchComponent <> matchSingleLevelWildcard <> matchMultiLevelWildcard
   where
-    match    = case M.lookup  t  subtrees of
+    matchComponent           = case M.lookup  t  m of
       Nothing      -> mempty
       Just subtree -> subscribers subtree ts
-    skipOne  = case M.lookup "+" subtrees of
+    matchSingleLevelWildcard = case M.lookup "+" m of
       Nothing      -> mempty
       Just subtree -> subscribers subtree ts
-    skipMany = case M.lookup "#" subtrees of
+    matchMultiLevelWildcard  = case M.lookup "#" m of
       Nothing      -> mempty
-      -- TODO: Think about the implications of exponential explosion here!
-      Just subtree -> S.unions $ map (subscribers subtree) (tails tts)
+      Just subtree -> subscriberSet subtree
