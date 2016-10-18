@@ -3,72 +3,64 @@ module Network.MQTT.SubscriptionTree where
 
 import Control.Concurrent.MVar
 import Data.Unique
+import Data.Monoid
+import Data.Maybe ( fromMaybe )
+import Data.List ( tails )
 
-{-
-
-import qualified Data.IntMap as IM
-import qualified Data.IntSet as IS
+import qualified Data.Set as S
 import qualified Data.Map as M
 import qualified Data.Text as T
 
-
-type TopicLevel    = T.Text
-
-data Tree a        = Tree (Subscribers a) (Subtree a)
-type Subtree a     = M.Map TopicLevel (Tree a)
-type Subscribers a = M.Map Unique (a -> IO ())
+type FilterComponent    = T.Text
+type TopicComponent     = T.Text
 
 data SubscriptionTree
    = SubscriptionTree
-     { subscribers :: IS.IntSet
-     , subtree     :: M.Map TopicLevel SubscriptionTree
-     }
+     { subscriberSet :: S.Set Unique
+     , subtreeMap    :: M.Map FilterComponent SubscriptionTree
+     } deriving (Eq, Ord)
 
-newSubscriptionTree :: IO (SubscriptionTree a)
-newSubscriptionTree =
-  SubscriptionTree <$> newMVar (Tree M.empty M.empty)
+instance Monoid SubscriptionTree where
+  mempty  = SubscriptionTree S.empty M.empty
+  mappend (SubscriptionTree s1 m1) (SubscriptionTree s2 m2) =
+    SubscriptionTree (S.union s1 s2) (M.unionWith mappend m1 m2)
 
-subscribe :: SubscriptionTree a -> (a -> IO ()) -> [TopicLevel] -> IO Unique
-subscribe (SubscriptionTree mtree) handler ts = do
-  unique <- newUnique
-  modifyMVar_ mtree $ return . subscribe' unique handler ts
-  return unique
+union :: SubscriptionTree -> SubscriptionTree -> SubscriptionTree
+union = mappend
+
+difference :: SubscriptionTree -> SubscriptionTree -> SubscriptionTree
+difference (SubscriptionTree s1 m1) (SubscriptionTree s2 m2) =
+  SubscriptionTree (S.difference s1 s2) (M.differenceWith f m1 m2)
   where
-    subscribe' unique handler [] (Tree subscribers subtrees) =
-      Tree (M.insert unique handler subscribers) subtrees
-    subscribe' unique handler (t:ts) (Tree subscribers subtrees) =
-      Tree subscribers $ M.alter ( Just . maybe
-        ( subscribe' unique handler ts $ Tree M.empty M.empty )
-        ( subscribe' unique handler ts ) ) t subtrees
+    f t1 t2 | diff == mempty = Nothing
+            | otherwise      = Just diff
+            where
+              diff = difference t1 t2
 
-unsubscribe :: SubscriptionTree a -> Unique -> [TopicLevel] -> IO ()
-unsubscribe (SubscriptionTree mtree) unique ts =
-  modifyMVar_ mtree $ return . unsubscribe' unique ts
-  where
-    unsubscribe' unique [] (Tree subscribers subtrees) =
-      Tree (M.delete unique subscribers) subtrees
-    unsubscribe' unique (t:ts) (Tree subscribers subtrees) =
-      Tree subscribers $ M.alter
-        ( maybe Nothing $ clean . unsubscribe' unique ts ) t subtrees
-      where
-        clean t@(Tree x y) | M.null x && M.null y = Nothing
-                           | otherwise            = Just t
+subscribe :: Unique -> [FilterComponent] -> SubscriptionTree -> SubscriptionTree
+subscribe unique [] (SubscriptionTree subscriberSet' subtreeMap') =
+  SubscriptionTree (S.insert unique subscriberSet') subtreeMap'
+subscribe unique (t:ts) (SubscriptionTree subscriberSet' subtreeMap') =
+  SubscriptionTree subscriberSet' $ M.insert t (subscribe unique ts
+  $ fromMaybe mempty $ M.lookup t subtreeMap') subtreeMap'
 
-publish :: SubscriptionTree a -> [TopicLevel] -> a -> IO ()
-publish (SubscriptionTree mtree) ts msg = do
-  tree <- readMVar mtree
-  publish' tree ts
+unsubscribe :: Unique -> [FilterComponent] -> SubscriptionTree -> SubscriptionTree
+unsubscribe unique ts tree
+  = difference tree $ subscribe unique ts mempty
+
+subscribers :: SubscriptionTree -> [TopicComponent] -> S.Set Unique
+subscribers  (SubscriptionTree subscribers _) [] =
+  subscribers
+subscribers  (SubscriptionTree _ subtrees) tts@(t:ts) =
+  match <> skipOne <> skipMany
   where
-    publish' (Tree subscribers _) [] =
-      mapM_ ($ msg) subscribers
-    publish' (Tree subscribers subtrees) (t:ts) = do
-      case M.lookup "#" subtrees of
-        Nothing      -> return ()
-        Just subtree -> mapM_ ($ msg) subscribers
-      case M.lookup "+" subtrees of
-        Nothing      -> return ()
-        Just subtree -> publish' subtree ts
-      case M.lookup  t  subtrees of
-        Nothing      -> return ()
-        Just subtree -> publish' subtree ts
--}
+    match    = case M.lookup  t  subtrees of
+      Nothing      -> mempty
+      Just subtree -> subscribers subtree ts
+    skipOne  = case M.lookup "+" subtrees of
+      Nothing      -> mempty
+      Just subtree -> subscribers subtree ts
+    skipMany = case M.lookup "#" subtrees of
+      Nothing      -> mempty
+      -- TODO: Think about the implications of exponential explosion here!
+      Just subtree -> S.unions $ map (subscribers subtree) (tails tts)
