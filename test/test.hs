@@ -18,8 +18,10 @@ import Test.Tasty
 import Test.Tasty.HUnit
 import Test.Tasty.QuickCheck as QC
 
+import qualified SubscriptionTree
+
 main :: IO ()
-main  = defaultMain $ testGroup "Network" [ testGroup "MQTT" [tgRawMessage]]
+main  = defaultMain $ testGroup "Network" [ testGroup "MQTT" [SubscriptionTree.tests, tgRawMessage]]
 
 tgRawMessage :: TestTree
 tgRawMessage = testGroup "RawMessage"
@@ -126,7 +128,7 @@ tgRawMessageAll = QC.testProperty "pRawMessage . bRawMessage == id" $ \msg->
   Right msg === SG.runGet pRawMessage (LBS.toStrict $ BS.toLazyByteString $ bRawMessage msg)
 
 instance Arbitrary RawMessage where
-  arbitrary = oneof
+  arbitrary = undefined {-oneof
     [ arbitraryConnect
     , arbitraryConnectAcknowledgment
     , arbitraryPublish
@@ -171,7 +173,7 @@ instance Arbitrary RawMessage where
         <$> arbitrary
         <*> listOf1 (elements [ "", "#", "a/+/b" ])
       arbitraryUnsubscribeAcknowledgement = UnsubscribeAcknowledgement
-        <$> arbitrary
+        <$> arbitrary -}
 
 instance Arbitrary QualityOfService where
   arbitrary = elements [ AtLeastOnce, ExactlyOnce ]

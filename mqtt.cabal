@@ -14,7 +14,8 @@ library
                        Network.MQTT.Client,
                        Network.MQTT.IO,
                        Network.MQTT.Message,
-                       Network.Transceiver
+                       Network.Transceiver,
+                       Network.MQTT.SubscriptionTree
   build-depends:       async,
                        base >=4.8 && <5,
                        bytestring,
@@ -38,6 +39,8 @@ test-suite test
     test
   main-is:
     test.hs
+  other-modules:
+    SubscriptionTree
   build-depends:
       base >= 4.8 && < 5
     , cereal
