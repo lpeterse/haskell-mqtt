@@ -48,22 +48,12 @@ unsubscribe :: Unique -> [FilterComponent] -> SubscriptionTree -> SubscriptionTr
 unsubscribe unique ts tree
   = difference tree $ subscribe unique ts mempty
 
-subscribers :: SubscriptionTree -> [TopicComponent] -> S.Set Unique
-subscribers  (SubscriptionTree s m) [] =
-  s <> matchMultiLevelWildcard
-  where
-    matchMultiLevelWildcard  = case M.lookup "#" m of
-      Nothing      -> mempty
-      Just subtree -> subscriberSet subtree
-subscribers  (SubscriptionTree _ m) (t:ts) =
+subscribers :: [TopicComponent] -> SubscriptionTree -> S.Set Unique
+subscribers [] (SubscriptionTree s m) =
+  fromMaybe s $ (s <>) . subscriberSet  <$> M.lookup "#" m
+subscribers (t:ts) (SubscriptionTree _ m) =
   matchComponent <> matchSingleLevelWildcard <> matchMultiLevelWildcard
   where
-    matchComponent           = case M.lookup  t  m of
-      Nothing      -> mempty
-      Just subtree -> subscribers subtree ts
-    matchSingleLevelWildcard = case M.lookup "+" m of
-      Nothing      -> mempty
-      Just subtree -> subscribers subtree ts
-    matchMultiLevelWildcard  = case M.lookup "#" m of
-      Nothing      -> mempty
-      Just subtree -> subscriberSet subtree
+    matchComponent           = fromMaybe mempty $ subscribers ts <$> M.lookup t m
+    matchSingleLevelWildcard = fromMaybe mempty $ subscribers ts <$> M.lookup "+" m
+    matchMultiLevelWildcard  = fromMaybe mempty $ subscriberSet  <$> M.lookup "#" m
