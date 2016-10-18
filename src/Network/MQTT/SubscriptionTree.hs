@@ -49,7 +49,12 @@ unsubscribe unique ts tree
   = difference tree $ subscribe unique ts mempty
 
 subscribers :: SubscriptionTree -> [TopicComponent] -> S.Set Unique
-subscribers  (SubscriptionTree s _) [] = s
+subscribers  (SubscriptionTree s m) [] =
+  s <> matchMultiLevelWildcard
+  where
+    matchMultiLevelWildcard  = case M.lookup "#" m of
+      Nothing      -> mempty
+      Just subtree -> subscriberSet subtree
 subscribers  (SubscriptionTree _ m) (t:ts) =
   matchComponent <> matchSingleLevelWildcard <> matchMultiLevelWildcard
   where
