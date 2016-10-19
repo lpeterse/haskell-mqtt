@@ -1,20 +1,64 @@
 {-# LANGUAGE OverloadedStrings #-}
 module Main (main) where
 
-import Criterion.Main (bgroup, bench, nf, whnf, defaultMain)
+import Criterion.Main (bgroup, bench, whnfIO, defaultMain)
 
+import Data.Int
+import Data.Set as S
 import Data.Monoid
+import Data.List (inits, tails)
 import qualified Data.Text as T
-import qualified Data.ByteString as BS
-import qualified Data.ByteString.Builder as BS
-import qualified Data.ByteString.Lazy as LBS
-import qualified Data.Attoparsec.ByteString as A
-import qualified Data.Attoparsec.ByteString.Lazy as AL
-import qualified Data.Attoparsec.ByteString.Char8 as A
 
-import Network.MQTT.Message
-import Network.MQTT.PacketIdentifier
+import Control.Concurrent.MVar
+import Control.Concurrent.Async
+import Control.Monad
 
+import Network.MQTT.SubscriptionTree
+
+main :: IO ()
+main = defaultMain
+  [ bgroup "Foo"
+    [ bench "bla" $ whnfIO foo
+
+    ]
+  ]
+
+foo :: IO Int
+foo = do
+  mtree <- newMVar mempty
+  fst <$> concurrently
+    ( sum <$> mapConcurrently (\t->publish mtree t >>= \k-> print ("PUB " ++ show t) >> pure k) topics >>= \x-> print "PUB ALL" >> pure x)
+    ( mapConcurrently (\i->subscribeFilters mtree i >> print ("SUB " ++ show i)) [1..100] >> print "SUB ALL")
+  where
+    topics = [
+      Topic ["a"],
+      Topic ["a","b"],
+      Topic ["a","b","c"],
+      Topic ["a","b","c","d"],
+      Topic ["a","b","c","d","e"],
+      Topic ["a","b","c","d","e","f"],
+      Topic ["a","b","c","d","e","f","g"],
+      Topic ["a","b","c","d","e","f","g","h"],
+      Topic ["a","b","c","d","e","f","g","h","i"],
+      Topic ["a","b","c","d","e","f","g","h","i","j"]
+     ]
+    publish :: MVar (SubscriptionTree Int) -> Topic -> IO Int
+    publish mtree topic = foldM (\i _-> do
+        tree <- readMVar mtree
+        pure $! i + S.size (subscribers topic tree)
+      ) 0 [1..100000]
+
+    filters :: [Filter]
+    filters = fmap (Filter . fmap T.pack . fmap pure) $ concatMap (\a->[a,a++"#"]) $ Prelude.filter (not . Prelude.null) $ concatMap tails $ inits ['a'..'z']
+
+    subscribeFilters :: MVar (SubscriptionTree Int) -> Int -> IO ()
+    subscribeFilters mtree i = do
+      forM_ filters $ \filtr-> do
+        --print $ "SUB " ++ show i
+        modifyMVar_ mtree (pure . subscribe i filtr)
+      --print $ "DONE " ++ show i
+
+{-
 main :: IO ()
 main = defaultMain
     [ bgroup "Message-parsing-and-serialisation" [
@@ -51,3 +95,4 @@ main = defaultMain
           bench "parse" (whnf (A.parseOnly pRawMessage) (LBS.toStrict $ BS.toLazyByteString $ bRawMessage x))
         , bench "build" (whnf (LBS.toStrict . BS.toLazyByteString . bRawMessage) x)
         ]
+-}
