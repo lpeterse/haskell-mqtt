@@ -26,9 +26,11 @@ main = defaultMain
 foo :: IO Int
 foo = do
   mtree <- newMVar mempty
-  fst <$> concurrently
+  subscriberSum <- fst <$> concurrently
     ( sum <$> mapConcurrently (\t->publish mtree t >>= \k-> print ("PUB " ++ show t) >> pure k) topics >>= \x-> print "PUB ALL" >> pure x)
     ( mapConcurrently (\i->subscribeFilters mtree i >> print ("SUB " ++ show i)) [1..100] >> print "SUB ALL")
+  print subscriberSum
+  pure subscriberSum
   where
     topics = [
       Topic ["a"],
