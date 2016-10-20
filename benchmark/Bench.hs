@@ -1,13 +1,11 @@
 {-# LANGUAGE OverloadedStrings #-}
 module Main (main) where
 
-import Criterion.Main (bgroup, bench, whnfIO, defaultMain)
-
 import Data.Int
-import Data.Set as S
+import Data.IntSet as S
 import Data.Monoid
 import Data.List (inits, tails)
-import qualified Data.Text as T
+import qualified Data.ByteString.Short as BS
 
 import Control.Concurrent.MVar
 import Control.Concurrent.Async
@@ -16,21 +14,12 @@ import Control.Monad
 import Network.MQTT.SubscriptionTree
 
 main :: IO ()
-main = defaultMain
-  [ bgroup "Foo"
-    [ bench "bla" $ whnfIO foo
-
-    ]
-  ]
-
-foo :: IO Int
-foo = do
+main = do
   mtree <- newMVar mempty
   subscriberSum <- fst <$> concurrently
     ( sum <$> mapConcurrently (\t->publish mtree t >>= \k-> print ("PUB " ++ show t) >> pure k) topics >>= \x-> print "PUB ALL" >> pure x)
     ( mapConcurrently (\i->subscribeFilters mtree i >> print ("SUB " ++ show i)) [1..100] >> print "SUB ALL")
   print subscriberSum
-  pure subscriberSum
   where
     topics = [
       Topic ["a"],
@@ -44,16 +33,16 @@ foo = do
       Topic ["a","b","c","d","e","f","g","h","i"],
       Topic ["a","b","c","d","e","f","g","h","i","j"]
      ]
-    publish :: MVar (SubscriptionTree Int) -> Topic -> IO Int
+    publish :: MVar (SubscriptionTree) -> Topic -> IO Int
     publish mtree topic = foldM (\i _-> do
         tree <- readMVar mtree
         pure $! i + S.size (subscribers topic tree)
       ) 0 [1..100000]
 
     filters :: [Filter]
-    filters = fmap (Filter . fmap T.pack . fmap pure) $ concatMap (\a->[a,a++"#"]) $ Prelude.filter (not . Prelude.null) $ concatMap tails $ inits ['a'..'z']
+    filters = fmap (Filter . fmap (BS.pack . fmap (fromIntegral . fromEnum)) . fmap pure) $ concatMap (\a->[a,a++"#"]) $ Prelude.filter (not . Prelude.null) $ concatMap tails $ inits ['a'..'z']
 
-    subscribeFilters :: MVar (SubscriptionTree Int) -> Int -> IO ()
+    subscribeFilters :: MVar (SubscriptionTree) -> Int -> IO ()
     subscribeFilters mtree i = do
       forM_ filters $ \filtr-> do
         --print $ "SUB " ++ show i
