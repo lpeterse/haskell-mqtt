@@ -10,10 +10,11 @@
 --------------------------------------------------------------------------------
 module Network.MQTT.Server where
 
+import Data.Monoid
 import Data.Int
 import Data.Typeable
 import qualified Data.Map as M
-import qualified Data.Set as S
+import qualified Data.IntSet as S
 import qualified Data.IntMap as IM
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Builder as BS
@@ -25,30 +26,90 @@ import Control.Monad
 import Control.Concurrent
 import Control.Concurrent.MVar
 import Control.Concurrent.Async
-import qualified Control.Concurrent.BoundedChan as BC
 
 import System.Random
 
-import Network.MQTT
-import Network.MQTT.Message
 import Network.MQTT.SubscriptionTree
 
+type SessionKey = Int
+type Message = ()
+
+newtype Server  = Server  { unServer  :: MVar ServerState }
+newtype Session = Session { unSession :: MVar SessionState }
+
+data ServerState
+  =  ServerState
+    { serverMaxSessionKey           :: !SessionKey
+    , serverSubscriptions           :: !SubscriptionTree
+    , serverSessions                :: !(IM.IntMap Session)
+    }
+
+data SessionState
+  =  SessionState
+    { sessionServer                 :: !Server
+    , sessionKey                    :: !SessionKey
+    , sessionSubscriptions          :: !SubscriptionTree
+    }
+
+newSession :: Server -> IO Session
+newSession (Server server) = modifyMVar server $ \serverState-> do
+  let newSessionKey    = serverMaxSessionKey serverState + 1
+  newSession <- Session <$> newMVar SessionState
+       { sessionServer        = Server server
+       , sessionKey           = newSessionKey
+       , sessionSubscriptions = mempty
+       }
+  let newServerState = serverState
+       { serverMaxSessionKey  = newSessionKey
+       , serverSessions       = IM.insert newSessionKey newSession (serverSessions serverState)
+       }
+  pure (newServerState, newSession)
+
+closeSession :: Session -> IO ()
+closeSession (Session session) =
+  withMVar session $ \sessionState->
+    modifyMVar_ (unServer $ sessionServer sessionState) $ \serverState->
+      pure $ serverState
+        { serverSubscriptions = difference (serverSubscriptions serverState)
+                                           (sessionSubscriptions sessionState)
+        , serverSessions      = IM.delete  (sessionKey sessionState)
+                                           (serverSessions serverState)
+        }
+
+subscribeSession :: Session -> [Filter] -> IO ()
+subscribeSession (Session session) filters =
+  modifyMVar_ session $ \sessionState->
+    modifyMVar (unServer $ sessionServer sessionState) $ \serverState-> do
+      let newSubscriptions = foldl (flip $ subscribe $ sessionKey sessionState) mempty filters
+      let newSessionState = sessionState
+           { sessionSubscriptions = newSubscriptions <> sessionSubscriptions sessionState
+           }
+      let newServerState = serverState
+           { serverSubscriptions = newSubscriptions <> serverSubscriptions serverState
+           }
+      pure (newServerState, newSessionState)
+
+deliverSession  :: Session -> Topic -> Message -> IO ()
+deliverSession = undefined
+
+publishServer   :: Server -> Topic -> Message -> IO ()
+publishServer (Server server) topic message = do
+  serverState <- readMVar server
+  forM_ (S.elems $ subscribers topic $ serverSubscriptions serverState) $ \key->
+    case IM.lookup (key :: Int) (serverSessions serverState) of
+      Nothing      -> pure ()
+      Just session -> deliverSession session topic message
+
 {-
-type  SessionIdentifier = Int
+type  SessionKey = Int
 
 data  MqttServerSessions
    =  MqttServerSessions
-      { maxSession    :: SessionIdentifier
+      { maxSession    :: SessionKey
       , subscriptions :: SubscriptionTree
       , session       :: IM.IntMap MqttServerSession
       }
 
-data  MqttServer
-   =  MqttServer
-      { serverMaxSessionIdentifier    :: MVar SessionIdentifier
-      , serverSessions                :: MVar (IM.IntMap MqttServerSession)
-      , serverAuthenticate            :: Maybe (Username, Maybe Password) -> IO (Maybe Identity)
-      }
 
 data  MqttServerSession
     = MqttServerSession
@@ -138,7 +199,7 @@ dispatchConnection server connection =
         processGuaranteedDeliveryQueue = undefined
 
 getSession :: MqttServer -> ClientIdentifier -> IO (MqttServerSession, SessionPresent)
-getSession server clientIdentifier = 
+getSession server clientIdentifier =
   modifyMVar (serverSessions server) $ \ms->
     case M.lookup clientIdentifier ms of
       Just session -> pure (ms, (session, True))
