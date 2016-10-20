@@ -51,19 +51,28 @@ data SessionState
     , sessionSubscriptions          :: !SubscriptionTree
     }
 
+newBroker  :: IO Broker
+newBroker =
+  Broker <$> newMVar BrokerState
+    { brokerMaxSessionKey = 0
+    , brokerSubscriptions = mempty
+    , brokerSessions      = mempty
+    }
+
 newSession :: Broker -> IO Session
-newSession (Broker broker) = modifyMVar broker $ \brokerState-> do
-  let newSessionKey    = brokerMaxSessionKey brokerState + 1
-  newSession <- Session <$> newMVar SessionState
-       { sessionBroker        = Broker broker
-       , sessionKey           = newSessionKey
-       , sessionSubscriptions = mempty
-       }
-  let newBrokerState = brokerState
-       { brokerMaxSessionKey  = newSessionKey
-       , brokerSessions       = IM.insert newSessionKey newSession (brokerSessions brokerState)
-       }
-  pure (newBrokerState, newSession)
+newSession (Broker broker) =
+  modifyMVar broker $ \brokerState-> do
+    let newSessionKey    = brokerMaxSessionKey brokerState + 1
+    newSession <- Session <$> newMVar SessionState
+         { sessionBroker        = Broker broker
+         , sessionKey           = newSessionKey
+         , sessionSubscriptions = mempty
+         }
+    let newBrokerState = brokerState
+         { brokerMaxSessionKey  = newSessionKey
+         , brokerSessions       = IM.insert newSessionKey newSession (brokerSessions brokerState)
+         }
+    pure (newBrokerState, newSession)
 
 closeSession :: Session -> IO ()
 closeSession (Session session) =
