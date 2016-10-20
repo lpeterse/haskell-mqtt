@@ -8,7 +8,7 @@
 -- Maintainer  :  info@lars-petersen.net
 -- Stability   :  experimental
 --------------------------------------------------------------------------------
-module Network.MQTT.Server where
+module Network.MQTT.Broker where
 
 import Data.Monoid
 import Data.Int
@@ -34,86 +34,86 @@ import Network.MQTT.SubscriptionTree
 type SessionKey = Int
 type Message = ()
 
-newtype Server  = Server  { unServer  :: MVar ServerState }
+newtype Broker  = Broker  { unBroker  :: MVar BrokerState }
 newtype Session = Session { unSession :: MVar SessionState }
 
-data ServerState
-  =  ServerState
-    { serverMaxSessionKey           :: !SessionKey
-    , serverSubscriptions           :: !SubscriptionTree
-    , serverSessions                :: !(IM.IntMap Session)
+data BrokerState
+  =  BrokerState
+    { brokerMaxSessionKey           :: !SessionKey
+    , brokerSubscriptions           :: !SubscriptionTree
+    , brokerSessions                :: !(IM.IntMap Session)
     }
 
 data SessionState
   =  SessionState
-    { sessionServer                 :: !Server
+    { sessionBroker                 :: !Broker
     , sessionKey                    :: !SessionKey
     , sessionSubscriptions          :: !SubscriptionTree
     }
 
-newSession :: Server -> IO Session
-newSession (Server server) = modifyMVar server $ \serverState-> do
-  let newSessionKey    = serverMaxSessionKey serverState + 1
+newSession :: Broker -> IO Session
+newSession (Broker broker) = modifyMVar broker $ \brokerState-> do
+  let newSessionKey    = brokerMaxSessionKey brokerState + 1
   newSession <- Session <$> newMVar SessionState
-       { sessionServer        = Server server
+       { sessionBroker        = Broker broker
        , sessionKey           = newSessionKey
        , sessionSubscriptions = mempty
        }
-  let newServerState = serverState
-       { serverMaxSessionKey  = newSessionKey
-       , serverSessions       = IM.insert newSessionKey newSession (serverSessions serverState)
+  let newBrokerState = brokerState
+       { brokerMaxSessionKey  = newSessionKey
+       , brokerSessions       = IM.insert newSessionKey newSession (brokerSessions brokerState)
        }
-  pure (newServerState, newSession)
+  pure (newBrokerState, newSession)
 
 closeSession :: Session -> IO ()
 closeSession (Session session) =
   withMVar session $ \sessionState->
-    modifyMVar_ (unServer $ sessionServer sessionState) $ \serverState->
-      pure $ serverState
-        { serverSubscriptions = difference (serverSubscriptions serverState)
+    modifyMVar_ (unBroker $ sessionBroker sessionState) $ \brokerState->
+      pure $ brokerState
+        { brokerSubscriptions = difference (brokerSubscriptions brokerState)
                                            (sessionSubscriptions sessionState)
-        , serverSessions      = IM.delete  (sessionKey sessionState)
-                                           (serverSessions serverState)
+        , brokerSessions      = IM.delete  (sessionKey sessionState)
+                                           (brokerSessions brokerState)
         }
 
 subscribeSession :: Session -> [Filter] -> IO ()
 subscribeSession (Session session) filters =
   modifyMVar_ session $ \sessionState->
-    modifyMVar (unServer $ sessionServer sessionState) $ \serverState-> do
+    modifyMVar (unBroker $ sessionBroker sessionState) $ \brokerState-> do
       let newSubscriptions = foldl (flip $ subscribe $ sessionKey sessionState) mempty filters
       let newSessionState = sessionState
            { sessionSubscriptions = newSubscriptions <> sessionSubscriptions sessionState
            }
-      let newServerState = serverState
-           { serverSubscriptions = newSubscriptions <> serverSubscriptions serverState
+      let newBrokerState = brokerState
+           { brokerSubscriptions = newSubscriptions <> brokerSubscriptions brokerState
            }
-      pure (newServerState, newSessionState)
+      pure (newBrokerState, newSessionState)
 
 deliverSession  :: Session -> Topic -> Message -> IO ()
 deliverSession = undefined
 
-publishServer   :: Server -> Topic -> Message -> IO ()
-publishServer (Server server) topic message = do
-  serverState <- readMVar server
-  forM_ (S.elems $ subscribers topic $ serverSubscriptions serverState) $ \key->
-    case IM.lookup (key :: Int) (serverSessions serverState) of
+publishBroker   :: Broker -> Topic -> Message -> IO ()
+publishBroker (Broker broker) topic message = do
+  brokerState <- readMVar broker
+  forM_ (S.elems $ subscribers topic $ brokerSubscriptions brokerState) $ \key->
+    case IM.lookup (key :: Int) (brokerSessions brokerState) of
       Nothing      -> pure ()
       Just session -> deliverSession session topic message
 
 {-
 type  SessionKey = Int
 
-data  MqttServerSessions
-   =  MqttServerSessions
+data  MqttBrokerSessions
+   =  MqttBrokerSessions
       { maxSession    :: SessionKey
       , subscriptions :: SubscriptionTree
-      , session       :: IM.IntMap MqttServerSession
+      , session       :: IM.IntMap MqttBrokerSession
       }
 
 
-data  MqttServerSession
-    = MqttServerSession
-      { sessionServer                  :: MqttServer
+data  MqttBrokerSession
+    = MqttBrokerSession
+      { sessionBroker                  :: MqttBroker
       , sessionConnection              :: MVar (Async ())
       , sessionOutputBuffer            :: MVar RawMessage
       , sessionBestEffortQueue         :: BC.BoundedChan Message
@@ -138,7 +138,7 @@ data MConnection
      , mclose   :: IO ()
      }
 
-publish :: MqttServerSession -> Message -> IO ()
+publish :: MqttBrokerSession -> Message -> IO ()
 publish session message = case qos message of
   -- For QoS0 messages, the queue will simply overflow and messages will get
   -- lost. This is the desired behaviour and allowed by contract.
@@ -151,18 +151,18 @@ publish session message = case qos message of
     success <- BC.tryWriteChan (sessionGuaranteedDeliveryQueue session) message
     unless success undefined -- sessionTerminate session
 
-dispatchConnection :: MqttServer -> Connection -> IO ()
-dispatchConnection server connection =
+dispatchConnection :: MqttBroker -> Connection -> IO ()
+dispatchConnection broker connection =
   withConnect $ \clientIdentifier cleanSession keepAlive mwill muser j-> do
     -- Client sent a valid CONNECT packet. Next, authenticate the client.
-    midentity <- serverAuthenticate server muser
+    midentity <- brokerAuthenticate broker muser
     case midentity of
       -- Client authentication failed. Send CONNACK with `NotAuthorized`.
       Nothing -> send $ ConnectAcknowledgement $ Left NotAuthorized
       -- Cient authenticaion successfull.
       Just identity -> do
         -- Retrieve session; create new one if necessary.
-        (session, sessionPresent) <- getSession server clientIdentifier
+        (session, sessionPresent) <- getSession broker clientIdentifier
         -- Now knowing the session state, we can send the success CONNACK.
         send $ ConnectAcknowledgement $ Right sessionPresent
         -- Replace (and shutdown) existing connections.
@@ -178,7 +178,7 @@ dispatchConnection server connection =
     send :: RawMessage -> IO ()
     send  = undefined
 
-    maintainConnection :: MqttServerSession -> IO ()
+    maintainConnection :: MqttBrokerSession -> IO ()
     maintainConnection session =
       processKeepAlive `race_` processInput `race_` processOutput
         `race_` processBestEffortQueue `race_` processGuaranteedDeliveryQueue
@@ -198,15 +198,15 @@ dispatchConnection server connection =
             }
         processGuaranteedDeliveryQueue = undefined
 
-getSession :: MqttServer -> ClientIdentifier -> IO (MqttServerSession, SessionPresent)
-getSession server clientIdentifier =
-  modifyMVar (serverSessions server) $ \ms->
+getSession :: MqttBroker -> ClientIdentifier -> IO (MqttBrokerSession, SessionPresent)
+getSession broker clientIdentifier =
+  modifyMVar (brokerSessions broker) $ \ms->
     case M.lookup clientIdentifier ms of
       Just session -> pure (ms, (session, True))
       Nothing      -> do
         mthread <- newMVar =<< async (pure ())
-        session <- MqttServerSession
-          <$> pure server
+        session <- MqttBrokerSession
+          <$> pure broker
           <*> pure mthread
           <*> newEmptyMVar
           <*> BC.newBoundedChan 1000
