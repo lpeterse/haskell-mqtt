@@ -3,7 +3,7 @@ module Network.MQTT.RoutingTree
   ( Filter (..)
   , Topic (..)
   , RoutingTree ()
-  , RoutingTreeElement ()
+  , RoutingTreeValue ()
   , null
   , empty
   , singleton
@@ -35,7 +35,7 @@ newtype Topic         = Topic (NL.NonEmpty BS.ShortByteString) deriving (Eq, Ord
 
 newtype RoutingTree a = RoutingTree (M.Map BS.ShortByteString (RoutingTreeNode a))
 
-instance (RoutingTreeElement a, Monoid a) => Monoid (RoutingTree a) where
+instance (RoutingTreeValue a, Monoid a) => Monoid (RoutingTree a) where
   mempty  = empty
   mappend = unionWith mappend
 
@@ -45,17 +45,17 @@ empty = RoutingTree mempty
 null  :: RoutingTree a -> Bool
 null  (RoutingTree m) = M.null m
 
-singleton :: RoutingTreeElement a => Filter -> a -> RoutingTree a
+singleton :: RoutingTreeValue a => Filter -> a -> RoutingTree a
 singleton (Filter (x:|xs)) a
   | rtvNull a  = empty
   | otherwise = RoutingTree $ M.singleton x $ case xs of
       []     -> rtvFromTreeAndValue empty a
       (y:ys) -> rtvFromTree (singleton (Filter $ y:|ys) a)
 
-insert :: RoutingTreeElement a => Filter -> a -> RoutingTree a -> RoutingTree a
+insert :: RoutingTreeValue a => Filter -> a -> RoutingTree a -> RoutingTree a
 insert  = insertWith const
 
-insertWith :: RoutingTreeElement a => (a -> a -> a) -> Filter -> a -> RoutingTree a -> RoutingTree a
+insertWith :: RoutingTreeValue a => (a -> a -> a) -> Filter -> a -> RoutingTree a -> RoutingTree a
 insertWith f (Filter (x:|xs)) a (RoutingTree m)
   | rtvNull a  = RoutingTree m
   | otherwise = RoutingTree $ M.alter g x m
@@ -66,7 +66,7 @@ insertWith f (Filter (x:|xs)) a (RoutingTree m)
         Just n  -> rtvFromTreeAndValue (rtvTree n) $ fromMaybe a $ f a <$> rtvValue n
       (y:ys) -> rtvFromTree $ insertWith f (Filter $ y:|ys) a $ fromMaybe empty $ rtvTree <$> mn
 
-adjust :: RoutingTreeElement a => (a -> a) -> Filter -> RoutingTree a -> RoutingTree a
+adjust :: RoutingTreeValue a => (a -> a) -> Filter -> RoutingTree a -> RoutingTree a
 adjust f (Filter (x:|xs)) (RoutingTree m) =
   RoutingTree $ M.update g x m
   where
@@ -84,7 +84,7 @@ adjust f (Filter (x:|xs)) (RoutingTree m) =
           Just v  -> Just $ rtvFromTreeAndValue t' v
           Nothing -> if M.null m' then Nothing else Just (rtvFromTree t')
 
-delete :: RoutingTreeElement a => Filter -> RoutingTree a -> RoutingTree a
+delete :: RoutingTreeValue a => Filter -> RoutingTree a -> RoutingTree a
 delete (Filter (x:|xs)) (RoutingTree m) =
   RoutingTree $ M.update g x m
   where
@@ -97,14 +97,14 @@ delete (Filter (x:|xs)) (RoutingTree m) =
                  | otherwise -> Just $ rtvFromTree t
          Just v -> Just $ rtvFromTreeAndValue t v
 
-map :: (RoutingTreeElement a, RoutingTreeElement b) => (a -> b) -> RoutingTree a -> RoutingTree b
+map :: (RoutingTreeValue a, RoutingTreeValue b) => (a -> b) -> RoutingTree a -> RoutingTree b
 map f (RoutingTree m) = RoutingTree $ fmap g m
     where
       g n = let t = map f (rtvTree n) in case rtvValue n of
         Nothing -> rtvFromTree t
         Just a  -> let b = f a in if rtvNull b then rtvFromTree t else rtvFromTreeAndValue t b
 
-unionWith :: (RoutingTreeElement a) => (a -> a -> a) -> RoutingTree a -> RoutingTree a -> RoutingTree a
+unionWith :: (RoutingTreeValue a) => (a -> a -> a) -> RoutingTree a -> RoutingTree a -> RoutingTree a
 unionWith f (RoutingTree m1) (RoutingTree m2) = RoutingTree (M.unionWith g m1 m2)
   where
     g n1 n2 = h (unionWith f (rtvTree n1) (rtvTree n2)) (rtvValue n1) (rtvValue n2)
@@ -113,7 +113,7 @@ unionWith f (RoutingTree m1) (RoutingTree m2) = RoutingTree (M.unionWith g m1 m2
     h t  _        (Just v2) = rtvFromTreeAndValue t v2
     h t  _         _        = rtvFromTree         t
 
-differenceWith :: RoutingTreeElement a => (a -> a -> a) -> RoutingTree a -> RoutingTree a -> RoutingTree a
+differenceWith :: RoutingTreeValue a => (a -> a -> a) -> RoutingTree a -> RoutingTree a -> RoutingTree a
 differenceWith f (RoutingTree m1) (RoutingTree m2) = RoutingTree (M.differenceWith g m1 m2)
   where
     g n1 n2 = k (differenceWith f (rtvTree n1) (rtvTree n2)) (d (rtvValue n1) (rtvValue n2))
@@ -125,7 +125,7 @@ differenceWith f (RoutingTree m1) (RoutingTree m2) = RoutingTree (M.differenceWi
     k t (Just v) | null t && rtvNull v = Nothing
                  | otherwise           = Just (rtvFromTreeAndValue t v)
 
-subscriptions :: (RoutingTreeElement a, Monoid a) => Topic -> RoutingTree a -> a
+subscriptions :: (RoutingTreeValue a, Monoid a) => Topic -> RoutingTree a -> a
 subscriptions (Topic (x:|[])) (RoutingTree m) =
   case M.lookup x m of
     Nothing -> mempty
@@ -152,7 +152,7 @@ subscriptions (Topic (x:|y:zs)) (RoutingTree m) =
 -- Specialised rtvTree implemenations using data families
 --------------------------------------------------------------------------------
 
-class RoutingTreeElement a where
+class RoutingTreeValue a where
   data RoutingTreeNode a
   rtvNull             :: a -> Bool
   rtvTree             :: RoutingTreeNode a -> RoutingTree a
@@ -160,7 +160,7 @@ class RoutingTreeElement a where
   rtvFromTree         :: RoutingTree a -> RoutingTreeNode a
   rtvFromTreeAndValue :: RoutingTree a -> a -> RoutingTreeNode a
 
-instance RoutingTreeElement S.IntSet where
+instance RoutingTreeValue S.IntSet where
   data RoutingTreeNode S.IntSet
     = IntSetRoutingTreeNode !(RoutingTree S.IntSet) !S.IntSet
   rtvNull                              = S.null
@@ -170,7 +170,7 @@ instance RoutingTreeElement S.IntSet where
   rtvFromTree t                        = IntSetRoutingTreeNode t mempty
   rtvFromTreeAndValue                  = IntSetRoutingTreeNode
 
-instance RoutingTreeElement (Identity a) where
+instance RoutingTreeValue (Identity a) where
   data RoutingTreeNode (Identity a)
     = TreeNode          !(RoutingTree (Identity a))
     | TreeNodeWithValue !(RoutingTree (Identity a)) !(Identity a)
