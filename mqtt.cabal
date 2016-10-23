@@ -5,6 +5,9 @@ license-file:        LICENSE
 author:              Lars Petersen
 maintainer:          info@lars-petersen.net
 category:            Network, IoT
+homepage:            https://github.com/lpeterse/haskell-mqtt
+bug-reports:         https://github.com/lpeterse/haskell-mqtt/issues
+extra-source-files:  README.md
 build-type:          Simple
 cabal-version:       >=1.10
 
