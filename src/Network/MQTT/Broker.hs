@@ -10,7 +10,7 @@
 --------------------------------------------------------------------------------
 module Network.MQTT.Broker where
 
-import Data.Semigroup
+import Data.Maybe
 import Data.Functor.Identity
 import qualified Data.IntSet as S
 import qualified Data.IntMap as IM
@@ -31,12 +31,6 @@ data QosLevel
    | Qos1
    | Qos2
    deriving (Eq, Ord, Show)
-
-instance Semigroup QosLevel where
-  Qos0 <> x    = x
-  x    <> Qos0 = x
-  Qos1 <> x    = x
-  Qos2 <> _    = Qos2
 
 data BrokerState
   =  BrokerState
@@ -139,7 +133,7 @@ deliverSession session topic message =
 publishBroker   :: Broker -> R.Topic -> Message -> IO ()
 publishBroker (Broker broker) topic message = do
   brokerState <- readMVar broker
-  forM_ (S.elems $ R.subscriptions topic $ brokerSubscriptions brokerState) $ \key->
+  forM_ (S.elems $ fromMaybe S.empty $ R.lookupWith S.union topic $ brokerSubscriptions brokerState) $ \key->
     case IM.lookup (key :: Int) (brokerSessions brokerState) of
       Nothing      -> pure ()
       Just session -> deliverSession session topic message

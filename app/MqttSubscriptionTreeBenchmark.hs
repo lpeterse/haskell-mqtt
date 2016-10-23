@@ -1,6 +1,7 @@
 {-# LANGUAGE OverloadedStrings #-}
 module Main (main) where
 
+import Data.Maybe
 import Data.List
 import Data.List.NonEmpty
 import qualified Data.IntSet as S
@@ -36,7 +37,7 @@ main = do
     publish :: MVar (R.RoutingTree S.IntSet) -> R.Topic -> IO Int
     publish mtree topic = foldM (\i _-> do
         tree <- readMVar mtree
-        pure $! i + S.size (R.subscriptions topic tree)
+        pure $! (+) i $ fromMaybe 0 $ S.size <$> R.lookupWith S.union topic tree
       ) 0 [1..100000 :: Int]
 
     filters :: [R.Filter]

@@ -15,7 +15,6 @@ module Network.MQTT.RoutingTree
   , delete
   , unionWith
   , differenceWith
-  , subscriptions
   ) where
 
 import Data.Functor.Identity
@@ -151,29 +150,6 @@ lookupWith f (Topic (x:|y:zs)) (RoutingTree m) =
     h (Just v1) _         = Just v1
     h _         (Just v2) = Just v2
     h _         _         = Nothing
-
-subscriptions :: (RoutingTreeValue a, Monoid a) => Topic -> RoutingTree a -> a
-subscriptions (Topic (x:|[])) (RoutingTree m) =
-  case M.lookup x m of
-    Nothing -> mempty
-    Just n  -> let RoutingTree m' = rtvTree n in fromMaybe mempty $ case M.lookup "#" m' of
-      Nothing -> rtvValue n
-      Just n' -> rtvValue n <> rtvValue n'
-subscriptions (Topic (x:|y:zs)) (RoutingTree m) =
-  matchComponent <> matchSingleLevelWildcard <> matchMultiLevelWildcard
-  where
-    matchComponent =
-      case M.lookup x m of
-        Nothing -> mempty
-        Just n  -> subscriptions (Topic $ y:|zs) (rtvTree n)
-    matchSingleLevelWildcard =
-      case M.lookup "+" m of
-        Nothing -> mempty
-        Just n  -> subscriptions (Topic $ y:|zs) (rtvTree n)
-    matchMultiLevelWildcard =
-      case M.lookup "#" m of
-        Nothing -> mempty
-        Just n  -> fromMaybe mempty $ rtvValue n
 
 --------------------------------------------------------------------------------
 -- Specialised rtvTree implemenations using data families
