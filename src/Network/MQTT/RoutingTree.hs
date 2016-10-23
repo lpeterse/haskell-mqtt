@@ -23,10 +23,11 @@ import Data.Maybe
 import Data.Monoid
 import Data.List.NonEmpty ( NonEmpty(..) )
 import qualified Data.List.NonEmpty as NL
+import qualified Data.Sequence as S
 
 import qualified Data.ByteString.Short as BS
 import qualified Data.Map as M
-import qualified Data.IntSet as S
+import qualified Data.IntSet as IS
 
 import Prelude hiding ( map, null )
 
@@ -163,10 +164,10 @@ class RoutingTreeValue a where
   rtvFromTree         :: RoutingTree a -> RoutingTreeNode a
   rtvFromTreeAndValue :: RoutingTree a -> a -> RoutingTreeNode a
 
-instance RoutingTreeValue S.IntSet where
-  data RoutingTreeNode S.IntSet
-    = IntSetRoutingTreeNode !(RoutingTree S.IntSet) !S.IntSet
-  rtvNull                              = S.null
+instance RoutingTreeValue IS.IntSet where
+  data RoutingTreeNode IS.IntSet
+    = IntSetRoutingTreeNode !(RoutingTree IS.IntSet) !IS.IntSet
+  rtvNull                              = IS.null
   rtvTree (IntSetRoutingTreeNode t _)  = t
   rtvValue (IntSetRoutingTreeNode _ v) | rtvNull v  = Nothing
                                        | otherwise = Just v

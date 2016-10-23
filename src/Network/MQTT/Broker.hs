@@ -12,8 +12,9 @@ module Network.MQTT.Broker where
 
 import Data.Maybe
 import Data.Functor.Identity
-import qualified Data.IntSet as S
+import qualified Data.IntSet as IS
 import qualified Data.IntMap as IM
+import qualified Data.Sequence as S
 
 import Control.Monad
 import Control.Concurrent
@@ -35,7 +36,7 @@ data QosLevel
 data BrokerState
   =  BrokerState
     { brokerMaxSessionKey           :: !SessionKey
-    , brokerSubscriptions           :: !(R.RoutingTree S.IntSet)
+    , brokerSubscriptions           :: !(R.RoutingTree IS.IntSet)
     , brokerSessions                :: !(IM.IntMap Session)
     }
 
@@ -43,10 +44,14 @@ data SessionState
   =  SessionState
     { sessionBroker                 :: !Broker
     , sessionKey                    :: !SessionKey
+    , sessionTerminated             :: !Bool
     , sessionSubscriptions          :: !(R.RoutingTree (Identity QosLevel))
-    , sessionQos0Queue              :: ![(R.Topic, Message)]
-    , sessionQos1Queue              :: ![(R.Topic, Message)]
-    , sessionQos2Queue              :: ![(R.Topic, Message)]
+    , sessionQos0Queue              :: !(S.Seq (R.Topic, Message))
+    , sessionQos0QueueMaxSize       :: !Int
+    , sessionQos1Queue              :: !(S.Seq (R.Topic, Message))
+    , sessionQos1QueueMaxSize       :: !Int
+    , sessionQos2Queue              :: !(S.Seq (R.Topic, Message))
+    , sessionQos2QueueMaxSize       :: !Int
     }
 
 newBroker  :: IO Broker
@@ -62,12 +67,16 @@ createSession (Broker broker) =
   modifyMVar broker $ \brokerState-> do
     let newSessionKey    = brokerMaxSessionKey brokerState + 1
     newSession <- Session <$> newMVar SessionState
-         { sessionBroker        = Broker broker
-         , sessionKey           = newSessionKey
-         , sessionSubscriptions = R.empty
-         , sessionQos0Queue     = []
-         , sessionQos1Queue     = []
-         , sessionQos2Queue     = []
+         { sessionBroker           = Broker broker
+         , sessionKey              = newSessionKey
+         , sessionTerminated       = False
+         , sessionSubscriptions    = R.empty
+         , sessionQos0Queue        = S.empty
+         , sessionQos0QueueMaxSize = 100
+         , sessionQos1Queue        = S.empty
+         , sessionQos1QueueMaxSize = 100
+         , sessionQos2Queue        = S.empty
+         , sessionQos2QueueMaxSize = 100
          }
     let newBrokerState = brokerState
          { brokerMaxSessionKey  = newSessionKey
@@ -81,9 +90,9 @@ closeSession (Session session) =
     modifyMVar_ (unBroker $ sessionBroker sessionState) $ \brokerState->
       pure $ brokerState
         { brokerSubscriptions =
-            R.differenceWith S.difference
+            R.differenceWith IS.difference
               ( brokerSubscriptions brokerState)
-              ( R.map ( const $ S.singleton $ sessionKey sessionState )
+              ( R.map ( const $ IS.singleton $ sessionKey sessionState )
                       ( sessionSubscriptions sessionState ) )
         , brokerSessions =
             IM.delete
@@ -102,7 +111,7 @@ subscribeSession (Session session) filters =
            }
       let newBrokerState = brokerState
            { brokerSubscriptions = foldr
-              (\(x,_)-> R.insertWith S.union x (S.singleton $ sessionKey sessionState))
+              (\(x,_)-> R.insertWith IS.union x (IS.singleton $ sessionKey sessionState))
               (brokerSubscriptions brokerState) filters
            }
       pure (newBrokerState, newSessionState)
@@ -116,7 +125,7 @@ unsubscribeSession (Session session) filters =
            }
       let newBrokerState = brokerState
            { brokerSubscriptions = foldr
-              (R.adjust (S.delete $ sessionKey sessionState))
+              (R.adjust (IS.delete $ sessionKey sessionState))
               (brokerSubscriptions brokerState) filters
            }
       pure (newBrokerState, newSessionState)
@@ -126,14 +135,14 @@ deliverSession session topic message =
   modifyMVar_ (unSession session) $ \sst->
     pure $ case R.lookupWith max topic (sessionSubscriptions sst) of
       Nothing   -> sst
-      Just (Identity Qos0) -> sst { sessionQos0Queue = (topic, message):sessionQos0Queue sst }
-      Just (Identity Qos1) -> sst { sessionQos1Queue = (topic, message):sessionQos1Queue sst }
-      Just (Identity Qos2) -> sst { sessionQos2Queue = (topic, message):sessionQos2Queue sst }
+      Just (Identity Qos0) -> sst { sessionQos0Queue = sessionQos0Queue sst S.|> (topic, message) }
+      Just (Identity Qos1) -> sst { sessionQos1Queue = sessionQos1Queue sst S.|> (topic, message) }
+      Just (Identity Qos2) -> sst { sessionQos2Queue = sessionQos2Queue sst S.|> (topic, message) }
 
 publishBroker   :: Broker -> R.Topic -> Message -> IO ()
 publishBroker (Broker broker) topic message = do
   brokerState <- readMVar broker
-  forM_ (S.elems $ fromMaybe S.empty $ R.lookupWith S.union topic $ brokerSubscriptions brokerState) $ \key->
+  forM_ (IS.elems $ fromMaybe IS.empty $ R.lookupWith IS.union topic $ brokerSubscriptions brokerState) $ \key->
     case IM.lookup (key :: Int) (brokerSessions brokerState) of
       Nothing      -> pure ()
       Just session -> deliverSession session topic message
@@ -158,7 +167,7 @@ data  MqttBrokerSession
       , sessionGuaranteedDeliveryQueue :: BC.BoundedChan Message
       , sessionInboundPacketState      :: MVar (IM.IntMap InboundPacketState)
       , sessionOutboundPacketState     :: MVar (IM.IntMap OutboundPacketState)
-      , sessionSubscriptions           :: S.Set TopicFilter
+      , sessionSubscriptions           :: IS.Set TopicFilter
       }
 
 data  Identity
