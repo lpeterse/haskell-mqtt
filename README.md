@@ -1,24 +1,24 @@
 A pure Haskell MQTT client and server implementation
 ====================================================
 
-# Project goal
+## Project goal
 
-This project aims to supply a rock solid MQTT implementation
-suitable for production use.
+This project aims to supply a rock-solid MQTT implementation suitable for
+production use.
 
 The planned features are:
 
-  - A client implementation with integrated broker which allows
-  one client to be used by several threads/consumers simultaneously.
-  - A server implementation capable of handing and serving several thousands of connections.
+  - A client implementation with integrated broker which allows one client to be
+    used by several threads/consumers simultaneously.
+  - A server implementation capable of handing and serving several thousands of
+    connections.
   - TLS and WebSocket connections.
   - An interface for pluggable authentication and authorization.
   - High test and benchmark coverage.
 
-# Project state
+## Project state
 
-This is a work in progress. A first release is planned for the
-end of 2016.
+This is a work in progress. A first useful release is planned for the end of 2016.
 
 The following has already been implemented:
 
@@ -26,7 +26,7 @@ The following has already been implemented:
   - Client connection handling.
   - High-performance and concurrent message routing (see `RoutingTree`).
 
-# License
+## License
 
 Permission is hereby granted under the terms of the MIT license:
 
