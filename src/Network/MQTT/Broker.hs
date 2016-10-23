@@ -95,6 +95,7 @@ closeSession :: Session -> IO ()
 closeSession (Session session) =
   withMVar session $ \sessionState->
     modifyMVar_ (unBroker $ sessionBroker sessionState) $ \brokerState->
+      tryPutMVar (sessionTermination sst) ()
       pure $ brokerState
         { brokerSubscriptions =
             R.differenceWith IS.difference
@@ -138,37 +139,22 @@ unsubscribeSession (Session session) filters =
       pure (newBrokerState, newSessionState)
 
 -- FIXME: What about downgrading message qos?
-deliverSession  :: Session -> R.Topic -> Message -> IO ()
+deliverSession :: Session -> R.Topic -> Message -> IO ()
 deliverSession session topic message = do
   sst <- readMVar (unSession session)
   case R.lookupWith max topic (sessionSubscriptions sst) of
     Just (Identity Qos0) -> do
       success <- tryWriteChan (sessionQueue0 sst) (topic, message)
-      unless success (terminate sst)
+      unless success (close session)
     Just (Identity Qos1) -> do
       success <- tryWriteChan (sessionQueue1 sst) (topic, message)
-      unless success (terminate sst)
+      unless success (close session)
     Just (Identity Qos2) -> do
       success <- tryWriteChan (sessionQueue2 sst) (topic, message)
-      unless success (terminate sst)
+      unless success (close session)
     _ -> pure ()
-  where
-    terminate sst =
-      modifyMVar_ (unBroker $ sessionBroker sst) $ \bst-> do
-        tryPutMVar (sessionTermination sst) ()
-        pure $! bst
-          { brokerSubscriptions =
-              R.differenceWith IS.difference
-                ( brokerSubscriptions bst)
-                ( R.map ( const $ IS.singleton $ sessionKey sst )
-                        ( sessionSubscriptions sst ) )
-          , brokerSessions =
-              IM.delete
-                ( sessionKey sst )
-                ( brokerSessions bst)
-          }
 
-publishBroker   :: Broker -> R.Topic -> Message -> IO ()
+publishBroker :: Broker -> R.Topic -> Message -> IO ()
 publishBroker (Broker broker) topic message = do
   brokerState <- readMVar broker
   forM_ (IS.elems $ fromMaybe IS.empty $ R.lookupWith IS.union topic $ brokerSubscriptions brokerState) $ \key->
