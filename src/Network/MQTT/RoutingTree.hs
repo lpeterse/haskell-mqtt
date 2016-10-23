@@ -7,6 +7,7 @@ module Network.MQTT.RoutingTree
   , null
   , empty
   , singleton
+  , lookupWith
   , insert
   , insertWith
   , map
@@ -124,6 +125,32 @@ differenceWith f (RoutingTree m1) (RoutingTree m2) = RoutingTree (M.differenceWi
                  | otherwise           = Just (rtvFromTree t)
     k t (Just v) | null t && rtvNull v = Nothing
                  | otherwise           = Just (rtvFromTreeAndValue t v)
+
+lookupWith :: (RoutingTreeValue a) => (a -> a -> a) -> Topic -> RoutingTree a -> Maybe a
+lookupWith f (Topic (x:|[])) (RoutingTree m) =
+  case M.lookup x m of
+    Nothing -> Nothing
+    Just n  -> let RoutingTree m' = rtvTree n in
+      case M.lookup "#" m' of
+        Nothing -> rtvValue n
+        Just n' -> rtvValue n `h` rtvValue n'
+  where
+    h (Just v1) (Just v2) = Just (f v1 v2)
+    h (Just v1) _         = Just v1
+    h _         (Just v2) = Just v2
+    h _         _         = Nothing
+lookupWith f (Topic (x:|y:zs)) (RoutingTree m) =
+  matchComponent `h` matchSingleLevelWildcard `h` matchMultiLevelWildcard
+  where
+    matchComponent =
+      M.lookup x m >>= lookupWith f (Topic $ y:|zs) . rtvTree
+    matchSingleLevelWildcard =
+      M.lookup "+" m >>= lookupWith f (Topic $ y:|zs) . rtvTree
+    matchMultiLevelWildcard = M.lookup "#" m >>= rtvValue
+    h (Just v1) (Just v2) = Just (f v1 v2)
+    h (Just v1) _         = Just v1
+    h _         (Just v2) = Just v2
+    h _         _         = Nothing
 
 subscriptions :: (RoutingTreeValue a, Monoid a) => Topic -> RoutingTree a -> a
 subscriptions (Topic (x:|[])) (RoutingTree m) =

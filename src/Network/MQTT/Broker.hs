@@ -50,6 +50,9 @@ data SessionState
     { sessionBroker                 :: !Broker
     , sessionKey                    :: !SessionKey
     , sessionSubscriptions          :: !(R.RoutingTree (Identity QosLevel))
+    , sessionQos0Queue              :: ![(R.Topic, Message)]
+    , sessionQos1Queue              :: ![(R.Topic, Message)]
+    , sessionQos2Queue              :: ![(R.Topic, Message)]
     }
 
 newBroker  :: IO Broker
@@ -68,6 +71,9 @@ createSession (Broker broker) =
          { sessionBroker        = Broker broker
          , sessionKey           = newSessionKey
          , sessionSubscriptions = R.empty
+         , sessionQos0Queue     = []
+         , sessionQos1Queue     = []
+         , sessionQos2Queue     = []
          }
     let newBrokerState = brokerState
          { brokerMaxSessionKey  = newSessionKey
@@ -122,7 +128,13 @@ unsubscribeSession (Session session) filters =
       pure (newBrokerState, newSessionState)
 
 deliverSession  :: Session -> R.Topic -> Message -> IO ()
-deliverSession = undefined
+deliverSession session topic message =
+  modifyMVar_ (unSession session) $ \sst->
+    pure $ case R.lookupWith max topic (sessionSubscriptions sst) of
+      Nothing   -> sst
+      Just (Identity Qos0) -> sst { sessionQos0Queue = (topic, message):sessionQos0Queue sst }
+      Just (Identity Qos1) -> sst { sessionQos1Queue = (topic, message):sessionQos1Queue sst }
+      Just (Identity Qos2) -> sst { sessionQos2Queue = (topic, message):sessionQos2Queue sst }
 
 publishBroker   :: Broker -> R.Topic -> Message -> IO ()
 publishBroker (Broker broker) topic message = do
@@ -131,7 +143,6 @@ publishBroker (Broker broker) topic message = do
     case IM.lookup (key :: Int) (brokerSessions brokerState) of
       Nothing      -> pure ()
       Just session -> deliverSession session topic message
-
 
 {-
 type  SessionKey = Int
