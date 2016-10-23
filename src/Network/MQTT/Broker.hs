@@ -18,6 +18,8 @@ import qualified Data.Sequence as S
 
 import Control.Monad
 import Control.Concurrent
+import Control.Concurrent.MVar
+import Control.Concurrent.BoundedChan
 
 import qualified Network.MQTT.RoutingTree as R
 
@@ -44,14 +46,11 @@ data SessionState
   =  SessionState
     { sessionBroker                 :: !Broker
     , sessionKey                    :: !SessionKey
-    , sessionTerminated             :: !Bool
+    , sessionTermination            :: !(MVar ())
     , sessionSubscriptions          :: !(R.RoutingTree (Identity QosLevel))
-    , sessionQos0Queue              :: !(S.Seq (R.Topic, Message))
-    , sessionQos0QueueMaxSize       :: !Int
-    , sessionQos1Queue              :: !(S.Seq (R.Topic, Message))
-    , sessionQos1QueueMaxSize       :: !Int
-    , sessionQos2Queue              :: !(S.Seq (R.Topic, Message))
-    , sessionQos2QueueMaxSize       :: !Int
+    , sessionQueue0                 :: !(BoundedChan (R.Topic, Message))
+    , sessionQueue1                 :: !(BoundedChan (R.Topic, Message))
+    , sessionQueue2                 :: !(BoundedChan (R.Topic, Message))
     }
 
 newBroker  :: IO Broker
@@ -62,21 +61,29 @@ newBroker =
     , brokerSessions      = mempty
     }
 
-createSession :: Broker -> IO Session
-createSession (Broker broker) =
+data SessionConfig
+   = SessionConfig
+     { sessionConfigQueue0MaxSize :: Int
+     , sessionConfigQueue1MaxSize :: Int
+     , sessionConfigQueue2MaxSize :: Int
+     }
+
+createSession :: Broker -> SessionConfig -> IO Session
+createSession (Broker broker) config =
   modifyMVar broker $ \brokerState-> do
+    term   <- newEmptyMVar
+    queue0 <- newBoundedChan (sessionConfigQueue0MaxSize config)
+    queue1 <- newBoundedChan (sessionConfigQueue1MaxSize config)
+    queue2 <- newBoundedChan (sessionConfigQueue2MaxSize config)
     let newSessionKey    = brokerMaxSessionKey brokerState + 1
     newSession <- Session <$> newMVar SessionState
          { sessionBroker           = Broker broker
          , sessionKey              = newSessionKey
-         , sessionTerminated       = False
+         , sessionTermination      = term
          , sessionSubscriptions    = R.empty
-         , sessionQos0Queue        = S.empty
-         , sessionQos0QueueMaxSize = 100
-         , sessionQos1Queue        = S.empty
-         , sessionQos1QueueMaxSize = 100
-         , sessionQos2Queue        = S.empty
-         , sessionQos2QueueMaxSize = 100
+         , sessionQueue0           = queue0
+         , sessionQueue1           = queue1
+         , sessionQueue2           = queue2
          }
     let newBrokerState = brokerState
          { brokerMaxSessionKey  = newSessionKey
@@ -130,14 +137,36 @@ unsubscribeSession (Session session) filters =
            }
       pure (newBrokerState, newSessionState)
 
+-- FIXME: What about downgrading message qos?
 deliverSession  :: Session -> R.Topic -> Message -> IO ()
-deliverSession session topic message =
-  modifyMVar_ (unSession session) $ \sst->
-    pure $ case R.lookupWith max topic (sessionSubscriptions sst) of
-      Nothing   -> sst
-      Just (Identity Qos0) -> sst { sessionQos0Queue = sessionQos0Queue sst S.|> (topic, message) }
-      Just (Identity Qos1) -> sst { sessionQos1Queue = sessionQos1Queue sst S.|> (topic, message) }
-      Just (Identity Qos2) -> sst { sessionQos2Queue = sessionQos2Queue sst S.|> (topic, message) }
+deliverSession session topic message = do
+  sst <- readMVar (unSession session)
+  case R.lookupWith max topic (sessionSubscriptions sst) of
+    Just (Identity Qos0) -> do
+      success <- tryWriteChan (sessionQueue0 sst) (topic, message)
+      unless success (terminate sst)
+    Just (Identity Qos1) -> do
+      success <- tryWriteChan (sessionQueue1 sst) (topic, message)
+      unless success (terminate sst)
+    Just (Identity Qos2) -> do
+      success <- tryWriteChan (sessionQueue2 sst) (topic, message)
+      unless success (terminate sst)
+    _ -> pure ()
+  where
+    terminate sst =
+      modifyMVar_ (unBroker $ sessionBroker sst) $ \bst-> do
+        tryPutMVar (sessionTermination sst) ()
+        pure $! bst
+          { brokerSubscriptions =
+              R.differenceWith IS.difference
+                ( brokerSubscriptions bst)
+                ( R.map ( const $ IS.singleton $ sessionKey sst )
+                        ( sessionSubscriptions sst ) )
+          , brokerSessions =
+              IM.delete
+                ( sessionKey sst )
+                ( brokerSessions bst)
+          }
 
 publishBroker   :: Broker -> R.Topic -> Message -> IO ()
 publishBroker (Broker broker) topic message = do

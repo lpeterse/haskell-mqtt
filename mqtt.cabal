@@ -33,7 +33,7 @@ library
                        cereal,
                        tls,
                        network-uri,
-                       deepseq
+                       BoundedChan
   hs-source-dirs:      src
   default-language:    Haskell2010
 
