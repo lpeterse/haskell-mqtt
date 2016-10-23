@@ -17,11 +17,13 @@ library
                        Network.MQTT.IO,
                        Network.MQTT.Message,
                        Network.MQTT.Broker,
+                       Network.MQTT.Topic,
                        Network.Transceiver,
                        Network.MQTT.RoutingTree
   build-depends:       async,
                        base >=4.8 && <5,
                        bytestring,
+                       bytestring-conversion,
                        exceptions,
                        random,
                        text,
