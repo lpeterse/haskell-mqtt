@@ -95,7 +95,7 @@ closeSession :: Session -> IO ()
 closeSession (Session session) =
   withMVar session $ \sessionState->
     modifyMVar_ (unBroker $ sessionBroker sessionState) $ \brokerState->
-      tryPutMVar (sessionTermination sst) ()
+      --tryPutMVar (sessionTermination sst) ()
       pure $ brokerState
         { brokerSubscriptions =
             R.differenceWith IS.difference
@@ -145,13 +145,13 @@ deliverSession session topic message = do
   case R.lookupWith max topic (sessionSubscriptions sst) of
     Just (Identity Qos0) -> do
       success <- tryWriteChan (sessionQueue0 sst) (topic, message)
-      unless success (close session)
+      unless success (closeSession session)
     Just (Identity Qos1) -> do
       success <- tryWriteChan (sessionQueue1 sst) (topic, message)
-      unless success (close session)
+      unless success (closeSession session)
     Just (Identity Qos2) -> do
       success <- tryWriteChan (sessionQueue2 sst) (topic, message)
-      unless success (close session)
+      unless success (closeSession session)
     _ -> pure ()
 
 publishBroker :: Broker -> R.Topic -> Message -> IO ()

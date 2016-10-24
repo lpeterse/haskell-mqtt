@@ -15,6 +15,7 @@ module Network.MQTT.RoutingTree
   , delete
   , unionWith
   , differenceWith
+  , randomTree
   ) where
 
 import Data.Functor.Identity
@@ -22,6 +23,7 @@ import Data.Functor.Identity
 import Data.Maybe
 import Data.Monoid
 import Data.List.NonEmpty ( NonEmpty(..) )
+import Control.Monad ( foldM )
 import qualified Data.List.NonEmpty as NL
 import qualified Data.Sequence as S
 
@@ -29,6 +31,7 @@ import qualified Data.ByteString.Short as BS
 import qualified Data.Map as M
 import qualified Data.IntSet as IS
 
+import System.Random ( randomIO )
 import Prelude hiding ( map, null )
 
 newtype Filter        = Filter (NL.NonEmpty BS.ShortByteString) deriving (Eq, Ord, Show)
@@ -151,6 +154,31 @@ lookupWith f (Topic (x:|y:zs)) (RoutingTree m) =
     h (Just v1) _         = Just v1
     h _         (Just v2) = Just v2
     h _         _         = Nothing
+
+--------------------------------------------------------------------------------
+-- Test functions
+--------------------------------------------------------------------------------
+
+randomTree :: Int -> Int -> IO (RoutingTree IS.IntSet)
+randomTree 0     branching = RoutingTree <$> pure mempty
+randomTree depth branching = RoutingTree <$> foldM (\m e->
+  flip (M.insert e) m <$> (rtvFromTreeAndValue
+  <$> randomTree (depth - 1) branching
+  <*> randomSet :: IO (RoutingTreeNode IS.IntSet))) M.empty (take branching elements)
+  where
+    randomSet :: IO IS.IntSet
+    randomSet = f 0 IS.empty
+      where
+        f :: Int -> IS.IntSet -> IO IS.IntSet
+        f i accum = do
+          p <- randomIO :: IO Double
+          if p < 0.25
+            then pure accum
+            else f (succ i) $! IS.insert i accum
+    elements  :: [BS.ShortByteString]
+    elements =
+      [ "#", "ahsd","ashdkjahsdla","akhd","bdansbdasbd","hfdskjfadshdshf8sd"
+      , "jfdkfs35", "jfds98", "f789sdhvs8vdsvj9sd8jvpsv", "24", "vojs", "+"]
 
 --------------------------------------------------------------------------------
 -- Specialised rtvTree implemenations using data families
