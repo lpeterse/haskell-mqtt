@@ -214,12 +214,22 @@ instance RoutingTreeValue (Identity a) where
   nodeFromTree                         = TreeNode
   nodeFromTreeAndValue                 = TreeNodeWithValue
 
+instance RoutingTreeValue () where
+  data RoutingTreeNode () = UnitNode {-# UNPACK #-} !Int !(RoutingTree ())
+  nodeNull                             = const False
+  nodeTree  (UnitNode _ t)             = t
+  nodeValue (UnitNode 0 _)             = Nothing
+  nodeValue (UnitNode _ _)             = Just ()
+  nodeFromTree                         = UnitNode 0
+  nodeFromTreeAndValue t _             = UnitNode 1 t
+
 instance RoutingTreeValue Bool where
   data RoutingTreeNode Bool = BoolNode {-# UNPACK #-} !Int !(RoutingTree Bool)
-  nodeNull                             = not
+  nodeNull                             = const False
   nodeTree  (BoolNode _ t)             = t
   nodeValue (BoolNode 0 _)             = Just False
-  nodeValue (BoolNode _ _)             = Just True
-  nodeFromTree                         = BoolNode 0
+  nodeValue (BoolNode 1 _)             = Just True
+  nodeValue (BoolNode _ _)             = Nothing
+  nodeFromTree                         = BoolNode 2
   nodeFromTreeAndValue t False         = BoolNode 0 t
   nodeFromTreeAndValue t True          = BoolNode 1 t
