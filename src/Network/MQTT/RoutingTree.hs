@@ -157,9 +157,10 @@ lookupWith f (Topic (x:|y:zs)) (RoutingTree m) =
 
 -- | Match a topic.
 --
---   The function returns true iff the tree contains at least one value at the
---   nodes that are matched by the topic (including this indirectly matched
---   by wildcard characters like `+` and `#`).
+--   The function returns true iff the tree contains at least one node that
+--   matches the topic _and_ contains a value (including nodes that are
+--   indirectly matched by wildcard characters like `+` and `#` as described
+--   in the MQTT specification).
 matchTopic :: RoutingTreeValue a => Topic -> RoutingTree a -> Bool
 matchTopic = undefined
 
@@ -167,6 +168,8 @@ matchTopic = undefined
 --
 --   The function returns true iff the tree contains the path represented by the
 --   filter and the terminal node contains a value (`nodeNull n == False`).
+--   Wildcard characters like `#` and `+` are not treated special but are
+--   matched as is against the filter components.
 matchFilter :: RoutingTreeValue a => Filter -> RoutingTree a -> Bool
 matchFilter = undefined
 
