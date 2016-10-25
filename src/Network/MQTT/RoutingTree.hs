@@ -230,6 +230,6 @@ instance RoutingTreeValue Bool where
   nodeValue (BoolNode 0 _)             = Just False
   nodeValue (BoolNode 1 _)             = Just True
   nodeValue (BoolNode _ _)             = Nothing
-  nodeFromTree                         = BoolNode 2
+  nodeFromTree                         = BoolNode (-1)
   nodeFromTreeAndValue t False         = BoolNode 0 t
   nodeFromTreeAndValue t True          = BoolNode 1 t
