@@ -20,7 +20,7 @@ class Authenticator a where
 data Principal
    = Principal
      { principalIdentity        :: BS.ByteString
-     , principalReceiveFilter   :: R.RoutingTree Bool
-     , principalPublishFilter   :: R.RoutingTree Bool
-     , principalSubscribeFilter :: R.RoutingTree Bool
+     , principalReceiveFilter   :: R.RoutingTree ()
+     , principalPublishFilter   :: R.RoutingTree ()
+     , principalSubscribeFilter :: R.RoutingTree ()
      }
