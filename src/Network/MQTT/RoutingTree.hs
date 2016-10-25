@@ -155,6 +155,21 @@ lookupWith f (Topic (x:|y:zs)) (RoutingTree m) =
     h _         (Just v2) = Just v2
     h _         _         = Nothing
 
+-- | Match a topic.
+--
+--   The function returns true iff the tree contains at least one value at the
+--   nodes that are matched by the topic (including this indirectly matched
+--   by wildcard characters like `+` and `#`).
+matchTopic :: RoutingTreeValue a => Topic -> RoutingTree a -> Bool
+matchTopic = undefined
+
+-- | Match a filter.
+--
+--   The function returns true iff the tree contains the path represented by the
+--   filter and the terminal node contains a value (`nodeNull n == False`).
+matchFilter :: RoutingTreeValue a => Filter -> RoutingTree a -> Bool
+matchFilter = undefined
+
 --------------------------------------------------------------------------------
 -- Test functions
 --------------------------------------------------------------------------------
