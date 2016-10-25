@@ -44,15 +44,15 @@ instance (RoutingTreeValue a, Monoid a) => Monoid (RoutingTree a) where
   mappend = unionWith mappend
 
 empty :: RoutingTree a
-empty = RoutingTree mempty
+empty  = RoutingTree mempty
 
 null  :: RoutingTree a -> Bool
-null  (RoutingTree m) = M.null m
+null (RoutingTree m) = M.null m
 
 singleton :: RoutingTreeValue a => Filter -> a -> RoutingTree a
 singleton (Filter (x:|xs)) a
   | nodeNull a  = empty
-  | otherwise = RoutingTree $ M.singleton x $ case xs of
+  | otherwise   = RoutingTree $ M.singleton x $ case xs of
       []     -> nodeFromTreeAndValue empty a
       (y:ys) -> nodeFromTree (singleton (Filter $ y:|ys) a)
 
@@ -62,7 +62,7 @@ insert  = insertWith const
 insertWith :: RoutingTreeValue a => (a -> a -> a) -> Filter -> a -> RoutingTree a -> RoutingTree a
 insertWith f (Filter (x:|xs)) a (RoutingTree m)
   | nodeNull a  = RoutingTree m
-  | otherwise = RoutingTree $ M.alter g x m
+  | otherwise   = RoutingTree $ M.alter g x m
   where
     g mn = Just $ case xs of
       []     -> case mn of
@@ -121,13 +121,13 @@ differenceWith :: RoutingTreeValue a => (a -> a -> a) -> RoutingTree a -> Routin
 differenceWith f (RoutingTree m1) (RoutingTree m2) = RoutingTree (M.differenceWith g m1 m2)
   where
     g n1 n2 = k (differenceWith f (nodeTree n1) (nodeTree n2)) (d (nodeValue n1) (nodeValue n2))
-    d (Just v1) (Just v2)              = Just (f v1 v2)
-    d (Just v1)  _                     = Just v1
-    d  _         _                     = Nothing
-    k t Nothing  | null t              = Nothing
-                 | otherwise           = Just (nodeFromTree t)
+    d (Just v1) (Just v2)               = Just (f v1 v2)
+    d (Just v1)  _                      = Just v1
+    d  _         _                      = Nothing
+    k t Nothing  | null t               = Nothing
+                 | otherwise            = Just (nodeFromTree t)
     k t (Just v) | null t && nodeNull v = Nothing
-                 | otherwise           = Just (nodeFromTreeAndValue t v)
+                 | otherwise            = Just (nodeFromTreeAndValue t v)
 
 lookupWith :: (RoutingTreeValue a) => (a -> a -> a) -> Topic -> RoutingTree a -> Maybe a
 lookupWith f (Topic (x:|[])) (RoutingTree m) =
@@ -198,7 +198,7 @@ instance RoutingTreeValue IS.IntSet where
   nodeNull                              = IS.null
   nodeTree (IntSetRoutingTreeNode t _)  = t
   nodeValue (IntSetRoutingTreeNode _ v) | nodeNull v = Nothing
-                                       | otherwise = Just v
+                                        | otherwise = Just v
   nodeFromTree t                        = IntSetRoutingTreeNode t mempty
   nodeFromTreeAndValue                  = IntSetRoutingTreeNode
 
