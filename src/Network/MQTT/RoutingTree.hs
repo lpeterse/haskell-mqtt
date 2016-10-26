@@ -189,7 +189,7 @@ matchTopic (Topic (x:|y:zs)) (RoutingTree m) =
 --   matched as is against the filter components.
 matchFilter :: RoutingTreeValue a => Filter -> RoutingTree a -> Bool
 matchFilter (Filter (x:|[])) (RoutingTree m) =
-  isJust (nodeValue =<< M.lookup x m)
+  fromMaybe False $ not . nodeNull <$> ( nodeValue =<< M.lookup x m )
 matchFilter (Filter (x:|(y:zs))) (RoutingTree m) =
   fromMaybe False $ matchFilter (Filter $ y:|zs) . nodeTree <$> M.lookup x m
 
