@@ -112,7 +112,8 @@ module Network.MQTT.RoutingTree
 --   defining the data family <a>RoutingTreeNode</a>. This a performance
 --   and size optimization to avoid unnecessary boxing and case
 --   distinction.
-data RoutingTree a
+newtype RoutingTree a
+RoutingTree :: (Map ShortByteString (RoutingTreeNode a)) -> RoutingTree a
 class RoutingTreeValue a where data RoutingTreeNode a where {
     data family RoutingTreeNode a;
 }
@@ -162,7 +163,6 @@ adjust :: RoutingTreeValue a => (a -> a) -> Filter -> RoutingTree a -> RoutingTr
 delete :: RoutingTreeValue a => Filter -> RoutingTree a -> RoutingTree a
 unionWith :: (RoutingTreeValue a) => (a -> a -> a) -> RoutingTree a -> RoutingTree a -> RoutingTree a
 differenceWith :: RoutingTreeValue a => (a -> a -> a) -> RoutingTree a -> RoutingTree a -> RoutingTree a
-randomTree :: Int -> Int -> IO (RoutingTree IntSet)
 instance (Network.MQTT.RoutingTree.RoutingTreeValue a, GHC.Base.Monoid a) => GHC.Base.Monoid (Network.MQTT.RoutingTree.RoutingTree a)
 instance Network.MQTT.RoutingTree.RoutingTreeValue Data.IntSet.Base.IntSet
 instance Network.MQTT.RoutingTree.RoutingTreeValue (Data.Functor.Identity.Identity a)
@@ -213,21 +213,55 @@ instance GHC.Show.Show Network.MQTT.Broker.QosLevel
 instance GHC.Classes.Ord Network.MQTT.Broker.QosLevel
 instance GHC.Classes.Eq Network.MQTT.Broker.QosLevel
 
-module Network.MQTT.Auth
-class Credentials c
-credentialSecure :: Credentials c => c -> Bool
-credentialUsername :: Credentials c => c -> Maybe Text
-credentialPassword :: Credentials c => c -> Maybe ByteString
-credentialCertificate :: Credentials c => c -> Maybe Certificate
-credentialHttpHeaders :: Credentials c => c -> [(CI ByteString, ByteString)]
+module Network.MQTT.Authentication
+
+-- | An instance of <a>Authenticator</a> is able to determine a
+--   <a>Principal</a>s identity from authentication <a>Credentials</a>.
 class Authenticator a
+
+-- | Try to determine a <a>Principal</a>s identity from authentication
+--   <a>Credentials</a>.
 authenticate :: (Authenticator a, Credentials c) => a -> c -> IO (Maybe Principal)
+
+-- | This class defines how credentials that have been gathered from a
+--   connection request look like (at least). An <a>Authenticator</a> may
+--   use whatever information it finds suitable to authenticate the
+--   <a>Principal</a>.
+class Credentials c where credentialsSecure = const False credentialsUsername = const Nothing credentialsPassword = const Nothing credentialsX509CertificateChain = const [] credentialsWebSocketRequestHeaders = const []
+
+-- | Is this connection secure in terms of <a>Transport Layer Security</a>?
+credentialsSecure :: Credentials c => c -> Bool
+
+-- | The username supplied with the MQTT handshake.
+credentialsUsername :: Credentials c => c -> Maybe Text
+
+-- | The password supplied with the MQTT handshake.
+credentialsPassword :: Credentials c => c -> Maybe ByteString
+
+-- | An <a>X.509 certificate</a> chain supplied by the peer. It can be
+--   assumed that the transport layer implementation already verified that
+--   the peer owns the corresponding private key. The validation of the
+--   certificate claims (including certificate chain checking) <i>must</i>
+--   be performed by the <a>Authenticator</a>.
+credentialsX509CertificateChain :: Credentials c => c -> [Certificate]
+
+-- | The HTTP request headers in case the client connected via
+--   <a>WebSocket</a>.
+credentialsWebSocketRequestHeaders :: Credentials c => c -> [(CI ByteString, ByteString)]
+
+-- | The result of a call to <a>authenticate</a>.
 data Principal
-Principal :: ByteString -> RoutingTree () -> RoutingTree () -> RoutingTree () -> Principal
+Principal :: ByteString -> Principal
 [principalIdentity] :: Principal -> ByteString
-[principalReceiveFilter] :: Principal -> RoutingTree ()
-[principalPublishFilter] :: Principal -> RoutingTree ()
-[principalSubscribeFilter] :: Principal -> RoutingTree ()
+
+module Network.MQTT.Authorization
+class Authorizer a
+authorize :: Authorizer a => a -> Principal -> IO Permissions
+data Permissions
+Permissions :: RoutingTree () -> RoutingTree () -> RoutingTree () -> Permissions
+[principalReceiveFilter] :: Permissions -> RoutingTree ()
+[principalPublishFilter] :: Permissions -> RoutingTree ()
+[principalSubscribeFilter] :: Permissions -> RoutingTree ()
 
 module Network.MQTT.Message
 newtype ClientIdentifier

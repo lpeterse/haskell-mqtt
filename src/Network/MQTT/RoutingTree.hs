@@ -1,7 +1,7 @@
 {-# LANGUAGE TypeFamilies, FlexibleInstances, OverloadedStrings #-}
 module Network.MQTT.RoutingTree (
   -- * RoutingTree
-    RoutingTree ()
+    RoutingTree (..)
   , RoutingTreeValue (..)
   -- ** null
   , null
@@ -29,25 +29,21 @@ module Network.MQTT.RoutingTree (
   , unionWith
   -- ** differenceWith
   , differenceWith
-  -- ** randomTree
-  , randomTree
   ) where
 
-import Data.Functor.Identity
+import Prelude hiding ( map, null )
 
 import Data.Maybe
 import Data.Monoid
 import Data.List.NonEmpty ( NonEmpty(..) )
-import Control.Monad ( foldM )
+import Data.Functor.Identity
+
 import qualified Data.List.NonEmpty as NL
 import qualified Data.Sequence as S
 
 import qualified Data.ByteString.Short as BS
 import qualified Data.Map as M
 import qualified Data.IntSet as IS
-
-import System.Random ( randomIO )
-import Prelude hiding ( map, null )
 
 import Network.MQTT.TopicFilter
 
@@ -249,32 +245,6 @@ hashElement  = "#"
 
 plusElement :: BS.ShortByteString
 plusElement  = "+"
-
---------------------------------------------------------------------------------
--- Test functions
---------------------------------------------------------------------------------
-
-randomTree :: Int -> Int -> IO (RoutingTree IS.IntSet)
-randomTree 0     branching = RoutingTree <$> pure mempty
-randomTree depth branching = RoutingTree <$> foldM (\m e->
-  flip (M.insert e) m <$> (nodeFromTreeAndValue
-  <$> randomTree (depth - 1) branching
-  <*> randomSet :: IO (RoutingTreeNode IS.IntSet))) M.empty
-        (take branching randomTreeElements)
-  where
-    randomSet :: IO IS.IntSet
-    randomSet = f 0 IS.empty
-      where
-        f :: Int -> IS.IntSet -> IO IS.IntSet
-        f i accum = do
-          p <- randomIO :: IO Double
-          if p < 0.25
-            then pure accum
-            else f (succ i) $! IS.insert i accum
-
-randomTreeElements  :: [BS.ShortByteString]
-randomTreeElements =
-  [ "a","b","c","d","e","f","g","h","i","j","k","l","m" ]
 
 --------------------------------------------------------------------------------
 -- Specialised nodeTree implemenations using data families

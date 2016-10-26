@@ -16,7 +16,8 @@ library
   ---fprof-auto -Wall
   exposed-modules:     Control.Concurrent.Broadcast,
                        Network.MQTT,
-                       Network.MQTT.Auth,
+                       Network.MQTT.Authentication,
+                       Network.MQTT.Authorization,
                        Network.MQTT.Client,
                        Network.MQTT.IO,
                        Network.MQTT.Message,
@@ -29,7 +30,6 @@ library
                        base >=4.8 && <5,
                        bytestring,
                        exceptions,
-                       random,
                        text,
                        containers,
                        socket,
@@ -38,7 +38,8 @@ library
                        network-uri,
                        BoundedChan,
                        case-insensitive,
-                       x509
+                       x509,
+                       random
   hs-source-dirs:      src
   default-language:    Haskell2010
 
@@ -87,7 +88,8 @@ executable MqttTreeSizeTest
       base,
       mqtt,
       containers,
-      deepseq
+      bytestring,
+      random
     ghc-options: -O2 -rtsopts
     ---prof -fprof-auto -rtsopts
     default-language: Haskell2010
