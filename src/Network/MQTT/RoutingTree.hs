@@ -169,16 +169,17 @@ matchTopic (Topic (x:|[])) (RoutingTree m) =
   -- existence.
   -- A '+' node on the other hand may contain subtrees and may not carry a value
   -- itself. This needs to be checked.
-  M.member "#" m || isJust (M.lookup "+" m >>= nodeValue)
+  M.member hashElement m || isJust (nodeValue =<< M.lookup plusElement m)
 matchTopic (Topic (x:|y:zs)) (RoutingTree m) =
   -- Same is true for '#' node here. In case no '#' hash node is present it is
   -- first tried to match the exact topic and then to match any '+' node.
-  M.member "#" m || case M.lookup x m of
+  M.member hashElement m || case M.lookup x m of
       Nothing -> matchPlus
       Just n  -> matchTopic (Topic (y:|zs)) (nodeTree n) || matchPlus
   where
     -- A '+' node matches any topic element.
-    matchPlus = fromMaybe False $ matchTopic (Topic (y:|zs)) . nodeTree <$> M.lookup "+" m
+    matchPlus = fromMaybe False
+              $ matchTopic (Topic (y:|zs)) . nodeTree <$> M.lookup plusElement m
 
 -- | Match a filter.
 --
@@ -188,15 +189,19 @@ matchTopic (Topic (x:|y:zs)) (RoutingTree m) =
 --   matched as is against the filter components.
 matchFilter :: RoutingTreeValue a => Filter -> RoutingTree a -> Bool
 matchFilter (Filter (x:|[])) (RoutingTree m) =
-  case M.lookup x m of
-    Nothing -> False
-    Just n  -> case nodeValue n of
-      Nothing -> False
-      Just v  -> not (nodeNull v)
+  isJust (nodeValue =<< M.lookup x m)
 matchFilter (Filter (x:|(y:zs))) (RoutingTree m) =
-  case M.lookup x m of
-    Nothing -> False
-    Just n  -> matchFilter (Filter $ y:|zs) (nodeTree n)
+  fromMaybe False $ matchFilter (Filter $ y:|zs) . nodeTree <$> M.lookup x m
+
+--------------------------------------------------------------------------------
+-- Internal Utilities
+--------------------------------------------------------------------------------
+
+hashElement :: BS.ShortByteString
+hashElement  = "#"
+
+plusElement :: BS.ShortByteString
+plusElement  = "+"
 
 --------------------------------------------------------------------------------
 -- Test functions
