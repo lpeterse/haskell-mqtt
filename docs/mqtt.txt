@@ -23,6 +23,11 @@ class Transport a => ClientTransport a where data Client a data ClientConfig a w
 newClientFromConfig :: ClientTransport a => ClientConfig a -> IO (Client a)
 connectClient :: ClientTransport a => Client a -> IO ()
 disconnecDisconnect :: ClientTransport a => Client a -> IO ()
+class Transport a => AddressTranslationTansport a where data AddressInfo a data AddressTranslationException a where {
+    data family AddressInfo a;
+    data family AddressTranslationException a;
+}
+getAddressInfo :: AddressTranslationTansport a => ByteString -> ByteString -> IO (NonEmpty (AddressInfo a))
 instance (System.Socket.Internal.Socket.Family f, System.Socket.Internal.Socket.Type t) => Network.MQTT.Transport.Transport (System.Socket.Internal.Socket.Socket f t System.Socket.Protocol.TCP.TCP)
 instance GHC.Show.Show (Network.MQTT.Transport.TransportException (System.Socket.Internal.Socket.Socket f t System.Socket.Protocol.TCP.TCP))
 instance (System.Socket.Internal.Socket.Family f, System.Socket.Internal.Socket.Type t) => Network.MQTT.Transport.ServerTransport (System.Socket.Internal.Socket.Socket f t System.Socket.Protocol.TCP.TCP)

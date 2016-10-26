@@ -4,6 +4,8 @@ module Network.MQTT.Transport where
 import           Control.Exception
 
 import           Data.Typeable
+import qualified Data.ByteString as BS
+import qualified Data.List.NonEmpty as NL
 
 import qualified System.Socket as S
 import qualified System.Socket.Protocol.TCP as S
@@ -24,6 +26,11 @@ class Transport a => ClientTransport a where
   newClientFromConfig :: ClientConfig a -> IO (Client a)
   connectClient       :: Client a -> IO ()
   disconnecDisconnect :: Client a -> IO ()
+
+class Transport a => AddressTranslationTansport a where
+  data AddressInfo a
+  data AddressTranslationException a
+  getAddressInfo :: BS.ByteString -> BS.ByteString -> IO (NL.NonEmpty (AddressInfo a))
 
 instance (S.Family f, S.Type t) => Transport (S.Socket f t S.TCP) where
   data TransportException (S.Socket f t S.TCP) = TcpSocketTransportException S.SocketException
