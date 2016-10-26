@@ -13,14 +13,14 @@ class Transport a => ServerTransport a where data Server a data ServerConfigurat
     data family Server a;
     data family ServerConfiguration a;
 }
-server :: ServerTransport a => ServerConfiguration a -> IO (Server a)
+serverFromConfig :: ServerTransport a => ServerConfiguration a -> IO (Server a)
 serverStart :: ServerTransport a => Server a -> IO ()
 serverStop :: ServerTransport a => Server a -> IO ()
 class Transport a => ClientTransport a where data Client a data ClientConfiguration a where {
     data family Client a;
     data family ClientConfiguration a;
 }
-client :: ClientTransport a => ClientConfiguration a -> IO (Client a)
+clientFromConfig :: ClientTransport a => ClientConfiguration a -> IO (Client a)
 clientConnect :: ClientTransport a => Client a -> IO ()
 clientDisconnect :: ClientTransport a => Client a -> IO ()
 instance (System.Socket.Internal.Socket.Family f, System.Socket.Internal.Socket.Type t) => Network.MQTT.Transport.Transport (System.Socket.Internal.Socket.Socket f t System.Socket.Protocol.TCP.TCP)
