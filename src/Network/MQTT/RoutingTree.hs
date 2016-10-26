@@ -169,7 +169,8 @@ matchTopic (Topic (x:|[])) (RoutingTree m) =
   -- existence.
   -- A '+' node on the other hand may contain subtrees and may not carry a value
   -- itself. This needs to be checked.
-  M.member hashElement m || isJust (nodeValue =<< M.lookup plusElement m)
+  M.member hashElement m || fromMaybe False
+    ( not . nodeNull <$> ( nodeValue =<< M.lookup plusElement m ) )
 matchTopic (Topic (x:|y:zs)) (RoutingTree m) =
   -- Same is true for '#' node here. In case no '#' hash node is present it is
   -- first tried to match the exact topic and then to match any '+' node.
