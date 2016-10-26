@@ -1,0 +1,28 @@
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd"><html xmlns="http://www.w3.org/1999/xhtml"><head><link rel="stylesheet" type="text/css" href="style.css" /><script type="text/javascript" src="highlight.js"></script></head><body><pre><span class="hs-comment">--------------------------------------------------------------------------------</span><span>
+</span><a name="line-2"></a><span class="hs-comment">-- |</span><span>
+</span><a name="line-3"></a><span class="hs-comment">-- Module      :  Network.MQTT</span><span>
+</span><a name="line-4"></a><span class="hs-comment">-- Copyright   :  (c) Lars Petersen 2016</span><span>
+</span><a name="line-5"></a><span class="hs-comment">-- License     :  MIT</span><span>
+</span><a name="line-6"></a><span class="hs-comment">--</span><span>
+</span><a name="line-7"></a><span class="hs-comment">-- Maintainer  :  info@lars-petersen.net</span><span>
+</span><a name="line-8"></a><span class="hs-comment">-- Stability   :  experimental</span><span>
+</span><a name="line-9"></a><span class="hs-comment">--------------------------------------------------------------------------------</span><span>
+</span><a name="line-10"></a><span class="hs-pragma">{-# LANGUAGE TypeFamilies #-}</span><span>
+</span><a name="line-11"></a><span class="hs-keyword">module</span><span> </span><span class="hs-identifier">Network</span><span class="hs-operator">.</span><span class="hs-identifier">MQTT</span><span> </span><span class="hs-keyword">where</span><span>
+</span><a name="line-12"></a><span>
+</span><a name="line-13"></a><span class="hs-keyword">import</span><span> </span><span class="hs-identifier">Control</span><span class="hs-operator">.</span><span class="hs-identifier">Exception</span><span>
+</span><a name="line-14"></a><span>
+</span><a name="line-15"></a><span class="hs-keyword">import</span><span> </span><span class="hs-identifier">Data</span><span class="hs-operator">.</span><span class="hs-identifier">Typeable</span><span>
+</span><a name="line-16"></a><span class="hs-keyword">import</span><span> </span><span class="hs-keyword">qualified</span><span> </span><span class="hs-identifier">Data</span><span class="hs-operator">.</span><span class="hs-identifier">ByteString</span><span> </span><span class="hs-keyword">as</span><span> </span><span class="hs-identifier">BS</span><span>
+</span><a name="line-17"></a><span>
+</span><a name="line-18"></a><span class="hs-keyword">import</span><span> </span><a href="Network.MQTT.Message.html"><span class="hs-identifier">Network</span><span class="hs-operator">.</span><span class="hs-identifier">MQTT</span><span class="hs-operator">.</span><span class="hs-identifier">Message</span></a><span>
+</span><a name="line-19"></a><span>
+</span><a name="line-20"></a><span class="hs-keyword">data</span><span> </span><a name="Message"><a href="Network.MQTT.html#Message"><span class="hs-identifier">Message</span></a></a><span> </span><span class="hs-glyph">=</span><span> </span><a name="Message"><a href="Network.MQTT.html#Message"><span class="hs-identifier">Message</span></a></a><span>
+</span><a name="line-21"></a><span>     </span><span class="hs-special">{</span><span> </span><a name="topic"><a href="Network.MQTT.html#topic"><span class="hs-identifier">topic</span></a></a><span>     </span><span class="hs-glyph">::</span><span> </span><a href="Network.MQTT.Message.html#Topic"><span class="hs-identifier hs-type">Topic</span></a><span>
+</span><a name="line-22"></a><span>     </span><span class="hs-special">,</span><span> </span><a name="qos"><a href="Network.MQTT.html#qos"><span class="hs-identifier">qos</span></a></a><span>       </span><span class="hs-glyph">::</span><span> </span><a href="Network.MQTT.Message.html#QoS"><span class="hs-identifier hs-type">QoS</span></a><span>
+</span><a name="line-23"></a><span>     </span><span class="hs-special">,</span><span> </span><a name="retained"><a href="Network.MQTT.html#retained"><span class="hs-identifier">retained</span></a></a><span>  </span><span class="hs-glyph">::</span><span> </span><span class="hs-identifier hs-type">Bool</span><span>
+</span><a name="line-24"></a><span>     </span><span class="hs-special">,</span><span> </span><a name="duplicate"><a href="Network.MQTT.html#duplicate"><span class="hs-identifier">duplicate</span></a></a><span> </span><span class="hs-glyph">::</span><span> </span><span class="hs-identifier hs-type">Bool</span><span>
+</span><a name="line-25"></a><span>     </span><span class="hs-special">,</span><span> </span><a name="payload"><a href="Network.MQTT.html#payload"><span class="hs-identifier">payload</span></a></a><span>   </span><span class="hs-glyph">::</span><span> </span><a href="Network.MQTT.Message.html#Payload"><span class="hs-identifier hs-type">Payload</span></a><span>
+</span><a name="line-26"></a><span>     </span><span class="hs-special">}</span><span>
+</span><a name="line-27"></a><span>   </span><span class="hs-keyword">deriving</span><span> </span><span class="hs-special">(</span><span class="hs-identifier hs-type">Eq</span><span class="hs-special">,</span><span> </span><span class="hs-identifier hs-type">Ord</span><span class="hs-special">,</span><span> </span><span class="hs-identifier hs-type">Show</span><span class="hs-special">)</span><span>
+</span><a name="line-28"></a></pre></body></html>

@@ -1,20 +1,35 @@
 {-# LANGUAGE TypeFamilies, FlexibleInstances, OverloadedStrings #-}
-module Network.MQTT.RoutingTree
-  ( Filter (..)
-  , Topic (..)
-  , RoutingTree ()
-  , RoutingTreeValue ()
+module Network.MQTT.RoutingTree (
+  -- * RoutingTree
+    RoutingTree ()
+  , RoutingTreeValue (..)
+  -- ** null
   , null
+  -- ** empty
   , empty
+  -- ** singleton
   , singleton
+  -- ** lookupWith
   , lookupWith
+  -- ** matchTopic
+  , matchTopic
+  -- ** matchFilter
+  , matchFilter
+  -- ** insert
   , insert
+  -- ** insertWith
   , insertWith
+  -- ** map
   , map
+  -- ** adjust
   , adjust
+  -- ** delete
   , delete
+  -- ** unionWith
   , unionWith
+  -- ** differenceWith
   , differenceWith
+  -- ** randomTree
   , randomTree
   ) where
 
@@ -36,7 +51,26 @@ import Prelude hiding ( map, null )
 
 import Network.MQTT.TopicFilter
 
+-- | The `RoutingTree` is a map-like data structure designed to hold elements
+--   that can efficiently be queried according to the matching rules specified
+--   by MQTT.
+--   The primary purpose is to manage client subscriptions, but it can just
+--   as well be used to manage permissions etc.
+--
+--   The tree consists of nodes that may or may not contain values. The edges
+--   are filter components. As some value types have the concept of a null
+--   (i.e. an empty set) the `RoutingTreeValue` is a class defining the data
+--   family `RoutingTreeNode`. This a performance and size optimization to avoid
+--   unnecessary boxing and case distinction.
 newtype RoutingTree a = RoutingTree (M.Map BS.ShortByteString (RoutingTreeNode a))
+
+class RoutingTreeValue a where
+  data RoutingTreeNode a
+  nodeNull             :: a -> Bool
+  nodeTree             :: RoutingTreeNode a -> RoutingTree a
+  nodeValue            :: RoutingTreeNode a -> Maybe a
+  nodeFromTree         :: RoutingTree a -> RoutingTreeNode a
+  nodeFromTreeAndValue :: RoutingTree a -> a -> RoutingTreeNode a
 
 instance (RoutingTreeValue a, Monoid a) => Monoid (RoutingTree a) where
   mempty  = empty
@@ -155,10 +189,10 @@ lookupWith f (Topic (x:|y:zs)) (RoutingTree m) =
       M.lookup plusElement m >>= lookupWith f (Topic $ y:|zs) . nodeTree
     matchMultiLevelWildcard = M.lookup hashElement m >>= nodeValue
 
--- | Match a topic.
+-- | Match a `Topic` against a `RoutingTree`.
 --
 --   The function returns true iff the tree contains at least one node that
---   matches the topic _and_ contains a value (including nodes that are
+--   matches the topic /and/ contains a value (including nodes that are
 --   indirectly matched by wildcard characters like `+` and `#` as described
 --   in the MQTT specification).
 matchTopic :: RoutingTreeValue a => Topic -> RoutingTree a -> Bool
@@ -182,12 +216,24 @@ matchTopic (Topic (x:|y:zs)) (RoutingTree m) =
     matchPlus = fromMaybe False
               $ matchTopic (Topic (y:|zs)) . nodeTree <$> M.lookup plusElement m
 
--- | Match a filter.
+-- | Match a `Filter` against a `RoutingTree`.
 --
---   The function returns true iff the tree contains the path represented by the
---   filter and the terminal node contains a value (`nodeNull n == False`).
---   Wildcard characters like `#` and `+` are not treated special but are
---   matched as is against the filter components.
+--   The function returns true iff the tree contains a path that is
+--   /less or equally specific/ than the filter and the terminal node contains
+--   a value that is not `nodeNull`.
+--
+--   > match (singleton "#") "a"     = True
+--   > match (singleton "#") "+"     = True
+--   > match (singleton "#") "a/+/b" = True
+--   > match (singleton "#") "a/+/#" = True
+--   > match (singleton "+") "a"     = True
+--   > match (singleton "+") "+"     = True
+--   > match (singleton "+") "+/a"   = False
+--   > match (singleton "+") "#"     = False
+--   > match (singleton "a") "a"     = True
+--   > match (singleton "a") "b"     = False
+--   > match (singleton "a") "+"     = False
+--   > match (singleton "a") "#"     = False
 matchFilter :: RoutingTreeValue a => Filter -> RoutingTree a -> Bool
 matchFilter (Filter (x:|[])) (RoutingTree m) =
   fromMaybe False $ not . nodeNull <$> ( nodeValue =<< M.lookup x m )
@@ -234,13 +280,6 @@ randomTreeElements =
 -- Specialised nodeTree implemenations using data families
 --------------------------------------------------------------------------------
 
-class RoutingTreeValue a where
-  data RoutingTreeNode a
-  nodeNull             :: a -> Bool
-  nodeTree             :: RoutingTreeNode a -> RoutingTree a
-  nodeValue            :: RoutingTreeNode a -> Maybe a
-  nodeFromTree         :: RoutingTree a -> RoutingTreeNode a
-  nodeFromTreeAndValue :: RoutingTree a -> a -> RoutingTreeNode a
 
 instance RoutingTreeValue IS.IntSet where
   data RoutingTreeNode IS.IntSet

@@ -21,6 +21,7 @@ import Control.Concurrent
 import Control.Concurrent.MVar
 import Control.Concurrent.BoundedChan
 
+import           Network.MQTT.TopicFilter
 import qualified Network.MQTT.RoutingTree as R
 
 type SessionKey = Int
@@ -48,9 +49,9 @@ data SessionState
     , sessionKey                    :: !SessionKey
     , sessionTermination            :: !(MVar ())
     , sessionSubscriptions          :: !(R.RoutingTree (Identity QosLevel))
-    , sessionQueue0                 :: !(BoundedChan (R.Topic, Message))
-    , sessionQueue1                 :: !(BoundedChan (R.Topic, Message))
-    , sessionQueue2                 :: !(BoundedChan (R.Topic, Message))
+    , sessionQueue0                 :: !(BoundedChan (Topic, Message))
+    , sessionQueue1                 :: !(BoundedChan (Topic, Message))
+    , sessionQueue2                 :: !(BoundedChan (Topic, Message))
     }
 
 newBroker  :: IO Broker
@@ -108,7 +109,7 @@ closeSession (Session session) =
               ( brokerSessions brokerState)
         }
 
-subscribeSession :: Session -> [(R.Filter, QosLevel)] -> IO ()
+subscribeSession :: Session -> [(Filter, QosLevel)] -> IO ()
 subscribeSession (Session session) filters =
   modifyMVar_ session $ \sessionState->
     modifyMVar (unBroker $ sessionBroker sessionState) $ \brokerState-> do
@@ -124,7 +125,7 @@ subscribeSession (Session session) filters =
            }
       pure (newBrokerState, newSessionState)
 
-unsubscribeSession :: Session -> [R.Filter] -> IO ()
+unsubscribeSession :: Session -> [Filter] -> IO ()
 unsubscribeSession (Session session) filters =
   modifyMVar_ session $ \sessionState->
     modifyMVar (unBroker $ sessionBroker sessionState) $ \brokerState-> do
@@ -139,7 +140,7 @@ unsubscribeSession (Session session) filters =
       pure (newBrokerState, newSessionState)
 
 -- FIXME: What about downgrading message qos?
-deliverSession :: Session -> R.Topic -> Message -> IO ()
+deliverSession :: Session -> Topic -> Message -> IO ()
 deliverSession session topic message = do
   sst <- readMVar (unSession session)
   case R.lookupWith max topic (sessionSubscriptions sst) of
@@ -154,7 +155,7 @@ deliverSession session topic message = do
       unless success (closeSession session)
     _ -> pure ()
 
-publishBroker :: Broker -> R.Topic -> Message -> IO ()
+publishBroker :: Broker -> Topic -> Message -> IO ()
 publishBroker (Broker broker) topic message = do
   brokerState <- readMVar broker
   forM_ (IS.elems $ fromMaybe IS.empty $ R.lookupWith IS.union topic $ brokerSubscriptions brokerState) $ \key->
