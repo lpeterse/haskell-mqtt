@@ -34,8 +34,7 @@ import qualified Data.IntSet as IS
 import System.Random ( randomIO )
 import Prelude hiding ( map, null )
 
-newtype Filter        = Filter (NL.NonEmpty BS.ShortByteString) deriving (Eq, Ord, Show)
-newtype Topic         = Topic (NL.NonEmpty BS.ShortByteString) deriving (Eq, Ord, Show)
+import Network.MQTT.TopicFilter
 
 newtype RoutingTree a = RoutingTree (M.Map BS.ShortByteString (RoutingTreeNode a))
 

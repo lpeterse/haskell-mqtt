@@ -1,2 +1,6 @@
 dist
 .stack-work
+*.prof
+*.aux
+*.hp
+*.ps

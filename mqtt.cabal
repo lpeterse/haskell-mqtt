@@ -21,7 +21,8 @@ library
                        Network.MQTT.IO,
                        Network.MQTT.Message,
                        Network.MQTT.Broker,
-                       Network.MQTT.Topic,
+                       Network.MQTT.TopicFilter,
+                       Network.MQTT.Transport,
                        Network.Transceiver,
                        Network.MQTT.RoutingTree
   build-depends:       async,
