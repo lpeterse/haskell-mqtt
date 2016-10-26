@@ -217,7 +217,9 @@ module Network.MQTT.Authentication
 
 -- | An instance of <a>Authenticator</a> is able to determine a
 --   <a>Principal</a>s identity from authentication <a>Credentials</a>.
-class Authenticator a
+class Exception (AuthenticationException a) => Authenticator a where data AuthenticationException a where {
+    data family AuthenticationException a;
+}
 
 -- | Try to determine a <a>Principal</a>s identity from authentication
 --   <a>Credentials</a>.
@@ -255,7 +257,9 @@ Principal :: ByteString -> Principal
 [principalIdentity] :: Principal -> ByteString
 
 module Network.MQTT.Authorization
-class Authorizer a
+class Exception (AuthorizationException a) => Authorizer a where data AuthorizationException a where {
+    data family AuthorizationException a;
+}
 authorize :: Authorizer a => a -> Principal -> IO Permissions
 data Permissions
 Permissions :: RoutingTree () -> RoutingTree () -> RoutingTree () -> Permissions

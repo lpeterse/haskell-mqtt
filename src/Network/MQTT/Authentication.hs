@@ -1,4 +1,7 @@
+{-# LANGUAGE TypeFamilies, FlexibleContexts #-}
 module Network.MQTT.Authentication where
+
+import           Control.Exception
 
 import qualified Data.Text as T
 import qualified Data.ByteString as BS
@@ -9,7 +12,8 @@ import qualified Network.MQTT.RoutingTree as R
 
 -- | An instance of `Authenticator` is able to determine a `Principal`s
 --   identity from authentication `Credentials`.
-class Authenticator a where
+class Exception (AuthenticationException a) => Authenticator a where
+  data AuthenticationException a
   -- | Try to determine a `Principal`s identity from authentication `Credentials`.
   authenticate :: Credentials c => a -> c -> IO (Maybe Principal)
 
