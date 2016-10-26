@@ -13,16 +13,16 @@ class Transport a => ServerTransport a where data Server a data ServerConfig a w
     data family Server a;
     data family ServerConfig a;
 }
-newServerFromConfig :: ServerTransport a => ServerConfig a -> IO (Server a)
-startServer :: ServerTransport a => Server a -> IO ()
-stopServer :: ServerTransport a => Server a -> IO ()
+newServer :: ServerTransport a => ServerConfig a -> IO (Server a)
+start :: ServerTransport a => Server a -> IO ()
+stop :: ServerTransport a => Server a -> IO ()
 class Transport a => ClientTransport a where data Client a data ClientConfig a where {
     data family Client a;
     data family ClientConfig a;
 }
-newClientFromConfig :: ClientTransport a => ClientConfig a -> IO (Client a)
-connectClient :: ClientTransport a => Client a -> IO ()
-disconnecDisconnect :: ClientTransport a => Client a -> IO ()
+newClient :: ClientTransport a => ClientConfig a -> IO (Client a)
+connect :: ClientTransport a => Client a -> IO ()
+disconnect :: ClientTransport a => Client a -> IO ()
 class Transport a => AddressTranslationTansport a where data AddressInfo a data AddressTranslationException a where {
     data family AddressInfo a;
     data family AddressTranslationException a;

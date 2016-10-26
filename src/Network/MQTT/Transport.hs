@@ -16,16 +16,16 @@ class Transport a where
 class Transport a => ServerTransport a where
   data Server a
   data ServerConfig a
-  newServerFromConfig :: ServerConfig a -> IO (Server a)
-  startServer         :: Server a -> IO ()
-  stopServer          :: Server a -> IO ()
+  newServer           :: ServerConfig a -> IO (Server a)
+  start               :: Server a -> IO ()
+  stop                :: Server a -> IO ()
 
 class Transport a => ClientTransport a where
   data Client a
   data ClientConfig a
-  newClientFromConfig :: ClientConfig a -> IO (Client a)
-  connectClient       :: Client a -> IO ()
-  disconnecDisconnect :: Client a -> IO ()
+  newClient           :: ClientConfig a -> IO (Client a)
+  connect             :: Client a -> IO ()
+  disconnect          :: Client a -> IO ()
 
 class Transport a => AddressTranslationTansport a where
   data AddressInfo a
@@ -43,6 +43,6 @@ instance Show (TransportException (S.Socket f t S.TCP)) where
 instance (S.Family f, S.Type t) => ServerTransport (S.Socket f t S.TCP) where
   data Server (S.Socket f t S.TCP) = TcpSocketServer (S.Socket f t S.TCP)
   data ServerConfig (S.Socket f t S.TCP) = TcpSocketServerConfiguration (S.SocketAddress f)
-  newServerFromConfig config = TcpSocketServer <$> S.socket
-  startServer (TcpSocketServer s) = undefined
-  stopServer (TcpSocketServer s) = S.close s
+  newServer config = TcpSocketServer <$> S.socket
+  start (TcpSocketServer s) = undefined
+  stop  (TcpSocketServer s) = S.close s
