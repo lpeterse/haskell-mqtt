@@ -28,7 +28,7 @@ The following has already been implemented:
 
 ## Documentation
 
-[Haddock source code documentation is available here.](https://mqtt.lpeterse.de)
+[Haddock source code documentation is available here.](http://mqtt.lpeterse.de)
 
 ## License
 
