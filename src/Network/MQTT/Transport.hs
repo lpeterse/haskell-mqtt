@@ -13,17 +13,17 @@ class Transport a where
 
 class Transport a => ServerTransport a where
   data Server a
-  data ServerConfiguration a
-  serverFromConfig :: ServerConfiguration a -> IO (Server a)
-  serverStart      :: Server a -> IO ()
-  serverStop       :: Server a -> IO ()
+  data ServerConfig a
+  newServerFromConfig :: ServerConfig a -> IO (Server a)
+  startServer         :: Server a -> IO ()
+  stopServer          :: Server a -> IO ()
 
 class Transport a => ClientTransport a where
   data Client a
-  data ClientConfiguration a
-  clientFromConfig :: ClientConfiguration a -> IO (Client a)
-  clientConnect    :: Client a -> IO ()
-  clientDisconnect :: Client a -> IO ()
+  data ClientConfig a
+  newClientFromConfig :: ClientConfig a -> IO (Client a)
+  connectClient       :: Client a -> IO ()
+  disconnecDisconnect :: Client a -> IO ()
 
 instance (S.Family f, S.Type t) => Transport (S.Socket f t S.TCP) where
   data TransportException (S.Socket f t S.TCP) = TcpSocketTransportException S.SocketException
@@ -35,7 +35,7 @@ instance Show (TransportException (S.Socket f t S.TCP)) where
 
 instance (S.Family f, S.Type t) => ServerTransport (S.Socket f t S.TCP) where
   data Server (S.Socket f t S.TCP) = TcpSocketServer (S.Socket f t S.TCP)
-  data ServerConfiguration (S.Socket f t S.TCP) = TcpSocketServerConfiguration (S.SocketAddress f)
-  serverFromConfig config = TcpSocketServer <$> S.socket
-  serverStart (TcpSocketServer s) = undefined
-  serverStop (TcpSocketServer s) = S.close s
+  data ServerConfig (S.Socket f t S.TCP) = TcpSocketServerConfiguration (S.SocketAddress f)
+  newServerFromConfig config = TcpSocketServer <$> S.socket
+  startServer (TcpSocketServer s) = undefined
+  stopServer (TcpSocketServer s) = S.close s
