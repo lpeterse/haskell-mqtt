@@ -162,7 +162,15 @@ lookupWith f (Topic (x:|y:zs)) (RoutingTree m) =
 --   indirectly matched by wildcard characters like `+` and `#` as described
 --   in the MQTT specification).
 matchTopic :: RoutingTreeValue a => Topic -> RoutingTree a -> Bool
-matchTopic = undefined
+matchTopic (Topic (x:|[])) (RoutingTree m) = 
+  M.member "#" m || isJust (M.lookup "+" m >>= nodeValue)
+matchTopic (Topic (x:|y:zs)) (RoutingTree m)
+  | M.member "+" m = True
+  | otherwise      = case M.lookup "+" m of
+      Just n -> matchTopic (Topic (y:|zs)) $ nodeTree n
+      Nothing -> case M.lookup x m of
+        Just o -> matchTopic (Topic (y:|zs)) $ nodeTree o
+        Nothing -> False
 
 -- | Match a filter.
 --
