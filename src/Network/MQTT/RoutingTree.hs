@@ -106,16 +106,19 @@ map f (RoutingTree m) = RoutingTree $ fmap g m
     where
       g n = let t = map f (nodeTree n) in case nodeValue n of
         Nothing -> nodeFromTree t
-        Just a  -> let b = f a in if nodeNull b then nodeFromTree t else nodeFromTreeAndValue t b
+        Just a  -> let b = f a
+                   in  if nodeNull b then nodeFromTree t else nodeFromTreeAndValue t b
 
 unionWith :: (RoutingTreeValue a) => (a -> a -> a) -> RoutingTree a -> RoutingTree a -> RoutingTree a
 unionWith f (RoutingTree m1) (RoutingTree m2) = RoutingTree (M.unionWith g m1 m2)
   where
-    g n1 n2 = h (unionWith f (nodeTree n1) (nodeTree n2)) (nodeValue n1) (nodeValue n2)
-    h t (Just v1) (Just v2) = nodeFromTreeAndValue t (f v1 v2)
-    h t (Just v1)  _        = nodeFromTreeAndValue t v1
-    h t  _        (Just v2) = nodeFromTreeAndValue t v2
-    h t  _         _        = nodeFromTree         t
+    g n1 n2 = merge
+      (unionWith f (nodeTree n1) (nodeTree n2))
+      (nodeValue n1) (nodeValue n2)
+    merge t (Just v1) (Just v2) = nodeFromTreeAndValue t (f v1 v2)
+    merge t (Just v1)  _        = nodeFromTreeAndValue t v1
+    merge t  _        (Just v2) = nodeFromTreeAndValue t v2
+    merge t  _         _        = nodeFromTree         t
 
 differenceWith :: RoutingTreeValue a => (a -> a -> a) -> RoutingTree a -> RoutingTree a -> RoutingTree a
 differenceWith f (RoutingTree m1) (RoutingTree m2) = RoutingTree (M.differenceWith g m1 m2)
@@ -133,27 +136,25 @@ lookupWith :: (RoutingTreeValue a) => (a -> a -> a) -> Topic -> RoutingTree a ->
 lookupWith f (Topic (x:|[])) (RoutingTree m) =
   case M.lookup x m of
     Nothing -> Nothing
-    Just n  -> let RoutingTree m' = nodeTree n in
-      case M.lookup "#" m' of
-        Nothing -> nodeValue n
-        Just n' -> nodeValue n `h` nodeValue n'
+    Just n  -> let RoutingTree m' = nodeTree n; v' = nodeValue n
+               in  fromMaybe v' $ merge v' . nodeValue <$> M.lookup hashElement m
   where
-    h (Just v1) (Just v2) = Just (f v1 v2)
-    h (Just v1) _         = Just v1
-    h _         (Just v2) = Just v2
-    h _         _         = Nothing
+    merge (Just v1) (Just v2) = Just (f v1 v2)
+    merge (Just v1) _         = Just v1
+    merge _         (Just v2) = Just v2
+    merge _         _         = Nothing
 lookupWith f (Topic (x:|y:zs)) (RoutingTree m) =
-  matchComponent `h` matchSingleLevelWildcard `h` matchMultiLevelWildcard
+  matchComponent `merge` matchSingleLevelWildcard `merge` matchMultiLevelWildcard
   where
+    merge (Just v1) (Just v2) = Just (f v1 v2)
+    merge (Just v1) _         = Just v1
+    merge _         (Just v2) = Just v2
+    merge _         _         = Nothing
     matchComponent =
       M.lookup x m >>= lookupWith f (Topic $ y:|zs) . nodeTree
     matchSingleLevelWildcard =
-      M.lookup "+" m >>= lookupWith f (Topic $ y:|zs) . nodeTree
-    matchMultiLevelWildcard = M.lookup "#" m >>= nodeValue
-    h (Just v1) (Just v2) = Just (f v1 v2)
-    h (Just v1) _         = Just v1
-    h _         (Just v2) = Just v2
-    h _         _         = Nothing
+      M.lookup plusElement m >>= lookupWith f (Topic $ y:|zs) . nodeTree
+    matchMultiLevelWildcard = M.lookup hashElement m >>= nodeValue
 
 -- | Match a topic.
 --
