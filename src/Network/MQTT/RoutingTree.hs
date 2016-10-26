@@ -106,8 +106,8 @@ map f (RoutingTree m) = RoutingTree $ fmap g m
     where
       g n = let t = map f (nodeTree n) in case nodeValue n of
         Nothing -> nodeFromTree t
-        Just a  -> let b = f a
-                   in  if nodeNull b then nodeFromTree t else nodeFromTreeAndValue t b
+        Just a  -> let b = f a in
+          if nodeNull b then nodeFromTree t else nodeFromTreeAndValue t b
 
 unionWith :: (RoutingTreeValue a) => (a -> a -> a) -> RoutingTree a -> RoutingTree a -> RoutingTree a
 unionWith f (RoutingTree m1) (RoutingTree m2) = RoutingTree (M.unionWith g m1 m2)
