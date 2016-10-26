@@ -171,7 +171,16 @@ matchTopic = undefined
 --   Wildcard characters like `#` and `+` are not treated special but are
 --   matched as is against the filter components.
 matchFilter :: RoutingTreeValue a => Filter -> RoutingTree a -> Bool
-matchFilter = undefined
+matchFilter (Filter (x:|[])) (RoutingTree m) =
+  case M.lookup x m of
+    Nothing -> False
+    Just n  -> case nodeValue n of
+      Nothing -> False
+      Just v  -> not (nodeNull v)
+matchFilter (Filter (x:|(y:zs))) (RoutingTree m) =
+  case M.lookup x m of
+    Nothing -> False
+    Just n  -> matchFilter (Filter $ y:|zs) (nodeTree n)
 
 --------------------------------------------------------------------------------
 -- Test functions
@@ -182,7 +191,8 @@ randomTree 0     branching = RoutingTree <$> pure mempty
 randomTree depth branching = RoutingTree <$> foldM (\m e->
   flip (M.insert e) m <$> (nodeFromTreeAndValue
   <$> randomTree (depth - 1) branching
-  <*> randomSet :: IO (RoutingTreeNode IS.IntSet))) M.empty (take branching elements)
+  <*> randomSet :: IO (RoutingTreeNode IS.IntSet))) M.empty
+        (take branching randomTreeElements)
   where
     randomSet :: IO IS.IntSet
     randomSet = f 0 IS.empty
@@ -194,8 +204,8 @@ randomTree depth branching = RoutingTree <$> foldM (\m e->
             then pure accum
             else f (succ i) $! IS.insert i accum
 
-elements  :: [BS.ShortByteString]
-elements =
+randomTreeElements  :: [BS.ShortByteString]
+randomTreeElements =
   [ "a","b","c","d","e","f","g","h","i","j","k","l","m" ]
 
 --------------------------------------------------------------------------------

@@ -18,7 +18,7 @@ main = do
   mtree <- newMVar mempty
   subscriberSum <- fst <$> concurrently
     ( sum <$> mapConcurrently (\t->publish mtree t >>= \k-> print ("PUB " ++ show t) >> pure k) topics >>= \x-> putStrLn "PUB ALL" >> pure x)
-    ( mapConcurrently (\i->subscribeFilters mtree i >> print ("SUB " ++ show i)) [1..100] >> putStrLn "SUB ALL")
+    ( mapConcurrently (\i->subscribeFilters mtree i >> print ("SUB " ++ show i)) [1..1000] >> putStrLn "SUB ALL")
   print subscriberSum
   where
     topics = [
@@ -38,7 +38,7 @@ main = do
     publish mtree topic = foldM (\i _-> do
         tree <- readMVar mtree
         pure $! (+) i $ fromMaybe 0 $ S.size <$> R.lookupWith S.union topic tree
-      ) 0 [1..100000 :: Int]
+      ) 0 [1..1000000 :: Int]
 
     filters :: [R.Filter]
     filters = fmap (R.Filter . ("a":|) . fmap ((BS.pack . fmap (fromIntegral . fromEnum)) . pure)) $ concatMap (\a->[a,a++"#"]) $ Prelude.filter (not . Prelude.null) $ concatMap Data.List.tails $ Data.List.inits ['a'..'z']
