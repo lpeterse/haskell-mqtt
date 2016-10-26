@@ -162,15 +162,23 @@ lookupWith f (Topic (x:|y:zs)) (RoutingTree m) =
 --   indirectly matched by wildcard characters like `+` and `#` as described
 --   in the MQTT specification).
 matchTopic :: RoutingTreeValue a => Topic -> RoutingTree a -> Bool
-matchTopic (Topic (x:|[])) (RoutingTree m) = 
+matchTopic (Topic (x:|[])) (RoutingTree m) =
+  -- The '#' is always a terminal node and therefore does not contain subtrees.
+  -- By invariant, a '#' node only exists if it contains a value. For this
+  -- reason it does not need to be checked for a value here, but just for
+  -- existence.
+  -- A '+' node on the other hand may contain subtrees and may not carry a value
+  -- itself. This needs to be checked.
   M.member "#" m || isJust (M.lookup "+" m >>= nodeValue)
-matchTopic (Topic (x:|y:zs)) (RoutingTree m)
-  | M.member "+" m = True
-  | otherwise      = case M.lookup "+" m of
-      Just n -> matchTopic (Topic (y:|zs)) $ nodeTree n
-      Nothing -> case M.lookup x m of
-        Just o -> matchTopic (Topic (y:|zs)) $ nodeTree o
-        Nothing -> False
+matchTopic (Topic (x:|y:zs)) (RoutingTree m) =
+  -- Same is true for '#' node here. In case no '#' hash node is present it is
+  -- first tried to match the exact topic and then to match any '+' node.
+  M.member "#" m || case M.lookup x m of
+      Nothing -> matchPlus
+      Just n  -> matchTopic (Topic (y:|zs)) (nodeTree n) || matchPlus
+  where
+    -- A '+' node matches any topic element.
+    matchPlus = fromMaybe False $ matchTopic (Topic (y:|zs)) . nodeTree <$> M.lookup "+" m
 
 -- | Match a filter.
 --
