@@ -259,7 +259,7 @@ module Network.MQTT.Authorization
 
 -- | An <a>Authorizer</a> is able to determine a <a>Principal</a>'s
 --   permissions.
-class (Authenticator a, Exception (AuthorizationException a)) => Authorizer a where data AuthorizationException a where {
+class (Authenticator a, Exception (AuthorizationException a)) => Authorizer a where data AuthorizationException a getPublishPermissions = pure mempty getSubscribePermissions = pure mempty where {
     data family AuthorizationException a;
 }
 
@@ -269,7 +269,7 @@ class (Authenticator a, Exception (AuthorizationException a)) => Authorizer a wh
 --   Beware that this operation is called on each publication. The
 --   implementation is advised to cache the result (i.e. in an <a>MVar</a>)
 --   and update it from time to time.
-getPublishPermissions :: Authorizer a => a -> Principal a -> IO (RoutingTree ())
+getPublishPermissions :: Authorizer a => Principal a -> IO (RoutingTree ())
 
 -- | Determine the set of <a>Filter</a>s a <a>Principal</a> is allowed to
 --   subscribe. The <a>Principal</a> is implicitly allowed to subscribe all
@@ -284,7 +284,7 @@ getPublishPermissions :: Authorizer a => a -> Principal a -> IO (RoutingTree ())
 --   be unsubscribed if they are no longer in the current permission set.
 --   There is no way specified by MQTT to signal this to the client other
 --   than terminating the session.
-getSubscribePermissions :: Authorizer a => a -> Principal a -> IO (RoutingTree ())
+getSubscribePermissions :: Authorizer a => Principal a -> IO (RoutingTree ())
 
 module Network.MQTT.Message
 newtype ClientIdentifier

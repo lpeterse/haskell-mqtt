@@ -13,7 +13,12 @@ import qualified Network.MQTT.RoutingTree as R
 -- | An `Authenticator` is able to determine a `Principal`'s identity from a
 --   `Request`.
 class Exception (AuthenticationException a) => Authenticator a where
+  -- | A peer identity optionally associated with connection/session
+  --   specific information.
   data Principal a
+  -- | This `Exception` may be thrown by any operation within this class.
+  --   Operations /must/ only throw this type of exception. Other exceptions
+  --   won't be catched and may kill the broker.
   data AuthenticationException a
   -- | Try to determine a `Principal`'s identity from connection `Request`.
   --
