@@ -13,18 +13,6 @@ class Transport a where data Configuration a data Server a where {
 newServer :: Transport a => Configuration a -> IO (Server a)
 instance (System.Socket.Internal.Socket.Family f, System.Socket.Internal.Socket.Type t) => Network.MQTT.Transport.Transport (System.Socket.Internal.Socket.Socket f t System.Socket.Protocol.TCP.TCP)
 
-module Network.MQTT.TopicFilter
-newtype Filter
-Filter :: (NonEmpty ShortByteString) -> Filter
-newtype Topic
-Topic :: (NonEmpty ShortByteString) -> Topic
-instance GHC.Show.Show Network.MQTT.TopicFilter.Topic
-instance GHC.Classes.Ord Network.MQTT.TopicFilter.Topic
-instance GHC.Classes.Eq Network.MQTT.TopicFilter.Topic
-instance GHC.Show.Show Network.MQTT.TopicFilter.Filter
-instance GHC.Classes.Ord Network.MQTT.TopicFilter.Filter
-instance GHC.Classes.Eq Network.MQTT.TopicFilter.Filter
-
 module Network.Transceiver
 class Transceiver a where type Data a type Exception a isTransceiverException _ _ = True where {
     type family Data a;
@@ -97,6 +85,18 @@ instance Network.Transceiver.Connection Network.Transceiver.TlsStream
 instance Network.Transceiver.StreamConnection Network.Transceiver.TlsStream
 instance Network.Transceiver.Transceiver t => Network.Transceiver.Transceiver (Network.Transceiver.SecureStreamServer t)
 instance (Network.Transceiver.Acceptable t, Network.Transceiver.Data (Network.Transceiver.AcceptedConnection t) ~ Data.ByteString.Internal.ByteString, Network.Transceiver.AcceptedConnection t ~ t, Network.Transceiver.StreamConnection t) => Network.Transceiver.Acceptable (Network.Transceiver.SecureStreamServer t)
+
+module Network.MQTT.TopicFilter
+newtype Filter
+Filter :: (NonEmpty ShortByteString) -> Filter
+newtype Topic
+Topic :: (NonEmpty ShortByteString) -> Topic
+instance GHC.Show.Show Network.MQTT.TopicFilter.Topic
+instance GHC.Classes.Ord Network.MQTT.TopicFilter.Topic
+instance GHC.Classes.Eq Network.MQTT.TopicFilter.Topic
+instance GHC.Show.Show Network.MQTT.TopicFilter.Filter
+instance GHC.Classes.Ord Network.MQTT.TopicFilter.Filter
+instance GHC.Classes.Eq Network.MQTT.TopicFilter.Filter
 
 module Network.MQTT.RoutingTree
 
@@ -215,57 +215,76 @@ instance GHC.Classes.Eq Network.MQTT.Broker.QosLevel
 
 module Network.MQTT.Authentication
 
--- | An instance of <a>Authenticator</a> is able to determine a
---   <a>Principal</a>s identity from authentication <a>Credentials</a>.
-class Exception (AuthenticationException a) => Authenticator a where data AuthenticationException a where {
+-- | An <a>Authenticator</a> is able to determine a <a>Principal</a>'s
+--   identity from a <a>Request</a>.
+class Exception (AuthenticationException a) => Authenticator a where data Principal a data AuthenticationException a where {
+    data family Principal a;
     data family AuthenticationException a;
 }
 
--- | Try to determine a <a>Principal</a>s identity from authentication
---   <a>Credentials</a>.
-authenticate :: (Authenticator a, Credentials c) => a -> c -> IO (Maybe Principal)
+-- | Try to determine a <a>Principal</a>'s identity from connection
+--   <a>Request</a>.
+--   
+--   The operation shall return <a>Nothing</a> in case the authentication
+--   mechanism is working, but couldn't associate an identity. It shall
+--   throw and <a>AuthenticationException</a> in case of other problems.
+authenticate :: (Authenticator a, Request c) => a -> c -> IO (Maybe (Principal a))
 
--- | This class defines how credentials that have been gathered from a
---   connection request look like (at least). An <a>Authenticator</a> may
---   use whatever information it finds suitable to authenticate the
---   <a>Principal</a>.
-class Credentials c where credentialsSecure = const False credentialsUsername = const Nothing credentialsPassword = const Nothing credentialsX509CertificateChain = const [] credentialsWebSocketRequestHeaders = const []
+-- | This class defines how the information gathered from a connection
+--   request looks like. An <a>Authenticator</a> may use whatever
+--   information it finds suitable to authenticate the <a>Principal</a>.
+class Request r where requestSecure = const False requestUsername = const Nothing requestPassword = const Nothing requestHeaders = const [] requestCertificateChain = const []
 
 -- | Is this connection secure in terms of <a>Transport Layer Security</a>?
-credentialsSecure :: Credentials c => c -> Bool
+requestSecure :: Request r => r -> Bool
 
 -- | The username supplied with the MQTT handshake.
-credentialsUsername :: Credentials c => c -> Maybe Text
+requestUsername :: Request r => r -> Maybe Text
 
 -- | The password supplied with the MQTT handshake.
-credentialsPassword :: Credentials c => c -> Maybe ByteString
+requestPassword :: Request r => r -> Maybe ByteString
+
+-- | The HTTP request headers in case the client connected via
+--   <a>WebSocket</a>.
+requestHeaders :: Request r => r -> [(CI ByteString, ByteString)]
 
 -- | An <a>X.509 certificate</a> chain supplied by the peer. It can be
 --   assumed that the transport layer implementation already verified that
 --   the peer owns the corresponding private key. The validation of the
 --   certificate claims (including certificate chain checking) <i>must</i>
 --   be performed by the <a>Authenticator</a>.
-credentialsX509CertificateChain :: Credentials c => c -> [Certificate]
-
--- | The HTTP request headers in case the client connected via
---   <a>WebSocket</a>.
-credentialsWebSocketRequestHeaders :: Credentials c => c -> [(CI ByteString, ByteString)]
-
--- | The result of a call to <a>authenticate</a>.
-data Principal
-Principal :: ByteString -> Principal
-[principalIdentity] :: Principal -> ByteString
+requestCertificateChain :: Request r => r -> [Certificate]
 
 module Network.MQTT.Authorization
-class Exception (AuthorizationException a) => Authorizer a where data AuthorizationException a where {
+
+-- | An <a>Authorizer</a> is able to determine a <a>Principal</a>'s
+--   permissions.
+class (Authenticator a, Exception (AuthorizationException a)) => Authorizer a where data AuthorizationException a where {
     data family AuthorizationException a;
 }
-authorize :: Authorizer a => a -> Principal -> IO Permissions
-data Permissions
-Permissions :: RoutingTree () -> RoutingTree () -> RoutingTree () -> Permissions
-[principalReceiveFilter] :: Permissions -> RoutingTree ()
-[principalPublishFilter] :: Permissions -> RoutingTree ()
-[principalSubscribeFilter] :: Permissions -> RoutingTree ()
+
+-- | Determine the set of <a>Topic</a>s a <a>Principal</a> is allowed to
+--   publish on.
+--   
+--   Beware that this operation is called on each publication. The
+--   implementation is advised to cache the result (i.e. in an <a>MVar</a>)
+--   and update it from time to time.
+getPublishPermissions :: Authorizer a => a -> Principal a -> IO (RoutingTree ())
+
+-- | Determine the set of <a>Filter</a>s a <a>Principal</a> is allowed to
+--   subscribe. The <a>Principal</a> is implicitly allowed to subscribe all
+--   filters that are more specific than those explicitly stated in the
+--   <a>RoutingTree</a>.
+--   
+--   Beware that this operation is called on each subscription. The
+--   implementation is advised to cache the result (i.e. in an <a>MVar</a>)
+--   and update it from time to time.
+--   
+--   Also note that <a>Filter</a>s already subscribed by the client won't
+--   be unsubscribed if they are no longer in the current permission set.
+--   There is no way specified by MQTT to signal this to the client other
+--   than terminating the session.
+getSubscribePermissions :: Authorizer a => a -> Principal a -> IO (RoutingTree ())
 
 module Network.MQTT.Message
 newtype ClientIdentifier
