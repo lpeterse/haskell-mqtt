@@ -26,6 +26,10 @@ The following has already been implemented:
   - Client connection handling.
   - High-performance and concurrent message routing (see `RoutingTree`).
 
+## Documentation
+
+[Haddock source code documentation is available here.](https://mqtt.lpeterse.de)
+
 ## License
 
 Permission is hereby granted under the terms of the MIT license:
