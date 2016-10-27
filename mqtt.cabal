@@ -23,9 +23,9 @@ library
                        Network.MQTT.Message,
                        Network.MQTT.Broker,
                        Network.MQTT.TopicFilter,
-                       Network.MQTT.Transport,
-                       Network.Transceiver,
-                       Network.MQTT.RoutingTree
+                       Network.MQTT.RoutingTree,
+                       Network.TransportLayer,
+                       Network.Transceiver
   build-depends:       async,
                        base >=4.8 && <5,
                        bytestring,

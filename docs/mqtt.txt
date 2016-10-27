@@ -5,32 +5,43 @@
 @package mqtt
 @version 0.1.0.0
 
-module Network.MQTT.Transport
-class Transport a where data TransportException a where {
-    data family TransportException a;
+module Network.TransportLayer
+class Exception (TransportLayerException a) => TransportLayer a where data Transport a data TransportAddress a data TransportConfiguration a data TransportLayerException a where {
+    data family Transport a;
+    data family TransportAddress a;
+    data family TransportConfiguration a;
+    data family TransportLayerException a;
 }
-class Transport a => ServerTransport a where data Server a data ServerConfig a where {
-    data family Server a;
-    data family ServerConfig a;
+new :: TransportLayer a => TransportConfiguration a -> IO (Transport a)
+close :: TransportLayer a => Transport a -> IO ()
+class TransportLayer a => ConnectionTransportLayer a where data Connection a where {
+    data family Connection a;
 }
-newServer :: ServerTransport a => ServerConfig a -> IO (Server a)
-start :: ServerTransport a => Server a -> IO ()
-stop :: ServerTransport a => Server a -> IO ()
-class Transport a => ClientTransport a where data Client a data ClientConfig a where {
-    data family Client a;
-    data family ClientConfig a;
+disconnect :: ConnectionTransportLayer a => Connection a -> IO ()
+class ConnectionTransportLayer a => StreamConnectionTransportLayer a
+sendChunk :: StreamConnectionTransportLayer a => Connection a -> ByteString -> IO Int
+receiveChunk :: StreamConnectionTransportLayer a => Connection a -> Int -> IO ByteString
+class ConnectionTransportLayer a => DatagramConnectionTransportLayer a
+sendDatagram :: DatagramConnectionTransportLayer a => Connection a -> ByteString -> IO Int
+receiveDatagram :: DatagramConnectionTransportLayer a => Connection a -> Int -> IO ByteString
+class ConnectionTransportLayer a => AcceptingTransportLayer a
+listen :: AcceptingTransportLayer a => Transport a -> IO ()
+accept :: AcceptingTransportLayer a => Transport a -> IO (Connection a)
+class ConnectionTransportLayer a => ConnectingTransportLayer a
+connect :: ConnectingTransportLayer a => Transport a -> IO (Connection a)
+class AddressTranslatingTransport a where data TransportName a data TransportNameInfo a data TransportAddressInfo a data TransportAddressTranslationException a where {
+    data family TransportName a;
+    data family TransportNameInfo a;
+    data family TransportAddressInfo a;
+    data family TransportAddressTranslationException a;
 }
-newClient :: ClientTransport a => ClientConfig a -> IO (Client a)
-connect :: ClientTransport a => Client a -> IO ()
-disconnect :: ClientTransport a => Client a -> IO ()
-class Transport a => AddressTranslationTansport a where data AddressInfo a data AddressTranslationException a where {
-    data family AddressInfo a;
-    data family AddressTranslationException a;
-}
-getAddressInfo :: AddressTranslationTansport a => ByteString -> ByteString -> IO (NonEmpty (AddressInfo a))
-instance (System.Socket.Internal.Socket.Family f, System.Socket.Internal.Socket.Type t) => Network.MQTT.Transport.Transport (System.Socket.Internal.Socket.Socket f t System.Socket.Protocol.TCP.TCP)
-instance GHC.Show.Show (Network.MQTT.Transport.TransportException (System.Socket.Internal.Socket.Socket f t System.Socket.Protocol.TCP.TCP))
-instance (System.Socket.Internal.Socket.Family f, System.Socket.Internal.Socket.Type t) => Network.MQTT.Transport.ServerTransport (System.Socket.Internal.Socket.Socket f t System.Socket.Protocol.TCP.TCP)
+name :: AddressTranslatingTransport a => TransportNameInfo a -> TransportName a
+address :: AddressTranslatingTransport a => TransportAddressInfo a -> TransportAddress a
+getNameInfo :: AddressTranslatingTransport a => TransportAddress a -> IO (NonEmpty (TransportNameInfo a))
+getAddressInfo :: AddressTranslatingTransport a => TransportName a -> IO (NonEmpty (TransportAddressInfo a))
+instance GHC.Show.Show (Network.TransportLayer.TransportLayerException (System.Socket.Internal.Socket.Socket f t p))
+instance (Data.Typeable.Internal.Typeable f, Data.Typeable.Internal.Typeable t, Data.Typeable.Internal.Typeable p, System.Socket.Internal.Socket.Family f, System.Socket.Internal.Socket.Type t, System.Socket.Internal.Socket.Protocol p) => Network.TransportLayer.TransportLayer (System.Socket.Internal.Socket.Socket f t p)
+instance (Data.Typeable.Internal.Typeable f, Data.Typeable.Internal.Typeable t, Data.Typeable.Internal.Typeable p) => GHC.Exception.Exception (Network.TransportLayer.TransportLayerException (System.Socket.Internal.Socket.Socket f t p))
 
 module Network.Transceiver
 class Transceiver a where type Data a type Exception a isTransceiverException _ _ = True where {
