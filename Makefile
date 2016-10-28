@@ -1,7 +1,10 @@
-.PHONY: docs profbench
+.PHONY: docs profbench test
 
 profbench:
 	stack bench --library-profiling --executable-profiling --benchmark-arguments '+RTS -N -s -p'
+
+test:
+	stack test
 
 docs:
 	stack haddock

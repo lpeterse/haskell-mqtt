@@ -24,7 +24,8 @@ tests = testGroup "RoutingTree"
     [ testCase "null empty" $ assertBool "not null" $ R.null R.empty
     ]
   , testGroup "singleton"
-    [ testCase "matchTopic \"a/b/c\" (singleton \"a/b/c\" ())" $ assertBool "null" $ R.matchTopic (F.Topic $ "a":|["b","c"]) $ R.singleton (F.Filter $ "a":|["b","c"]) ()
+    [ testCase "matchTopic \"a\" (singleton \"a\" ())" $ assertBool "null" $ R.matchTopic (F.Topic $ "a":|[]) $ R.singleton (F.Filter $ "a":|[]) ()
+    , testCase "matchTopic \"a/b/c\" (singleton \"a/b/c\" ())" $ assertBool "null" $ R.matchTopic (F.Topic $ "a":|["b","c"]) $ R.singleton (F.Filter $ "a":|["b","c"]) ()
     ]
   , testGroup "lookupWith" [ missingTests ]
   , testGroup "matchTopic" [ missingTests ]

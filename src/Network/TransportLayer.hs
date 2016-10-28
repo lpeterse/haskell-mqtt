@@ -10,16 +10,20 @@ import qualified Data.List.NonEmpty as NL
 import qualified System.Socket as S
 import qualified System.Socket.Protocol.TCP as S
 
-class Exception (TransportLayerException a) => TransportLayer a where
+class Exception (TransportException a) => TransportLayer a where
   data Transport a
   data TransportAddress a
   data TransportConfiguration a
-  data TransportLayerException a
+  data TransportException a
   new                 :: TransportConfiguration a -> IO (Transport a)
   close               :: Transport a -> IO ()
 
+class TransportLayer a => BindableTransportLayer a where
+  bind                :: Transport a -> TransportAddress a -> IO ()
+
 class TransportLayer a => ConnectionTransportLayer a where
   data Connection a
+  data ConnectionRequest a
   disconnect          :: Connection a -> IO ()
 
 class ConnectionTransportLayer a => StreamConnectionTransportLayer a where
@@ -32,10 +36,10 @@ class ConnectionTransportLayer a => DatagramConnectionTransportLayer a where
 
 class ConnectionTransportLayer a => AcceptingTransportLayer a where
   listen              :: Transport a -> IO ()
-  accept              :: Transport a -> IO (Connection a)
+  accept              :: Transport a -> IO (Connection a, TransportAddress a, ConnectionRequest a)
 
 class ConnectionTransportLayer a => ConnectingTransportLayer a where
-  connect             :: Transport a -> IO (Connection a)
+  connect             :: Transport a -> TransportAddress a -> ConnectionRequest a -> IO (Connection a)
 
 class AddressTranslatingTransport a where
   data TransportName a
@@ -51,8 +55,8 @@ instance (Typeable f, Typeable t, Typeable p, S.Family f, S.Type t, S.Protocol p
   data Transport               (S.Socket f t p) = Socket (S.Socket f t p)
   data TransportAddress        (S.Socket f t p) = SocketAddress (S.SocketAddress f)
   data TransportConfiguration  (S.Socket f t p) = SocketConfiguration (S.SocketAddress f)
-  data TransportLayerException (S.Socket f t p) = SocketTransportLayerException S.SocketException deriving (Show, Typeable)
+  data TransportException (S.Socket f t p)      = SocketTransportException S.SocketException deriving (Show, Typeable)
   new config                                    = Socket <$> S.socket
   close (Socket s)                              = S.close s
 
-instance (Typeable f, Typeable t, Typeable p) => Exception (TransportLayerException (S.Socket f t p)) where
+instance (Typeable f, Typeable t, Typeable p) => Exception (TransportException (S.Socket f t p)) where
