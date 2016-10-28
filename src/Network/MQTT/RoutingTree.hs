@@ -1,4 +1,4 @@
-{-# LANGUAGE TypeFamilies, FlexibleInstances, OverloadedStrings #-}
+{-# LANGUAGE TypeFamilies, FlexibleInstances, FlexibleContexts, OverloadedStrings, StandaloneDeriving #-}
 module Network.MQTT.RoutingTree (
   -- * RoutingTree
     RoutingTree (..)

@@ -18,10 +18,13 @@ import Test.Tasty
 import Test.Tasty.HUnit
 import Test.Tasty.QuickCheck as QC
 
-import qualified SubscriptionTree
+import qualified RoutingTreeTest
 
 main :: IO ()
-main  = defaultMain $ testGroup "Network" [ testGroup "MQTT" [SubscriptionTree.tests, tgRawMessage]]
+main  = defaultMain $ testGroup "Network.MQTT"
+  [ RoutingTreeTest.tests
+  , tgRawMessage
+  ]
 
 tgRawMessage :: TestTree
 tgRawMessage = testGroup "RawMessage"
