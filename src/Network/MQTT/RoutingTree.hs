@@ -1,4 +1,4 @@
-{-# LANGUAGE TypeFamilies, FlexibleInstances, FlexibleContexts, OverloadedStrings, StandaloneDeriving #-}
+{-# LANGUAGE TypeFamilies, FlexibleInstances, OverloadedStrings #-}
 module Network.MQTT.RoutingTree (
   -- * RoutingTree
     RoutingTree (..)
@@ -249,7 +249,6 @@ plusElement  = "+"
 --------------------------------------------------------------------------------
 -- Specialised nodeTree implemenations using data families
 --------------------------------------------------------------------------------
-
 
 instance RoutingTreeValue IS.IntSet where
   data RoutingTreeNode IS.IntSet
