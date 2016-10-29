@@ -45,7 +45,9 @@ instance Show Topic where
   show (Topic xs) = show (TopicFilter xs)
 
 instance Show TopicFilter where
-  show (TopicFilter (x:|xs)) = concat ["\"", intercalate "/" $ show x : map show xs, "\""]
+  show (TopicFilter (x:|xs)) = concat ["\"", intercalate "/" $ f x : map f xs, "\""]
+    where
+      f (TopicFilterLevel l) = T.unpack $ T.decodeUtf8With T.lenientDecode $ BS.fromShort l
 
 instance Show TopicFilterLevel where
   show (TopicFilterLevel x) =
