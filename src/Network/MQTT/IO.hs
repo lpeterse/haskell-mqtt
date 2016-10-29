@@ -1,7 +1,8 @@
-{-# LANGUAGE OverloadedStrings, TypeFamilies, BangPatterns #-}
+{-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE TypeFamilies      #-}
 --------------------------------------------------------------------------------
 -- |
--- Module      :  Network.MQTT
+-- Module      :  Network.MQTT.IO
 -- Copyright   :  (c) Lars Petersen 2016
 -- License     :  MIT
 --
@@ -10,28 +11,16 @@
 --------------------------------------------------------------------------------
 module Network.MQTT.IO where
 
-import Data.Int
-import Data.Word
-import Data.Typeable
-import qualified Data.Map as M
-import qualified Data.IntMap as IM
-import qualified Data.ByteString as BS
-import qualified Data.ByteString.Unsafe as BS
-import qualified Data.ByteString.Builder as BS
+import           Control.Concurrent
+import           Control.Exception
+import qualified Data.ByteString               as BS
 import qualified Data.ByteString.Builder.Extra as BS
-import qualified Data.ByteString.Lazy as LBS
-
-import Foreign.Ptr
-import Foreign.Marshal.Alloc
-
-import Control.Exception
-import Control.Monad
-import Control.Concurrent
-import Control.Concurrent.MVar
-
-import Network.MQTT
-import Network.MQTT.Message
-import Network.Transceiver
+import qualified Data.ByteString.Unsafe        as BS
+import           Data.Word
+import           Foreign.Marshal.Alloc
+import           Foreign.Ptr
+import           Network.MQTT.Message
+import           Network.Transceiver
 
 bufferedOutput :: (StreamConnection s, Data s ~ BS.ByteString) => s -> IO RawMessage -> IO (Maybe RawMessage) -> (BS.ByteString -> IO ()) -> IO ()
 bufferedOutput transmitter getMessage getMaybeMessage sendByteString =

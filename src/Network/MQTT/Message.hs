@@ -1,4 +1,14 @@
-{-# LANGUAGE TupleSections, GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE TupleSections              #-}
+--------------------------------------------------------------------------------
+-- |
+-- Module      :  Network.MQTT.Message
+-- Copyright   :  (c) Lars Petersen 2016
+-- License     :  MIT
+--
+-- Maintainer  :  info@lars-petersen.net
+-- Stability   :  experimental
+--------------------------------------------------------------------------------
 module Network.MQTT.Message
   ( ClientIdentifier (..)
   , SessionPresent
@@ -24,27 +34,16 @@ module Network.MQTT.Message
   , pUtf8String
   , bUtf8String ) where
 
-import Control.Applicative
-import Control.Concurrent.MVar
-import Control.Exception
-import Control.Monad.Catch (MonadThrow (..))
-import Control.Monad
-
-import Data.Maybe
-import Data.Monoid
-import Data.Bits
-import Data.Function (fix)
-import Data.String
-import Data.Word
-import Data.Typeable
-import qualified Data.Serialize.Get as SG
-import qualified Data.ByteString as BS
+import           Control.Monad
+import           Data.Bits
+import qualified Data.ByteString         as BS
 import qualified Data.ByteString.Builder as BS
-import qualified Data.ByteString.Lazy as LBS
-import qualified Data.Text as T
-import qualified Data.Text.Encoding as T
-import qualified Data.Text.Lazy as LT
-import qualified Data.Text.Lazy.Encoding as LT
+import           Data.Monoid
+import qualified Data.Serialize.Get      as SG
+import           Data.String
+import qualified Data.Text               as T
+import qualified Data.Text.Encoding      as T
+import           Data.Word
 
 newtype ClientIdentifier = ClientIdentifier T.Text
   deriving (Eq, Ord, Show, IsString)
@@ -108,11 +107,11 @@ data RawMessage
      }
    | ConnectAcknowledgement         (Either ConnectionRefusal SessionPresent)
    | Publish
-     { publishDuplicate        :: !Bool
-     , publishRetain           :: !Bool
-     , publishTopic            :: !Topic
-     , publishQoS              :: !PublishQoS
-     , publishBody             :: !BS.ByteString
+     { publishDuplicate :: !Bool
+     , publishRetain    :: !Bool
+     , publishTopic     :: !Topic
+     , publishQoS       :: !PublishQoS
+     , publishBody      :: !BS.ByteString
      }
    | PublishAcknowledgement       PacketIdentifier
    | PublishReceived              PacketIdentifier
@@ -307,9 +306,9 @@ bRawMessage (Connect (ClientIdentifier i) cleanSession keepAlive will credential
     <> maybe mempty (\(u,mp)-> bUtf8String u <> maybe mempty bBlob mp) credentials
   where
     f1 = case credentials of
-      Nothing                                  -> 0x00
-      Just (_, Nothing)                        -> 0x80
-      Just (_, Just _)                         -> 0xc0
+      Nothing           -> 0x00
+      Just (_, Nothing) -> 0x80
+      Just (_, Just _)  -> 0xc0
     f2 = case will of
       Nothing                                  -> 0x00
       Just (Will _ _ Nothing False)            -> 0x04

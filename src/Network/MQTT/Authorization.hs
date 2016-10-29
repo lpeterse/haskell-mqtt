@@ -1,12 +1,19 @@
-{-# LANGUAGE TypeFamilies, FlexibleContexts #-}
+{-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE TypeFamilies     #-}
+--------------------------------------------------------------------------------
+-- |
+-- Module      :  Network.MQTT.Authorization
+-- Copyright   :  (c) Lars Petersen 2016
+-- License     :  MIT
+--
+-- Maintainer  :  info@lars-petersen.net
+-- Stability   :  experimental
+--------------------------------------------------------------------------------
 module Network.MQTT.Authorization where
 
-import Control.Exception
-import Control.Concurrent.MVar
-
-import Network.MQTT.Topic
-import Network.MQTT.Authentication
-import Network.MQTT.RoutingTree
+import           Control.Exception
+import           Network.MQTT.Authentication
+import           Network.MQTT.RoutingTree
 
 -- | An `Authorizer` is able to determine a `Principal`'s permissions.
 class (Authenticator a, Exception (AuthorizationException a)) => Authorizer a where

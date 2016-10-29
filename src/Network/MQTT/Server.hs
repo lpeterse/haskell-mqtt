@@ -1,4 +1,13 @@
 {-# LANGUAGE TypeFamilies #-}
+--------------------------------------------------------------------------------
+-- |
+-- Module      :  Network.MQTT.Server
+-- Copyright   :  (c) Lars Petersen 2016
+-- License     :  MIT
+--
+-- Maintainer  :  info@lars-petersen.net
+-- Stability   :  experimental
+--------------------------------------------------------------------------------
 module Network.MQTT.Server where
 
 import Control.Monad

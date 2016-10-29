@@ -42,15 +42,12 @@ module Network.MQTT.RoutingTree (
   , differenceWith
   ) where
 
-import qualified Data.ByteString.Short as BS
 import           Data.Functor.Identity
 import qualified Data.IntSet           as IS
 import           Data.List.NonEmpty    (NonEmpty (..))
-import qualified Data.List.NonEmpty    as NL
 import qualified Data.Map              as M
 import           Data.Maybe
 import           Data.Monoid
-import qualified Data.Sequence         as S
 import           Network.MQTT.Topic
 import           Prelude               hiding (map, null)
 
@@ -104,7 +101,6 @@ insertWith f tf a = insertWith' (topicFilterLevels tf)
       | nodeNull a  = RoutingTree m
       | otherwise   = RoutingTree $ M.alter g x m
       where
-        x:|xs = topicFilterLevels tf
         g mn = Just $ case xs of
           []     -> case mn of
             Nothing -> nodeFromTreeAndValue empty a
@@ -183,7 +179,7 @@ lookupWith f tf = lookupWith'(topicLevels tf)
     lookupWith' (x:|[]) (RoutingTree m) = case M.lookup x m of
       Nothing -> Nothing
       Just n  -> let RoutingTree m' = nodeTree n; v' = nodeValue n
-                 in  fromMaybe v' $ merge v' . nodeValue <$> M.lookup multiLevelWildcard m
+                 in  fromMaybe v' $ merge v' . nodeValue <$> M.lookup multiLevelWildcard m'
     lookupWith' (x:|y:zs) (RoutingTree m) =
       matchComponent `merge` matchSingleLevelWildcard `merge` matchMultiLevelWildcard
       where
@@ -250,16 +246,6 @@ matchTopicFilter tf = matchTopicFilter' (topicFilterLevels tf)
       fromMaybe False $ not . nodeNull <$> ( nodeValue =<< M.lookup x m )
     matchTopicFilter' (x:|y:zs) (RoutingTree m) =
       fromMaybe False $ matchTopicFilter' (y:|zs) . nodeTree <$> M.lookup x m
-
---------------------------------------------------------------------------------
--- Internal Utilities
---------------------------------------------------------------------------------
-
-hashElement :: BS.ShortByteString
-hashElement  = "#"
-
-plusElement :: BS.ShortByteString
-plusElement  = "+"
 
 --------------------------------------------------------------------------------
 -- Specialised nodeTree implemenations using data families

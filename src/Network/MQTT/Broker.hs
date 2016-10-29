@@ -12,13 +12,11 @@ module Network.MQTT.Broker where
 
 import           Control.Concurrent
 import           Control.Concurrent.BoundedChan
-import           Control.Concurrent.MVar
 import           Control.Monad
 import           Data.Functor.Identity
 import qualified Data.IntMap                    as IM
 import qualified Data.IntSet                    as IS
 import           Data.Maybe
-import qualified Data.Sequence                  as S
 import qualified Network.MQTT.RoutingTree       as R
 import           Network.MQTT.Topic
 

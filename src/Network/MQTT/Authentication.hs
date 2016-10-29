@@ -1,14 +1,20 @@
 {-# LANGUAGE TypeFamilies, FlexibleContexts #-}
+--------------------------------------------------------------------------------
+-- |
+-- Module      :  Network.MQTT.Authentication
+-- Copyright   :  (c) Lars Petersen 2016
+-- License     :  MIT
+--
+-- Maintainer  :  info@lars-petersen.net
+-- Stability   :  experimental
+--------------------------------------------------------------------------------
 module Network.MQTT.Authentication where
 
 import           Control.Exception
-
 import qualified Data.Text as T
 import qualified Data.ByteString as BS
 import qualified Data.X509 as X509
 import           Data.CaseInsensitive ( CI )
-
-import qualified Network.MQTT.RoutingTree as R
 
 -- | An `Authenticator` is able to determine a `Principal`'s identity from a
 --   `Request`.

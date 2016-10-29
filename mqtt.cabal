@@ -15,6 +15,7 @@ library
   ghc-options: -O2 -Wall
   ---fprof-auto -Wall
   exposed-modules:     Control.Concurrent.Broadcast,
+                       Network.Transceiver,
                        Network.MQTT,
                        Network.MQTT.Authentication,
                        Network.MQTT.Authorization,
@@ -24,8 +25,7 @@ library
                        Network.MQTT.Broker,
                        Network.MQTT.Topic,
                        Network.MQTT.RoutingTree,
-                       Network.TransportLayer,
-                       Network.Transceiver
+                       Network.MQTT.ServerStack
   build-depends:       async,
                        attoparsec,
                        base >=4.8 && <5,
