@@ -199,9 +199,9 @@ matchTopic (Topic (x:|[])) (RoutingTree m) =
   -- existence.
   -- A '+' node on the other hand may contain subtrees and may not carry a value
   -- itself. This needs to be checked.
-  matchX || matchPlus || matchHash
+  match || matchPlus || matchHash
   where
-    matchX       = isJust ( nodeValue =<< M.lookup x m)
+    match        = isJust ( nodeValue =<< M.lookup x m)
     matchPlus    = isJust ( nodeValue =<< M.lookup plusElement m )
     matchHash    = M.member hashElement m
 matchTopic (Topic (x:|y:zs)) (RoutingTree m) =

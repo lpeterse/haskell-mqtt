@@ -27,8 +27,10 @@ library
                        Network.TransportLayer,
                        Network.Transceiver
   build-depends:       async,
+                       attoparsec,
                        base >=4.8 && <5,
                        bytestring,
+                       binary,
                        exceptions,
                        text,
                        containers,
