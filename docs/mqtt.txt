@@ -6,16 +6,19 @@
 @version 0.1.0.0
 
 module Network.TransportLayer
-class Exception (TransportLayerException a) => TransportLayer a where data Transport a data TransportAddress a data TransportConfiguration a data TransportLayerException a where {
+class Exception (TransportException a) => TransportLayer a where data Transport a data TransportAddress a data TransportConfiguration a data TransportException a where {
     data family Transport a;
     data family TransportAddress a;
     data family TransportConfiguration a;
-    data family TransportLayerException a;
+    data family TransportException a;
 }
 new :: TransportLayer a => TransportConfiguration a -> IO (Transport a)
 close :: TransportLayer a => Transport a -> IO ()
-class TransportLayer a => ConnectionTransportLayer a where data Connection a where {
+class TransportLayer a => BindableTransportLayer a
+bind :: BindableTransportLayer a => Transport a -> TransportAddress a -> IO ()
+class TransportLayer a => ConnectionTransportLayer a where data Connection a data ConnectionRequest a where {
     data family Connection a;
+    data family ConnectionRequest a;
 }
 disconnect :: ConnectionTransportLayer a => Connection a -> IO ()
 class ConnectionTransportLayer a => StreamConnectionTransportLayer a
@@ -26,9 +29,9 @@ sendDatagram :: DatagramConnectionTransportLayer a => Connection a -> ByteString
 receiveDatagram :: DatagramConnectionTransportLayer a => Connection a -> Int -> IO ByteString
 class ConnectionTransportLayer a => AcceptingTransportLayer a
 listen :: AcceptingTransportLayer a => Transport a -> IO ()
-accept :: AcceptingTransportLayer a => Transport a -> IO (Connection a)
+accept :: AcceptingTransportLayer a => Transport a -> IO (Connection a, TransportAddress a, ConnectionRequest a)
 class ConnectionTransportLayer a => ConnectingTransportLayer a
-connect :: ConnectingTransportLayer a => Transport a -> IO (Connection a)
+connect :: ConnectingTransportLayer a => Transport a -> TransportAddress a -> ConnectionRequest a -> IO (Connection a)
 class AddressTranslatingTransport a where data TransportName a data TransportNameInfo a data TransportAddressInfo a data TransportAddressTranslationException a where {
     data family TransportName a;
     data family TransportNameInfo a;
@@ -39,9 +42,9 @@ name :: AddressTranslatingTransport a => TransportNameInfo a -> TransportName a
 address :: AddressTranslatingTransport a => TransportAddressInfo a -> TransportAddress a
 getNameInfo :: AddressTranslatingTransport a => TransportAddress a -> IO (NonEmpty (TransportNameInfo a))
 getAddressInfo :: AddressTranslatingTransport a => TransportName a -> IO (NonEmpty (TransportAddressInfo a))
-instance GHC.Show.Show (Network.TransportLayer.TransportLayerException (System.Socket.Internal.Socket.Socket f t p))
+instance GHC.Show.Show (Network.TransportLayer.TransportException (System.Socket.Internal.Socket.Socket f t p))
 instance (Data.Typeable.Internal.Typeable f, Data.Typeable.Internal.Typeable t, Data.Typeable.Internal.Typeable p, System.Socket.Internal.Socket.Family f, System.Socket.Internal.Socket.Type t, System.Socket.Internal.Socket.Protocol p) => Network.TransportLayer.TransportLayer (System.Socket.Internal.Socket.Socket f t p)
-instance (Data.Typeable.Internal.Typeable f, Data.Typeable.Internal.Typeable t, Data.Typeable.Internal.Typeable p) => GHC.Exception.Exception (Network.TransportLayer.TransportLayerException (System.Socket.Internal.Socket.Socket f t p))
+instance (Data.Typeable.Internal.Typeable f, Data.Typeable.Internal.Typeable t, Data.Typeable.Internal.Typeable p) => GHC.Exception.Exception (Network.TransportLayer.TransportException (System.Socket.Internal.Socket.Socket f t p))
 
 module Network.Transceiver
 class Transceiver a where type Data a type Exception a isTransceiverException _ _ = True where {
@@ -117,16 +120,34 @@ instance Network.Transceiver.Transceiver t => Network.Transceiver.Transceiver (N
 instance (Network.Transceiver.Acceptable t, Network.Transceiver.Data (Network.Transceiver.AcceptedConnection t) ~ Data.ByteString.Internal.ByteString, Network.Transceiver.AcceptedConnection t ~ t, Network.Transceiver.StreamConnection t) => Network.Transceiver.Acceptable (Network.Transceiver.SecureStreamServer t)
 
 module Network.MQTT.TopicFilter
-newtype Filter
-Filter :: (NonEmpty ShortByteString) -> Filter
-newtype Topic
-Topic :: (NonEmpty ShortByteString) -> Topic
-instance GHC.Show.Show Network.MQTT.TopicFilter.Topic
+
+-- | According to the MQTT specification a topic
+--   
+--   <ul>
+--   <li>may not be empty</li>
+--   <li>may not contain <tt>+</tt>, <tt>#</tt> or <tt>\NUL</tt>
+--   characters</li>
+--   </ul>
+data Topic
+data TopicFilter
+data TopicFilterLevel
+topicLevels :: Topic -> NonEmpty TopicFilterLevel
+topicFilterLevels :: TopicFilter -> NonEmpty TopicFilterLevel
+parseTopic :: Parser Topic
+parseTopicFilter :: Parser TopicFilter
+wildcardHash :: TopicFilterLevel
+wildcardPlus :: TopicFilterLevel
 instance GHC.Classes.Ord Network.MQTT.TopicFilter.Topic
 instance GHC.Classes.Eq Network.MQTT.TopicFilter.Topic
-instance GHC.Show.Show Network.MQTT.TopicFilter.Filter
-instance GHC.Classes.Ord Network.MQTT.TopicFilter.Filter
-instance GHC.Classes.Eq Network.MQTT.TopicFilter.Filter
+instance GHC.Classes.Ord Network.MQTT.TopicFilter.TopicFilter
+instance GHC.Classes.Eq Network.MQTT.TopicFilter.TopicFilter
+instance GHC.Classes.Ord Network.MQTT.TopicFilter.TopicFilterLevel
+instance GHC.Classes.Eq Network.MQTT.TopicFilter.TopicFilterLevel
+instance GHC.Show.Show Network.MQTT.TopicFilter.Topic
+instance GHC.Show.Show Network.MQTT.TopicFilter.TopicFilter
+instance GHC.Show.Show Network.MQTT.TopicFilter.TopicFilterLevel
+instance Data.String.IsString Network.MQTT.TopicFilter.Topic
+instance Data.String.IsString Network.MQTT.TopicFilter.TopicFilter
 
 module Network.MQTT.RoutingTree
 
@@ -143,7 +164,7 @@ module Network.MQTT.RoutingTree
 --   and size optimization to avoid unnecessary boxing and case
 --   distinction.
 newtype RoutingTree a
-RoutingTree :: (Map ShortByteString (RoutingTreeNode a)) -> RoutingTree a
+RoutingTree :: (Map TopicFilterLevel (RoutingTreeNode a)) -> RoutingTree a
 class RoutingTreeValue a where data RoutingTreeNode a where {
     data family RoutingTreeNode a;
 }
@@ -154,7 +175,7 @@ nodeFromTree :: RoutingTreeValue a => RoutingTree a -> RoutingTreeNode a
 nodeFromTreeAndValue :: RoutingTreeValue a => RoutingTree a -> a -> RoutingTreeNode a
 null :: RoutingTree a -> Bool
 empty :: RoutingTree a
-singleton :: RoutingTreeValue a => Filter -> a -> RoutingTree a
+singleton :: RoutingTreeValue a => TopicFilter -> a -> RoutingTree a
 lookupWith :: (RoutingTreeValue a) => (a -> a -> a) -> Topic -> RoutingTree a -> Maybe a
 
 -- | Match a <a>Topic</a> against a <a>RoutingTree</a>.
@@ -165,7 +186,7 @@ lookupWith :: (RoutingTreeValue a) => (a -> a -> a) -> Topic -> RoutingTree a ->
 --   <tt>#</tt> as described in the MQTT specification).
 matchTopic :: RoutingTreeValue a => Topic -> RoutingTree a -> Bool
 
--- | Match a <a>Filter</a> against a <a>RoutingTree</a>.
+-- | Match a <a>TopicFilter</a> against a <a>RoutingTree</a>.
 --   
 --   The function returns true iff the tree contains a path that is <i>less
 --   or equally specific</i> than the filter and the terminal node contains
@@ -185,12 +206,12 @@ matchTopic :: RoutingTreeValue a => Topic -> RoutingTree a -> Bool
 --   match (singleton "a") "+"     = False
 --   match (singleton "a") "#"     = False
 --   </pre>
-matchFilter :: RoutingTreeValue a => Filter -> RoutingTree a -> Bool
-insert :: RoutingTreeValue a => Filter -> a -> RoutingTree a -> RoutingTree a
-insertWith :: RoutingTreeValue a => (a -> a -> a) -> Filter -> a -> RoutingTree a -> RoutingTree a
+matchTopicFilter :: RoutingTreeValue a => TopicFilter -> RoutingTree a -> Bool
+insert :: RoutingTreeValue a => TopicFilter -> a -> RoutingTree a -> RoutingTree a
+insertWith :: RoutingTreeValue a => (a -> a -> a) -> TopicFilter -> a -> RoutingTree a -> RoutingTree a
 map :: (RoutingTreeValue a, RoutingTreeValue b) => (a -> b) -> RoutingTree a -> RoutingTree b
-adjust :: RoutingTreeValue a => (a -> a) -> Filter -> RoutingTree a -> RoutingTree a
-delete :: RoutingTreeValue a => Filter -> RoutingTree a -> RoutingTree a
+adjust :: RoutingTreeValue a => (a -> a) -> TopicFilter -> RoutingTree a -> RoutingTree a
+delete :: RoutingTreeValue a => TopicFilter -> RoutingTree a -> RoutingTree a
 unionWith :: (RoutingTreeValue a) => (a -> a -> a) -> RoutingTree a -> RoutingTree a -> RoutingTree a
 differenceWith :: RoutingTreeValue a => (a -> a -> a) -> RoutingTree a -> RoutingTree a -> RoutingTree a
 instance (Network.MQTT.RoutingTree.RoutingTreeValue a, GHC.Base.Monoid a) => GHC.Base.Monoid (Network.MQTT.RoutingTree.RoutingTree a)
@@ -235,8 +256,8 @@ SessionConfig :: Int -> Int -> Int -> SessionConfig
 [sessionConfigQueue2MaxSize] :: SessionConfig -> Int
 createSession :: Broker -> SessionConfig -> IO Session
 closeSession :: Session -> IO ()
-subscribeSession :: Session -> [(Filter, QosLevel)] -> IO ()
-unsubscribeSession :: Session -> [Filter] -> IO ()
+subscribeSession :: Session -> [(TopicFilter, QosLevel)] -> IO ()
+unsubscribeSession :: Session -> [TopicFilter] -> IO ()
 deliverSession :: Session -> Topic -> Message -> IO ()
 publishBroker :: Broker -> Topic -> Message -> IO ()
 instance GHC.Show.Show Network.MQTT.Broker.QosLevel
@@ -301,7 +322,7 @@ class (Authenticator a, Exception (AuthorizationException a)) => Authorizer a wh
 --   and update it from time to time.
 getPublishPermissions :: Authorizer a => Principal a -> IO (RoutingTree ())
 
--- | Determine the set of <a>Filter</a>s a <a>Principal</a> is allowed to
+-- | Determine the set of <tt>Filter</tt>s a <a>Principal</a> is allowed to
 --   subscribe. The <a>Principal</a> is implicitly allowed to subscribe all
 --   filters that are more specific than those explicitly stated in the
 --   <a>RoutingTree</a>.
@@ -310,7 +331,7 @@ getPublishPermissions :: Authorizer a => Principal a -> IO (RoutingTree ())
 --   implementation is advised to cache the result (i.e. in an <a>MVar</a>)
 --   and update it from time to time.
 --   
---   Also note that <a>Filter</a>s already subscribed by the client won't
+--   Also note that <tt>Filter</tt>s already subscribed by the client won't
 --   be unsubscribed if they are no longer in the current permission set.
 --   There is no way specified by MQTT to signal this to the client other
 --   than terminating the session.

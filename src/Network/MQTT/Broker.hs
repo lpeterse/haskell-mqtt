@@ -109,7 +109,7 @@ closeSession (Session session) =
               ( brokerSessions brokerState)
         }
 
-subscribeSession :: Session -> [(Filter, QosLevel)] -> IO ()
+subscribeSession :: Session -> [(TopicFilter, QosLevel)] -> IO ()
 subscribeSession (Session session) filters =
   modifyMVar_ session $ \sessionState->
     modifyMVar (unBroker $ sessionBroker sessionState) $ \brokerState-> do
@@ -125,7 +125,7 @@ subscribeSession (Session session) filters =
            }
       pure (newBrokerState, newSessionState)
 
-unsubscribeSession :: Session -> [Filter] -> IO ()
+unsubscribeSession :: Session -> [TopicFilter] -> IO ()
 unsubscribeSession (Session session) filters =
   modifyMVar_ session $ \sessionState->
     modifyMVar (unBroker $ sessionBroker sessionState) $ \brokerState-> do
@@ -183,7 +183,7 @@ data  MqttBrokerSession
       , sessionGuaranteedDeliveryQueue :: BC.BoundedChan Message
       , sessionInboundPacketState      :: MVar (IM.IntMap InboundPacketState)
       , sessionOutboundPacketState     :: MVar (IM.IntMap OutboundPacketState)
-      , sessionSubscriptions           :: IS.Set TopicFilter
+      , sessionSubscriptions           :: IS.Set TopicTopicFilter
       }
 
 data  Identity

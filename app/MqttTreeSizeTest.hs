@@ -1,16 +1,17 @@
 {-# LANGUAGE OverloadedStrings #-}
 module Main where
 
-import Control.Monad ( foldM )
-import Control.Concurrent
-import Data.IntSet as IS
-import Network.MQTT.RoutingTree as R
-import System.Mem
-import System.Random ( randomIO )
+import           Control.Concurrent
+import           Control.Monad            (foldM)
+import           Data.IntSet              as IS
+import qualified Data.List.NonEmpty       as NL
+import           Network.MQTT.RoutingTree as R
+import           Network.MQTT.TopicFilter
+import           System.Mem
+import           System.Random            (randomIO)
 
-import qualified Data.ByteString.Short as BS
-import qualified Data.Map as M
-import qualified Data.IntSet as IS
+import qualified Data.IntSet              as IS
+import qualified Data.Map                 as M
 
 main :: IO ()
 main  = do
@@ -39,6 +40,6 @@ randomTree depth branching = RoutingTree <$> foldM (\m e->
             then pure accum
             else f (succ i) $! IS.insert i accum
 
-randomTreeElements  :: [BS.ShortByteString]
+randomTreeElements  :: [TopicFilterLevel]
 randomTreeElements =
-  [ "a","b","c","d","e","f","g","h","i","j","k","l","m" ]
+  fmap (NL.head . topicLevels) ["a","b","c","d","e","f","g","h","i","j","k","l","m" :: Topic]

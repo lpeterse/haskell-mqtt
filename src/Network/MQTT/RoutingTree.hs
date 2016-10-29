@@ -13,8 +13,8 @@ module Network.MQTT.RoutingTree (
   , lookupWith
   -- ** matchTopic
   , matchTopic
-  -- ** matchFilter
-  , matchFilter
+  -- ** matchTopicFilter
+  , matchTopicFilter
   -- ** insert
   , insert
   -- ** insertWith
@@ -58,7 +58,7 @@ import Network.MQTT.TopicFilter
 --   (i.e. an empty set) the `RoutingTreeValue` is a class defining the data
 --   family `RoutingTreeNode`. This a performance and size optimization to avoid
 --   unnecessary boxing and case distinction.
-newtype RoutingTree a = RoutingTree (M.Map BS.ShortByteString (RoutingTreeNode a))
+newtype RoutingTree a = RoutingTree (M.Map TopicFilterLevel (RoutingTreeNode a))
 
 class RoutingTreeValue a where
   data RoutingTreeNode a
@@ -78,57 +78,64 @@ empty  = RoutingTree mempty
 null  :: RoutingTree a -> Bool
 null (RoutingTree m) = M.null m
 
-singleton :: RoutingTreeValue a => Filter -> a -> RoutingTree a
-singleton (Filter (x:|xs)) a
-  | nodeNull a  = empty
-  | otherwise   = RoutingTree $ M.singleton x $ case xs of
-      []     -> nodeFromTreeAndValue empty a
-      (y:ys) -> nodeFromTree (singleton (Filter $ y:|ys) a)
+singleton :: RoutingTreeValue a => TopicFilter -> a -> RoutingTree a
+singleton tf = singleton' (topicFilterLevels tf)
+  where
+    singleton' (x:|xs) a
+      | nodeNull a  = empty
+      | otherwise   = RoutingTree $ M.singleton x $ case xs of
+          []     -> nodeFromTreeAndValue empty a
+          (y:ys) -> nodeFromTree (singleton' (y:|ys) a)
 
-insert :: RoutingTreeValue a => Filter -> a -> RoutingTree a -> RoutingTree a
+insert :: RoutingTreeValue a => TopicFilter -> a -> RoutingTree a -> RoutingTree a
 insert  = insertWith const
 
-insertWith :: RoutingTreeValue a => (a -> a -> a) -> Filter -> a -> RoutingTree a -> RoutingTree a
-insertWith f (Filter (x:|xs)) a (RoutingTree m)
-  | nodeNull a  = RoutingTree m
-  | otherwise   = RoutingTree $ M.alter g x m
+insertWith :: RoutingTreeValue a => (a -> a -> a) -> TopicFilter -> a -> RoutingTree a -> RoutingTree a
+insertWith f tf a = insertWith' (topicFilterLevels tf)
   where
-    g mn = Just $ case xs of
-      []     -> case mn of
-        Nothing -> nodeFromTreeAndValue empty a
-        Just n  -> nodeFromTreeAndValue (nodeTree n) $ fromMaybe a $ f a <$> nodeValue n
-      (y:ys) -> nodeFromTree $ insertWith f (Filter $ y:|ys) a $ fromMaybe empty $ nodeTree <$> mn
+    insertWith' (x:|xs) (RoutingTree m)
+      | nodeNull a  = RoutingTree m
+      | otherwise   = RoutingTree $ M.alter g x m
+      where
+        x:|xs = topicFilterLevels tf
+        g mn = Just $ case xs of
+          []     -> case mn of
+            Nothing -> nodeFromTreeAndValue empty a
+            Just n  -> nodeFromTreeAndValue (nodeTree n) $ fromMaybe a $ f a <$> nodeValue n
+          (y:ys) -> nodeFromTree $ insertWith' (y:|ys) $ fromMaybe empty $ nodeTree <$> mn
 
-adjust :: RoutingTreeValue a => (a -> a) -> Filter -> RoutingTree a -> RoutingTree a
-adjust f (Filter (x:|xs)) (RoutingTree m) =
-  RoutingTree $ M.update g x m
+adjust :: RoutingTreeValue a => (a -> a) -> TopicFilter -> RoutingTree a -> RoutingTree a
+adjust f tf = adjust' (topicFilterLevels tf)
   where
-    g n = case xs of
-      [] -> case nodeValue n of
-        Just v  ->
-          let t' = nodeTree n; v' = f v in
-          if null t' && nodeNull v'
-            then Nothing
-            else Just $ nodeFromTreeAndValue t' v'
-        Nothing -> Just n -- nodeTree is non-empty by invariant
-      (y:ys) ->
-        let t'@(RoutingTree m') = adjust f (Filter $ y:|ys) (nodeTree n) in
-        case nodeValue n of
-          Just v  -> Just $ nodeFromTreeAndValue t' v
-          Nothing -> if M.null m' then Nothing else Just (nodeFromTree t')
+    adjust' (x:|xs) (RoutingTree m) = RoutingTree $ M.update g x m
+      where
+        g n = case xs of
+          [] -> case nodeValue n of
+            Just v  ->
+              let t' = nodeTree n; v' = f v in
+              if null t' && nodeNull v'
+                then Nothing
+                else Just $ nodeFromTreeAndValue t' v'
+            Nothing -> Just n -- nodeTree is non-empty by invariant
+          (y:ys) ->
+            let t'@(RoutingTree m') = adjust' (y:|ys) (nodeTree n) in
+            case nodeValue n of
+              Just v  -> Just $ nodeFromTreeAndValue t' v
+              Nothing -> if M.null m' then Nothing else Just (nodeFromTree t')
 
-delete :: RoutingTreeValue a => Filter -> RoutingTree a -> RoutingTree a
-delete (Filter (x:|xs)) (RoutingTree m) =
-  RoutingTree $ M.update g x m
+delete :: RoutingTreeValue a => TopicFilter -> RoutingTree a -> RoutingTree a
+delete tf = delete' (topicFilterLevels tf)
   where
-    g n = case xs of
-      [] | null (nodeTree n) -> Nothing
-         | otherwise     -> Just $ nodeFromTree $ nodeTree n
-      y:ys -> let t = delete (Filter $ y:|ys) (nodeTree n) in
-       case nodeValue n of
-         Nothing | null t    -> Nothing
-                 | otherwise -> Just $ nodeFromTree t
-         Just v -> Just $ nodeFromTreeAndValue t v
+    delete' (x:|xs) (RoutingTree m) = RoutingTree $ M.update g x m
+      where
+        g n = case xs of
+          [] | null (nodeTree n) -> Nothing
+             | otherwise     -> Just $ nodeFromTree $ nodeTree n
+          y:ys -> let t = delete' (y:|ys) (nodeTree n) in
+           case nodeValue n of
+             Nothing | null t    -> Nothing
+                     | otherwise -> Just $ nodeFromTree t
+             Just v -> Just $ nodeFromTreeAndValue t v
 
 map :: (RoutingTreeValue a, RoutingTreeValue b) => (a -> b) -> RoutingTree a -> RoutingTree b
 map f (RoutingTree m) = RoutingTree $ fmap g m
@@ -141,13 +148,11 @@ map f (RoutingTree m) = RoutingTree $ fmap g m
 unionWith :: (RoutingTreeValue a) => (a -> a -> a) -> RoutingTree a -> RoutingTree a -> RoutingTree a
 unionWith f (RoutingTree m1) (RoutingTree m2) = RoutingTree (M.unionWith g m1 m2)
   where
-    g n1 n2 = merge
-      (unionWith f (nodeTree n1) (nodeTree n2))
-      (nodeValue n1) (nodeValue n2)
     merge t (Just v1) (Just v2) = nodeFromTreeAndValue t (f v1 v2)
     merge t (Just v1)  _        = nodeFromTreeAndValue t v1
     merge t  _        (Just v2) = nodeFromTreeAndValue t v2
     merge t  _         _        = nodeFromTree         t
+    g n1 n2 = merge (unionWith f (nodeTree n1) (nodeTree n2)) (nodeValue n1) (nodeValue n2)
 
 differenceWith :: RoutingTreeValue a => (a -> a -> a) -> RoutingTree a -> RoutingTree a -> RoutingTree a
 differenceWith f (RoutingTree m1) (RoutingTree m2) = RoutingTree (M.differenceWith g m1 m2)
@@ -162,28 +167,24 @@ differenceWith f (RoutingTree m1) (RoutingTree m2) = RoutingTree (M.differenceWi
                  | otherwise            = Just (nodeFromTreeAndValue t v)
 
 lookupWith :: (RoutingTreeValue a) => (a -> a -> a) -> Topic -> RoutingTree a -> Maybe a
-lookupWith f (Topic (x:|[])) (RoutingTree m) =
-  case M.lookup x m of
-    Nothing -> Nothing
-    Just n  -> let RoutingTree m' = nodeTree n; v' = nodeValue n
-               in  fromMaybe v' $ merge v' . nodeValue <$> M.lookup hashElement m
+lookupWith f tf = lookupWith'(topicLevels tf)
   where
     merge (Just v1) (Just v2) = Just (f v1 v2)
     merge (Just v1) _         = Just v1
     merge _         (Just v2) = Just v2
     merge _         _         = Nothing
-lookupWith f (Topic (x:|y:zs)) (RoutingTree m) =
-  matchComponent `merge` matchSingleLevelWildcard `merge` matchMultiLevelWildcard
-  where
-    merge (Just v1) (Just v2) = Just (f v1 v2)
-    merge (Just v1) _         = Just v1
-    merge _         (Just v2) = Just v2
-    merge _         _         = Nothing
-    matchComponent =
-      M.lookup x m >>= lookupWith f (Topic $ y:|zs) . nodeTree
-    matchSingleLevelWildcard =
-      M.lookup plusElement m >>= lookupWith f (Topic $ y:|zs) . nodeTree
-    matchMultiLevelWildcard = M.lookup hashElement m >>= nodeValue
+    lookupWith' (x:|[]) (RoutingTree m) = case M.lookup x m of
+      Nothing -> Nothing
+      Just n  -> let RoutingTree m' = nodeTree n; v' = nodeValue n
+                 in  fromMaybe v' $ merge v' . nodeValue <$> M.lookup wildcardHash m
+    lookupWith' (x:|y:zs) (RoutingTree m) =
+      matchComponent `merge` matchSingleLevelWildcard `merge` matchMultiLevelWildcard
+      where
+        matchComponent =
+          M.lookup x m >>= lookupWith' ( y:|zs) . nodeTree
+        matchSingleLevelWildcard =
+          M.lookup wildcardPlus m >>= lookupWith' (y:|zs) . nodeTree
+        matchMultiLevelWildcard = M.lookup wildcardHash m >>= nodeValue
 
 -- | Match a `Topic` against a `RoutingTree`.
 --
@@ -192,30 +193,32 @@ lookupWith f (Topic (x:|y:zs)) (RoutingTree m) =
 --   indirectly matched by wildcard characters like `+` and `#` as described
 --   in the MQTT specification).
 matchTopic :: RoutingTreeValue a => Topic -> RoutingTree a -> Bool
-matchTopic (Topic (x:|[])) (RoutingTree m) =
-  -- The '#' is always a terminal node and therefore does not contain subtrees.
-  -- By invariant, a '#' node only exists if it contains a value. For this
-  -- reason it does not need to be checked for a value here, but just for
-  -- existence.
-  -- A '+' node on the other hand may contain subtrees and may not carry a value
-  -- itself. This needs to be checked.
-  match || matchPlus || matchHash
+matchTopic tf = matchTopic' (topicLevels tf)
   where
-    match        = isJust ( nodeValue =<< M.lookup x m)
-    matchPlus    = isJust ( nodeValue =<< M.lookup plusElement m )
-    matchHash    = M.member hashElement m
-matchTopic (Topic (x:|y:zs)) (RoutingTree m) =
-  -- Same is true for '#' node here. In case no '#' hash node is present it is
-  -- first tried to match the exact topic and then to match any '+' node.
-  M.member hashElement m || case M.lookup x m of
-      Nothing -> matchPlus
-      Just n  -> matchTopic (Topic (y:|zs)) (nodeTree n) || matchPlus
-  where
-    -- A '+' node matches any topic element.
-    matchPlus = fromMaybe False
-              $ matchTopic (Topic (y:|zs)) . nodeTree <$> M.lookup plusElement m
+    matchTopic' (x:|[]) (RoutingTree m) =
+      match || matchPlus || matchHash
+      -- The '#' is always a terminal node and therefore does not contain subtrees.
+      -- By invariant, a '#' node only exists if it contains a value. For this
+      -- reason it does not need to be checked for a value here, but just for
+      -- existence.
+      -- A '+' node on the other hand may contain subtrees and may not carry a value
+      -- itself. This needs to be checked.
+      where
+        match        = isJust ( nodeValue =<< M.lookup x m)
+        matchPlus    = isJust ( nodeValue =<< M.lookup wildcardPlus m )
+        matchHash    = M.member wildcardHash m
+    matchTopic' (x:|y:zs) (RoutingTree m) =
+      M.member wildcardHash m || case M.lookup x m of
+        -- Same is true for '#' node here. In case no '#' hash node is present it is
+        -- first tried to match the exact topic and then to match any '+' node.
+        Nothing -> matchPlus
+        Just n  -> matchTopic' (y:|zs) (nodeTree n) || matchPlus
+      where
+        -- A '+' node matches any topic element.
+        matchPlus = fromMaybe False
+                  $ matchTopic' (y:|zs) . nodeTree <$> M.lookup wildcardPlus m
 
--- | Match a `Filter` against a `RoutingTree`.
+-- | Match a `TopicFilter` against a `RoutingTree`.
 --
 --   The function returns true iff the tree contains a path that is
 --   /less or equally specific/ than the filter and the terminal node contains
@@ -233,11 +236,13 @@ matchTopic (Topic (x:|y:zs)) (RoutingTree m) =
 --   > match (singleton "a") "b"     = False
 --   > match (singleton "a") "+"     = False
 --   > match (singleton "a") "#"     = False
-matchFilter :: RoutingTreeValue a => Filter -> RoutingTree a -> Bool
-matchFilter (Filter (x:|[])) (RoutingTree m) =
-  fromMaybe False $ not . nodeNull <$> ( nodeValue =<< M.lookup x m )
-matchFilter (Filter (x:|(y:zs))) (RoutingTree m) =
-  fromMaybe False $ matchFilter (Filter $ y:|zs) . nodeTree <$> M.lookup x m
+matchTopicFilter :: RoutingTreeValue a => TopicFilter -> RoutingTree a -> Bool
+matchTopicFilter tf = matchTopicFilter' (topicFilterLevels tf)
+  where
+    matchTopicFilter' (x:|[])   (RoutingTree m) =
+      fromMaybe False $ not . nodeNull <$> ( nodeValue =<< M.lookup x m )
+    matchTopicFilter' (x:|y:zs) (RoutingTree m) =
+      fromMaybe False $ matchTopicFilter' (y:|zs) . nodeTree <$> M.lookup x m
 
 --------------------------------------------------------------------------------
 -- Internal Utilities
