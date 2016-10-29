@@ -176,15 +176,15 @@ lookupWith f tf = lookupWith'(topicLevels tf)
     lookupWith' (x:|[]) (RoutingTree m) = case M.lookup x m of
       Nothing -> Nothing
       Just n  -> let RoutingTree m' = nodeTree n; v' = nodeValue n
-                 in  fromMaybe v' $ merge v' . nodeValue <$> M.lookup wildcardHash m
+                 in  fromMaybe v' $ merge v' . nodeValue <$> M.lookup multiLevelWildcard m
     lookupWith' (x:|y:zs) (RoutingTree m) =
       matchComponent `merge` matchSingleLevelWildcard `merge` matchMultiLevelWildcard
       where
         matchComponent =
           M.lookup x m >>= lookupWith' ( y:|zs) . nodeTree
         matchSingleLevelWildcard =
-          M.lookup wildcardPlus m >>= lookupWith' (y:|zs) . nodeTree
-        matchMultiLevelWildcard = M.lookup wildcardHash m >>= nodeValue
+          M.lookup singleLevelWildcard m >>= lookupWith' (y:|zs) . nodeTree
+        matchMultiLevelWildcard = M.lookup multiLevelWildcard m >>= nodeValue
 
 -- | Match a `Topic` against a `RoutingTree`.
 --
@@ -205,10 +205,10 @@ matchTopic tf = matchTopic' (topicLevels tf)
       -- itself. This needs to be checked.
       where
         match        = isJust ( nodeValue =<< M.lookup x m)
-        matchPlus    = isJust ( nodeValue =<< M.lookup wildcardPlus m )
-        matchHash    = M.member wildcardHash m
+        matchPlus    = isJust ( nodeValue =<< M.lookup singleLevelWildcard m )
+        matchHash    = M.member multiLevelWildcard m
     matchTopic' (x:|y:zs) (RoutingTree m) =
-      M.member wildcardHash m || case M.lookup x m of
+      M.member multiLevelWildcard m || case M.lookup x m of
         -- Same is true for '#' node here. In case no '#' hash node is present it is
         -- first tried to match the exact topic and then to match any '+' node.
         Nothing -> matchPlus
@@ -216,7 +216,7 @@ matchTopic tf = matchTopic' (topicLevels tf)
       where
         -- A '+' node matches any topic element.
         matchPlus = fromMaybe False
-                  $ matchTopic' (y:|zs) . nodeTree <$> M.lookup wildcardPlus m
+                  $ matchTopic' (y:|zs) . nodeTree <$> M.lookup singleLevelWildcard m
 
 -- | Match a `TopicFilter` against a `RoutingTree`.
 --

@@ -1,7 +1,10 @@
-{-# LANGUAGE OverloadedStrings, TypeFamilies, BangPatterns, TupleSections #-}
+{-# LANGUAGE BangPatterns      #-}
+{-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE TupleSections     #-}
+{-# LANGUAGE TypeFamilies      #-}
 --------------------------------------------------------------------------------
 -- |
--- Module      :  Network.MQTT
+-- Module      :  Network.MQTT.Client
 -- Copyright   :  (c) Lars Petersen 2016
 -- License     :  MIT
 --
@@ -25,38 +28,33 @@ module Network.MQTT.Client
   , unsubscribe
   ) where
 
-import Data.Int
-import Data.Word
-import Data.Typeable
-import qualified Data.Map as M
-import qualified Data.IntMap as IM
-import qualified Data.ByteString as BS
-import qualified Data.ByteString.Unsafe as BS
-import qualified Data.ByteString.Builder as BS
+import           Control.Concurrent
+import           Control.Concurrent.Async
+import           Control.Concurrent.Broadcast
+import           Control.Concurrent.MVar
+import           Control.Exception
+import           Control.Monad
+import qualified Data.ByteString               as BS
+import qualified Data.ByteString.Builder       as BS
 import qualified Data.ByteString.Builder.Extra as BS
-import qualified Data.ByteString.Lazy as LBS
-import qualified Data.Text as T
-import qualified Data.Text.Encoding as T
-import qualified Data.Serialize.Get as SG
-
-import Foreign.Ptr
-import Foreign.Marshal.Alloc
-
-import Control.Exception
-import Control.Monad
-import Control.Concurrent
-import Control.Concurrent.MVar
-import Control.Concurrent.Async
-import Control.Concurrent.Broadcast
-
-import System.Random
-
-import Network.URI
-import Network.MQTT
-import Network.MQTT.IO
-import Network.MQTT.Message
-
-import qualified Network.Transceiver as T
+import qualified Data.ByteString.Lazy          as LBS
+import qualified Data.ByteString.Unsafe        as BS
+import           Data.Int
+import qualified Data.IntMap                   as IM
+import qualified Data.Map                      as M
+import qualified Data.Serialize.Get            as SG
+import qualified Data.Text                     as T
+import qualified Data.Text.Encoding            as T
+import           Data.Typeable
+import           Data.Word
+import           Foreign.Marshal.Alloc
+import           Foreign.Ptr
+import           Network.MQTT
+import           Network.MQTT.IO
+import           Network.MQTT.Message
+import qualified Network.Transceiver           as T
+import           Network.URI
+import           System.Random
 
 data ClientConfiguration t
    = ClientConfiguration
@@ -257,7 +255,7 @@ start c = modifyMVar_ (clientThreads c) $ \p->
                 assignPacketIdentifier :: (PacketIdentifier -> (RawMessage, OutboundState)) -> IO RawMessage
                 assignPacketIdentifier x =
                   modifyMVar (clientOutboundState c) assign >>= \mm-> case mm of
-                    Just m -> pure m
+                    Just m  -> pure m
                     -- We cannot easily wait for when packet identifiers are available again.
                     -- On the other hand throwing an exception seems too drastic. So (for the
                     -- extremely unlikely) case of packet identifier exhaustion, we shall wait

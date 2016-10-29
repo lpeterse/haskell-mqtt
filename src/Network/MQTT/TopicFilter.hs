@@ -7,33 +7,33 @@ module Network.MQTT.TopicFilter
   , topicFilterLevels
   , parseTopic
   , parseTopicFilter
-  , wildcardHash
-  , wildcardPlus
+  , multiLevelWildcard
+  , singleLevelWildcard
   ) where
 
-import Control.Monad ( void )
+import           Control.Applicative
+import           Control.Monad                  (void)
+import qualified Data.Attoparsec.ByteString     as A
 import qualified Data.ByteString.Short          as BS
 import qualified Data.ByteString.Short.Internal as BS
-import qualified Data.Attoparsec.ByteString     as A
-import Data.List
-import Data.List.NonEmpty           (NonEmpty(..))
+import           Data.List
+import           Data.List.NonEmpty             (NonEmpty (..))
 import           Data.String
-import qualified Data.Text as T
-import qualified Data.Text.Encoding as T
-import qualified Data.Text.Encoding.Error as T
-import Control.Applicative
-import Data.Word
+import qualified Data.Text                      as T
+import qualified Data.Text.Encoding             as T
+import qualified Data.Text.Encoding.Error       as T
+import           Data.Word
 
 -- | According to the MQTT specification a topic
 --
 --  * may not be empty
 --  * may not contain @+@, @#@ or @\\NUL@ characters
-newtype Topic  = Topic (NonEmpty TopicFilterLevel) deriving (Eq, Ord)
-newtype TopicFilter = TopicFilter (NonEmpty TopicFilterLevel) deriving (Eq, Ord)
-newtype TopicFilterLevel = TopicFilterLevel BS.ShortByteString deriving (Eq, Ord)
+newtype Topic            = Topic (NonEmpty TopicFilterLevel)       deriving (Eq, Ord)
+newtype TopicFilter      = TopicFilter (NonEmpty TopicFilterLevel) deriving (Eq, Ord)
+newtype TopicFilterLevel = TopicFilterLevel BS.ShortByteString     deriving (Eq, Ord)
 
 instance Show Topic where
-  show (Topic xs)       = show (TopicFilter xs)
+  show (Topic xs) = show (TopicFilter xs)
 
 instance Show TopicFilter where
   show (TopicFilter (x:|xs)) = concat ["\"", intercalate "/" $ show x : map show xs, "\""]
@@ -81,7 +81,7 @@ parseTopicFilter = (<|> fail "invalid filter") $ TopicFilter <$> do
   pure (level :| levels)
   where
     pSlash       = A.skip (== slash)
-    pHashOrLevel = (A.skip (== hash) >> A.endOfInput >> pure wildcardHash) <|> pLevel
+    pHashOrLevel = (A.skip (== hash) >> A.endOfInput >> pure multiLevelWildcard) <|> pLevel
     pLevel       = TopicFilterLevel . BS.toShort <$> A.takeWhile
                    (\w8-> w8 /= slash && w8 /= zero && w8 /= hash)
 
@@ -91,8 +91,8 @@ plus  = 0x2b
 hash  = 0x23
 slash = 0x2f
 
-wildcardHash :: TopicFilterLevel
-wildcardHash  = TopicFilterLevel $ BS.pack $ pure hash
+multiLevelWildcard :: TopicFilterLevel
+multiLevelWildcard  = TopicFilterLevel $ BS.pack $ pure hash
 
-wildcardPlus :: TopicFilterLevel
-wildcardPlus  = TopicFilterLevel $ BS.pack $ pure plus
+singleLevelWildcard :: TopicFilterLevel
+singleLevelWildcard  = TopicFilterLevel $ BS.pack $ pure plus

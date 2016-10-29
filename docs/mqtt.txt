@@ -135,8 +135,8 @@ topicLevels :: Topic -> NonEmpty TopicFilterLevel
 topicFilterLevels :: TopicFilter -> NonEmpty TopicFilterLevel
 parseTopic :: Parser Topic
 parseTopicFilter :: Parser TopicFilter
-wildcardHash :: TopicFilterLevel
-wildcardPlus :: TopicFilterLevel
+multiLevelWildcard :: TopicFilterLevel
+singleLevelWildcard :: TopicFilterLevel
 instance GHC.Classes.Ord Network.MQTT.TopicFilter.Topic
 instance GHC.Classes.Eq Network.MQTT.TopicFilter.Topic
 instance GHC.Classes.Ord Network.MQTT.TopicFilter.TopicFilter
