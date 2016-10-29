@@ -12,7 +12,7 @@ build-type:          Simple
 cabal-version:       >=1.10
 
 library
-  ghc-options: -O2
+  ghc-options: -O2 -Wall
   ---fprof-auto -Wall
   exposed-modules:     Control.Concurrent.Broadcast,
                        Network.MQTT,
@@ -55,7 +55,8 @@ test-suite test
   main-is:
     test.hs
   other-modules:
-    RoutingTreeTest
+    RoutingTreeTest,
+    TopicTest
   build-depends:
       base >= 4.8 && < 5
     , cereal

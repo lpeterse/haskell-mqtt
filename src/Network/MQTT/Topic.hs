@@ -25,7 +25,6 @@ import           Control.Applicative
 import           Control.Monad                  (void)
 import qualified Data.Attoparsec.ByteString     as A
 import qualified Data.ByteString.Short          as BS
-import qualified Data.ByteString.Short.Internal as BS
 import           Data.List
 import           Data.List.NonEmpty             (NonEmpty (..))
 import           Data.String
@@ -50,7 +49,7 @@ instance Show TopicFilter where
 
 instance Show TopicFilterLevel where
   show (TopicFilterLevel x) =
-    T.unpack $ T.decodeUtf8With T.lenientDecode $ BS.fromShort x
+    concat ["\"", T.unpack $ T.decodeUtf8With T.lenientDecode $ BS.fromShort x, "\""]
 
 instance IsString Topic where
   fromString s = case A.parseOnly parseTopic (T.encodeUtf8 $ T.pack s) of
@@ -83,22 +82,24 @@ parseTopic = (<|> fail "invalid topic") $ Topic <$> do
   A.endOfInput
   pure (level :| levels)
   where
-    pSlash      = A.skip (== slash)
+    pSlash      = void (A.word8 slash)
     pLevel      = TopicFilterLevel . BS.toShort <$> A.takeWhile
                   (\w8-> w8 /= slash && w8 /= zero && w8 /= hash && w8 /= plus)
 
 parseTopicFilter :: A.Parser TopicFilter
 parseTopicFilter = (<|> fail "invalid filter") $ TopicFilter <$> do
   void A.peekWord8'
-  level  <- pHashOrLevel
-  levels <- A.many' (pSlash >> pHashOrLevel)
-  A.endOfInput
-  pure (level :| levels)
+  (x:xs) <- pLevels
+  pure (x:|xs)
   where
-    pSlash       = A.skip (== slash)
-    pHashOrLevel = (A.skip (== hash) >> A.endOfInput >> pure multiLevelWildcard) <|> pLevel
-    pLevel       = TopicFilterLevel . BS.toShort <$> A.takeWhile
-                   (\w8-> w8 /= slash && w8 /= zero && w8 /= hash)
+    pSlash = void (A.word8 slash)
+    pLevel = TopicFilterLevel . BS.toShort <$> A.takeWhile
+      (\w8-> w8 /= slash && w8 /= zero && w8 /= hash && w8 /= plus)
+    pLevels
+       =  (void (A.word8 hash) >> A.endOfInput >> pure [multiLevelWildcard])
+      <|> (void (A.word8 plus) >> ((A.endOfInput >> pure [singleLevelWildcard]) <|>
+                       (pSlash >> (:) <$> pure singleLevelWildcard <*> pLevels)))
+      <|> (pLevel >>= \x-> (x:) <$> ((A.endOfInput >> pure []) <|> (pSlash >> pLevels)))
 
 parseTopicFilterLevel :: A.Parser TopicFilterLevel
 parseTopicFilterLevel = do
