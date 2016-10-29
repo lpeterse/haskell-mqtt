@@ -57,5 +57,5 @@ class Request r where
   --   verified that the peer owns the corresponding private key. The validation
   --   of the certificate claims (including certificate chain checking) /must/
   --   be performed by the `Authenticator`.
-  requestCertificateChain :: r -> [X509.Certificate]
-  requestCertificateChain  = const []
+  requestCertificateChain :: r -> Maybe X509.CertificateChain
+  requestCertificateChain  = const Nothing
