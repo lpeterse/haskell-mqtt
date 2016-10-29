@@ -1,4 +1,15 @@
-{-# LANGUAGE TypeFamilies, FlexibleInstances, OverloadedStrings #-}
+{-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE TypeFamilies      #-}
+--------------------------------------------------------------------------------
+-- |
+-- Module      :  Network.MQTT.RoutingTree
+-- Copyright   :  (c) Lars Petersen 2016
+-- License     :  MIT
+--
+-- Maintainer  :  info@lars-petersen.net
+-- Stability   :  experimental
+--------------------------------------------------------------------------------
 module Network.MQTT.RoutingTree (
   -- * RoutingTree
     RoutingTree (..)
@@ -31,21 +42,17 @@ module Network.MQTT.RoutingTree (
   , differenceWith
   ) where
 
-import Prelude hiding ( map, null )
-
-import Data.Maybe
-import Data.Monoid
-import Data.List.NonEmpty ( NonEmpty(..) )
-import Data.Functor.Identity
-
-import qualified Data.List.NonEmpty as NL
-import qualified Data.Sequence as S
-
 import qualified Data.ByteString.Short as BS
-import qualified Data.Map as M
-import qualified Data.IntSet as IS
-
-import Network.MQTT.Topic
+import           Data.Functor.Identity
+import qualified Data.IntSet           as IS
+import           Data.List.NonEmpty    (NonEmpty (..))
+import qualified Data.List.NonEmpty    as NL
+import qualified Data.Map              as M
+import           Data.Maybe
+import           Data.Monoid
+import qualified Data.Sequence         as S
+import           Network.MQTT.Topic
+import           Prelude               hiding (map, null)
 
 -- | The `RoutingTree` is a map-like data structure designed to hold elements
 --   that can efficiently be queried according to the matching rules specified
@@ -56,8 +63,8 @@ import Network.MQTT.Topic
 --   The tree consists of nodes that may or may not contain values. The edges
 --   are filter components. As some value types have the concept of a null
 --   (i.e. an empty set) the `RoutingTreeValue` is a class defining the data
---   family `RoutingTreeNode`. This a performance and size optimization to avoid
---   unnecessary boxing and case distinction.
+--   family `RoutingTreeNode`. This is a performance and size optimization to
+--   avoid unnecessary boxing and case distinction.
 newtype RoutingTree a = RoutingTree (M.Map TopicFilterLevel (RoutingTreeNode a))
 
 class RoutingTreeValue a where
@@ -158,9 +165,9 @@ differenceWith :: RoutingTreeValue a => (a -> a -> a) -> RoutingTree a -> Routin
 differenceWith f (RoutingTree m1) (RoutingTree m2) = RoutingTree (M.differenceWith g m1 m2)
   where
     g n1 n2 = k (differenceWith f (nodeTree n1) (nodeTree n2)) (d (nodeValue n1) (nodeValue n2))
-    d (Just v1) (Just v2)               = Just (f v1 v2)
-    d (Just v1)  _                      = Just v1
-    d  _         _                      = Nothing
+    d (Just v1) (Just v2) = Just (f v1 v2)
+    d (Just v1)  _        = Just v1
+    d  _         _        = Nothing
     k t Nothing  | null t               = Nothing
                  | otherwise            = Just (nodeFromTree t)
     k t (Just v) | null t && nodeNull v = Nothing
@@ -273,10 +280,10 @@ instance RoutingTreeValue (Identity a) where
     = TreeNode          !(RoutingTree (Identity a))
     | TreeNodeWithValue !(RoutingTree (Identity a)) !(Identity a)
   nodeNull                             = const False
-  nodeTree  (TreeNode          t  )    = t
-  nodeTree  (TreeNodeWithValue t _)    = t
-  nodeValue (TreeNode          _  )    = Nothing
-  nodeValue (TreeNodeWithValue _ v)    = Just v
+  nodeTree  (TreeNode          t  ) = t
+  nodeTree  (TreeNodeWithValue t _) = t
+  nodeValue (TreeNode          _  ) = Nothing
+  nodeValue (TreeNodeWithValue _ v) = Just v
   nodeFromTree                         = TreeNode
   nodeFromTreeAndValue                 = TreeNodeWithValue
 
@@ -284,8 +291,8 @@ instance RoutingTreeValue () where
   data RoutingTreeNode () = UnitNode {-# UNPACK #-} !Int !(RoutingTree ())
   nodeNull                             = const False
   nodeTree  (UnitNode _ t)             = t
-  nodeValue (UnitNode 0 _)             = Nothing
-  nodeValue (UnitNode _ _)             = Just ()
+  nodeValue (UnitNode 0 _) = Nothing
+  nodeValue (UnitNode _ _) = Just ()
   nodeFromTree                         = UnitNode 0
   nodeFromTreeAndValue t _             = UnitNode 1 t
 
@@ -293,9 +300,9 @@ instance RoutingTreeValue Bool where
   data RoutingTreeNode Bool = BoolNode {-# UNPACK #-} !Int !(RoutingTree Bool)
   nodeNull                             = const False
   nodeTree  (BoolNode _ t)             = t
-  nodeValue (BoolNode 0 _)             = Just False
-  nodeValue (BoolNode 1 _)             = Just True
-  nodeValue (BoolNode _ _)             = Nothing
+  nodeValue (BoolNode 0 _) = Just False
+  nodeValue (BoolNode 1 _) = Just True
+  nodeValue (BoolNode _ _) = Nothing
   nodeFromTree                         = BoolNode (-1)
-  nodeFromTreeAndValue t False         = BoolNode 0 t
-  nodeFromTreeAndValue t True          = BoolNode 1 t
+  nodeFromTreeAndValue t False = BoolNode 0 t
+  nodeFromTreeAndValue t True  = BoolNode 1 t

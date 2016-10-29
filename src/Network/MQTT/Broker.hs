@@ -10,19 +10,17 @@
 --------------------------------------------------------------------------------
 module Network.MQTT.Broker where
 
-import Data.Maybe
-import Data.Functor.Identity
-import qualified Data.IntSet as IS
-import qualified Data.IntMap as IM
-import qualified Data.Sequence as S
-
-import Control.Monad
-import Control.Concurrent
-import Control.Concurrent.MVar
-import Control.Concurrent.BoundedChan
-
+import           Control.Concurrent
+import           Control.Concurrent.BoundedChan
+import           Control.Concurrent.MVar
+import           Control.Monad
+import           Data.Functor.Identity
+import qualified Data.IntMap                    as IM
+import qualified Data.IntSet                    as IS
+import           Data.Maybe
+import qualified Data.Sequence                  as S
+import qualified Network.MQTT.RoutingTree       as R
 import           Network.MQTT.Topic
-import qualified Network.MQTT.RoutingTree as R
 
 type SessionKey = Int
 type Message = ()
@@ -38,20 +36,20 @@ data QosLevel
 
 data BrokerState
   =  BrokerState
-    { brokerMaxSessionKey           :: !SessionKey
-    , brokerSubscriptions           :: !(R.RoutingTree IS.IntSet)
-    , brokerSessions                :: !(IM.IntMap Session)
+    { brokerMaxSessionKey :: !SessionKey
+    , brokerSubscriptions :: !(R.RoutingTree IS.IntSet)
+    , brokerSessions      :: !(IM.IntMap Session)
     }
 
 data SessionState
   =  SessionState
-    { sessionBroker                 :: !Broker
-    , sessionKey                    :: !SessionKey
-    , sessionTermination            :: !(MVar ())
-    , sessionSubscriptions          :: !(R.RoutingTree (Identity QosLevel))
-    , sessionQueue0                 :: !(BoundedChan (Topic, Message))
-    , sessionQueue1                 :: !(BoundedChan (Topic, Message))
-    , sessionQueue2                 :: !(BoundedChan (Topic, Message))
+    { sessionBroker        :: !Broker
+    , sessionKey           :: !SessionKey
+    , sessionTermination   :: !(MVar ())
+    , sessionSubscriptions :: !(R.RoutingTree (Identity QosLevel))
+    , sessionQueue0        :: !(BoundedChan (Topic, Message))
+    , sessionQueue1        :: !(BoundedChan (Topic, Message))
+    , sessionQueue2        :: !(BoundedChan (Topic, Message))
     }
 
 newBroker  :: IO Broker

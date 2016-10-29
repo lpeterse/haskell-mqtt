@@ -119,7 +119,8 @@ instance Network.Transceiver.StreamConnection Network.Transceiver.TlsStream
 instance Network.Transceiver.Transceiver t => Network.Transceiver.Transceiver (Network.Transceiver.SecureStreamServer t)
 instance (Network.Transceiver.Acceptable t, Network.Transceiver.Data (Network.Transceiver.AcceptedConnection t) ~ Data.ByteString.Internal.ByteString, Network.Transceiver.AcceptedConnection t ~ t, Network.Transceiver.StreamConnection t) => Network.Transceiver.Acceptable (Network.Transceiver.SecureStreamServer t)
 
-module Network.MQTT.TopicFilter
+
+module Network.MQTT.Topic
 
 -- | According to the MQTT specification a topic
 --   
@@ -135,19 +136,22 @@ topicLevels :: Topic -> NonEmpty TopicFilterLevel
 topicFilterLevels :: TopicFilter -> NonEmpty TopicFilterLevel
 parseTopic :: Parser Topic
 parseTopicFilter :: Parser TopicFilter
+parseTopicFilterLevel :: Parser TopicFilterLevel
 multiLevelWildcard :: TopicFilterLevel
 singleLevelWildcard :: TopicFilterLevel
-instance GHC.Classes.Ord Network.MQTT.TopicFilter.Topic
-instance GHC.Classes.Eq Network.MQTT.TopicFilter.Topic
-instance GHC.Classes.Ord Network.MQTT.TopicFilter.TopicFilter
-instance GHC.Classes.Eq Network.MQTT.TopicFilter.TopicFilter
-instance GHC.Classes.Ord Network.MQTT.TopicFilter.TopicFilterLevel
-instance GHC.Classes.Eq Network.MQTT.TopicFilter.TopicFilterLevel
-instance GHC.Show.Show Network.MQTT.TopicFilter.Topic
-instance GHC.Show.Show Network.MQTT.TopicFilter.TopicFilter
-instance GHC.Show.Show Network.MQTT.TopicFilter.TopicFilterLevel
-instance Data.String.IsString Network.MQTT.TopicFilter.Topic
-instance Data.String.IsString Network.MQTT.TopicFilter.TopicFilter
+instance GHC.Classes.Ord Network.MQTT.Topic.Topic
+instance GHC.Classes.Eq Network.MQTT.Topic.Topic
+instance GHC.Classes.Ord Network.MQTT.Topic.TopicFilter
+instance GHC.Classes.Eq Network.MQTT.Topic.TopicFilter
+instance GHC.Classes.Ord Network.MQTT.Topic.TopicFilterLevel
+instance GHC.Classes.Eq Network.MQTT.Topic.TopicFilterLevel
+instance GHC.Show.Show Network.MQTT.Topic.Topic
+instance GHC.Show.Show Network.MQTT.Topic.TopicFilter
+instance GHC.Show.Show Network.MQTT.Topic.TopicFilterLevel
+instance Data.String.IsString Network.MQTT.Topic.Topic
+instance Data.String.IsString Network.MQTT.Topic.TopicFilter
+instance Data.String.IsString Network.MQTT.Topic.TopicFilterLevel
+
 
 module Network.MQTT.RoutingTree
 
@@ -160,7 +164,7 @@ module Network.MQTT.RoutingTree
 --   The tree consists of nodes that may or may not contain values. The
 --   edges are filter components. As some value types have the concept of a
 --   null (i.e. an empty set) the <a>RoutingTreeValue</a> is a class
---   defining the data family <a>RoutingTreeNode</a>. This a performance
+--   defining the data family <a>RoutingTreeNode</a>. This is a performance
 --   and size optimization to avoid unnecessary boxing and case
 --   distinction.
 newtype RoutingTree a
@@ -176,7 +180,6 @@ nodeFromTreeAndValue :: RoutingTreeValue a => RoutingTree a -> a -> RoutingTreeN
 null :: RoutingTree a -> Bool
 empty :: RoutingTree a
 singleton :: RoutingTreeValue a => TopicFilter -> a -> RoutingTree a
-lookupWith :: (RoutingTreeValue a) => (a -> a -> a) -> Topic -> RoutingTree a -> Maybe a
 
 -- | Match a <a>Topic</a> against a <a>RoutingTree</a>.
 --   
@@ -207,6 +210,7 @@ matchTopic :: RoutingTreeValue a => Topic -> RoutingTree a -> Bool
 --   match (singleton "a") "#"     = False
 --   </pre>
 matchTopicFilter :: RoutingTreeValue a => TopicFilter -> RoutingTree a -> Bool
+lookupWith :: (RoutingTreeValue a) => (a -> a -> a) -> Topic -> RoutingTree a -> Maybe a
 insert :: RoutingTreeValue a => TopicFilter -> a -> RoutingTree a -> RoutingTree a
 insertWith :: RoutingTreeValue a => (a -> a -> a) -> TopicFilter -> a -> RoutingTree a -> RoutingTree a
 map :: (RoutingTreeValue a, RoutingTreeValue b) => (a -> b) -> RoutingTree a -> RoutingTree b
