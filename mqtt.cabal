@@ -22,7 +22,7 @@ library
                        Network.MQTT.IO,
                        Network.MQTT.Message,
                        Network.MQTT.Broker,
-                       Network.MQTT.TopicFilter,
+                       Network.MQTT.Topic,
                        Network.MQTT.RoutingTree,
                        Network.TransportLayer,
                        Network.Transceiver

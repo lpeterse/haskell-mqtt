@@ -1,5 +1,5 @@
 {-# LANGUAGE OverloadedStrings #-}
-module Network.MQTT.TopicFilter
+module Network.MQTT.Topic
   ( Topic ()
   , TopicFilter ()
   , TopicFilterLevel ()
@@ -7,6 +7,7 @@ module Network.MQTT.TopicFilter
   , topicFilterLevels
   , parseTopic
   , parseTopicFilter
+  , parseTopicFilterLevel
   , multiLevelWildcard
   , singleLevelWildcard
   ) where
@@ -52,6 +53,11 @@ instance IsString TopicFilter where
     Left e  -> error e
     Right t -> t
 
+instance IsString TopicFilterLevel where
+  fromString s = case A.parseOnly parseTopicFilterLevel (T.encodeUtf8 $ T.pack s) of
+    Left e  -> error e
+    Right t -> t
+
 topicLevels :: Topic -> NonEmpty TopicFilterLevel
 topicLevels (Topic x) = x
 {-# INLINE topicLevels #-}
@@ -85,14 +91,20 @@ parseTopicFilter = (<|> fail "invalid filter") $ TopicFilter <$> do
     pLevel       = TopicFilterLevel . BS.toShort <$> A.takeWhile
                    (\w8-> w8 /= slash && w8 /= zero && w8 /= hash)
 
-zero, plus, hash, slash :: Word8
-zero  = 0x00
-plus  = 0x2b
-hash  = 0x23
-slash = 0x2f
+parseTopicFilterLevel :: A.Parser TopicFilterLevel
+parseTopicFilterLevel = do
+  x <- A.takeWhile (\w8-> w8 /= slash && w8 /= zero)
+  A.endOfInput
+  pure (TopicFilterLevel $ BS.toShort x)
 
 multiLevelWildcard :: TopicFilterLevel
 multiLevelWildcard  = TopicFilterLevel $ BS.pack $ pure hash
 
 singleLevelWildcard :: TopicFilterLevel
 singleLevelWildcard  = TopicFilterLevel $ BS.pack $ pure plus
+
+zero, plus, hash, slash :: Word8
+zero  = 0x00
+plus  = 0x2b
+hash  = 0x23
+slash = 0x2f

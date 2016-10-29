@@ -6,10 +6,9 @@ import           Control.Monad            (foldM)
 import           Data.IntSet              as IS
 import qualified Data.List.NonEmpty       as NL
 import           Network.MQTT.RoutingTree as R
-import           Network.MQTT.TopicFilter
+import           Network.MQTT.Topic
 import           System.Mem
 import           System.Random            (randomIO)
-
 import qualified Data.IntSet              as IS
 import qualified Data.Map                 as M
 

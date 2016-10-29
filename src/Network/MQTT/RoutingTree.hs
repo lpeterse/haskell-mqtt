@@ -10,12 +10,12 @@ module Network.MQTT.RoutingTree (
   -- ** singleton
   , singleton
   -- ** lookupWith
-  , lookupWith
-  -- ** matchTopic
   , matchTopic
   -- ** matchTopicFilter
   , matchTopicFilter
   -- ** insert
+  , lookupWith
+  -- ** matchTopic
   , insert
   -- ** insertWith
   , insertWith
@@ -45,7 +45,7 @@ import qualified Data.ByteString.Short as BS
 import qualified Data.Map as M
 import qualified Data.IntSet as IS
 
-import Network.MQTT.TopicFilter
+import Network.MQTT.Topic
 
 -- | The `RoutingTree` is a map-like data structure designed to hold elements
 --   that can efficiently be queried according to the matching rules specified

@@ -4,7 +4,7 @@ module Network.MQTT.Authorization where
 import Control.Exception
 import Control.Concurrent.MVar
 
-import Network.MQTT.TopicFilter
+import Network.MQTT.Topic
 import Network.MQTT.Authentication
 import Network.MQTT.RoutingTree
 

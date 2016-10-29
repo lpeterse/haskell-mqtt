@@ -1,7 +1,7 @@
 {-# LANGUAGE OverloadedStrings #-}
 --------------------------------------------------------------------------------
 -- |
--- Module      :  Network.MQTT
+-- Module      :  Network.MQTT.Broker
 -- Copyright   :  (c) Lars Petersen 2016
 -- License     :  MIT
 --
@@ -21,7 +21,7 @@ import Control.Concurrent
 import Control.Concurrent.MVar
 import Control.Concurrent.BoundedChan
 
-import           Network.MQTT.TopicFilter
+import           Network.MQTT.Topic
 import qualified Network.MQTT.RoutingTree as R
 
 type SessionKey = Int
