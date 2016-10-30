@@ -1,6 +1,7 @@
 {-# LANGUAGE FlexibleContexts  #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE TypeFamilies      #-}
+{-# LANGUAGE OverloadedStrings #-}
 --------------------------------------------------------------------------------
 -- |
 -- Module      :  Network.MQTT.ServerStack
@@ -19,66 +20,91 @@ import qualified Data.ByteString.Lazy        as BSL
 import           Network.MQTT.Authentication
 import qualified Network.TLS                 as TLS
 import qualified Network.WebSockets          as WS
+import qualified Network.WebSockets.Stream   as WS
 import qualified System.Socket               as S
 import qualified System.Socket.Family.Inet   as S
 import qualified System.Socket.Protocol.TCP  as S
 import qualified System.Socket.Type.Stream   as S
 
-data MqttMessage
+data SocketServerStack
+data TlsServerStack a
+data WebSocketServerStack a
 
-data SocketServer
-data TlsServer a
-data WebSocketServer a
-data MqttServer a
-
-class Server a where
+class ServerStack a where
+  data Server a
   data ServerConnection a
   data ServerConnectionRequest a
+  accept  :: Server a -> IO (ServerConnection a)
   send    :: ServerConnection a -> BS.ByteString -> IO ()
   receive :: ServerConnection a -> IO BS.ByteString
+  close   :: ServerConnection a -> IO ()
 
-instance Server SocketServer where
-  data ServerConnection SocketServer = SocketServerConnection (S.Socket S.Inet S.Stream S.TCP)
-  data ServerConnectionRequest SocketServer = SocketServerConnectionRequest (S.SocketAddress S.Inet)
+instance ServerStack SocketServerStack where
+  data Server SocketServerStack = SocketServer (S.Socket S.Inet S.Stream S.TCP)
+  data ServerConnection SocketServerStack = SocketServerConnection (S.Socket S.Inet S.Stream S.TCP)
+  data ServerConnectionRequest SocketServerStack = SocketServerConnectionRequest (S.SocketAddress S.Inet)
+  accept (SocketServer s) = SocketServerConnection . fst <$> S.accept s
   send (SocketServerConnection s) = sendAll
     where
       sendAll bs = do
         sent <- S.send s bs S.msgNoSignal
         when (sent < BS.length bs) $ sendAll (BS.drop sent bs)
   receive (SocketServerConnection s) = S.receive s 8192 S.msgNoSignal
+  close (SocketServerConnection s) = S.close s
 
-instance Server (TlsServer a) where
-  data ServerConnection (TlsServer a) = TlsServerConnection
+instance ServerStack a => ServerStack (TlsServerStack a) where
+  data Server (TlsServerStack a) = TlsServer
+    {
+    }
+  data ServerConnection (TlsServerStack a) = TlsServerConnection
     { tlsTransportState   :: ServerConnection a
     , tlsContext          :: TLS.Context
     }
-  data ServerConnectionRequest (TlsServer a) = TlsServerConnectionRequest
+  data ServerConnectionRequest (TlsServerStack a) = TlsServerConnectionRequest
     { tlsCertificateChain :: X509.CertificateChain
     , tlsTransportConnectionRequest :: ServerConnectionRequest a
     }
+  accept       = undefined
   send conn bs = TLS.sendData (tlsContext conn) (BSL.fromStrict bs)
   receive conn = TLS.recvData (tlsContext conn)
+  close conn   = do
+    TLS.bye (tlsContext conn)
+    close (tlsTransportState conn)
 
-instance Server (WebSocketServer a) where
-  data ServerConnection (WebSocketServer a) = WebSocketServerConnection
-    { wsTransportState    :: ServerConnection a
-    , wsConnection        :: WS.Connection
+instance ServerStack a => ServerStack (WebSocketServerStack a) where
+  data Server (WebSocketServerStack a) = WebSocketServer
+    { wsTransportServer            :: Server a
     }
-  data ServerConnectionRequest (WebSocketServer a) = WebSocketServerConnectionRequest
+  data ServerConnection (WebSocketServerStack a) = WebSocketServerConnection
+    { wsConnection                 :: WS.Connection
+    , wsTransportConnection        :: ServerConnection a
+    }
+  data ServerConnectionRequest (WebSocketServerStack a) = WebSocketServerConnectionRequest
     { wsConnectionRequest          :: WS.PendingConnection
     , wsTransportConnectionRequest :: ServerConnectionRequest a
     }
+  accept server = do
+    transport <- accept (wsTransportServer server)
+    let readSocket = (\bs-> if BS.null bs then Nothing else Just bs) <$> receive transport
+    let writeSocket Nothing   = undefined
+        writeSocket (Just bs) = send transport (BSL.toStrict bs)
+    stream <- WS.makeStream readSocket writeSocket
+    pendingConnection <- WS.makePendingConnectionFromStream stream (WS.ConnectionOptions $ pure ())
+    WebSocketServerConnection <$> WS.acceptRequest pendingConnection <*> pure transport
   send conn    = WS.sendBinaryData (wsConnection conn)
   receive conn = WS.receiveData (wsConnection conn)
+  close conn = do
+    WS.sendClose (wsConnection conn) ("Thank you for flying with Haskell airlines. Have a nice day!" :: BS.ByteString)
+    close (wsTransportConnection conn)
 
-instance Request (ServerConnectionRequest SocketServer) where
+instance Request (ServerConnectionRequest SocketServerStack) where
 
-instance (Request (ServerConnectionRequest a)) => Request (ServerConnectionRequest (TlsServer a)) where
+instance (Request (ServerConnectionRequest a)) => Request (ServerConnectionRequest (TlsServerStack a)) where
   requestSecure             = const True
   requestCertificateChain   = Just . tlsCertificateChain
   requestHeaders a          = requestHeaders (tlsTransportConnectionRequest a)
 
-instance (Request (ServerConnectionRequest a)) => Request (ServerConnectionRequest (WebSocketServer a)) where
+instance (Request (ServerConnectionRequest a)) => Request (ServerConnectionRequest (WebSocketServerStack a)) where
   requestSecure conn        = requestSecure (wsTransportConnectionRequest conn)
   requestCertificateChain a = requestCertificateChain (wsTransportConnectionRequest a)
   requestHeaders conn       = WS.requestHeaders $ WS.pendingRequest (wsConnectionRequest conn)
