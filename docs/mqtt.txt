@@ -5,120 +5,6 @@
 @package mqtt
 @version 0.1.0.0
 
-module Network.TransportLayer
-class Exception (TransportException a) => TransportLayer a where data Transport a data TransportAddress a data TransportConfiguration a data TransportException a where {
-    data family Transport a;
-    data family TransportAddress a;
-    data family TransportConfiguration a;
-    data family TransportException a;
-}
-new :: TransportLayer a => TransportConfiguration a -> IO (Transport a)
-close :: TransportLayer a => Transport a -> IO ()
-class TransportLayer a => BindableTransportLayer a
-bind :: BindableTransportLayer a => Transport a -> TransportAddress a -> IO ()
-class TransportLayer a => ConnectionTransportLayer a where data Connection a data ConnectionRequest a where {
-    data family Connection a;
-    data family ConnectionRequest a;
-}
-disconnect :: ConnectionTransportLayer a => Connection a -> IO ()
-class ConnectionTransportLayer a => StreamConnectionTransportLayer a
-sendChunk :: StreamConnectionTransportLayer a => Connection a -> ByteString -> IO Int
-receiveChunk :: StreamConnectionTransportLayer a => Connection a -> Int -> IO ByteString
-class ConnectionTransportLayer a => DatagramConnectionTransportLayer a
-sendDatagram :: DatagramConnectionTransportLayer a => Connection a -> ByteString -> IO Int
-receiveDatagram :: DatagramConnectionTransportLayer a => Connection a -> Int -> IO ByteString
-class ConnectionTransportLayer a => AcceptingTransportLayer a
-listen :: AcceptingTransportLayer a => Transport a -> IO ()
-accept :: AcceptingTransportLayer a => Transport a -> IO (Connection a, TransportAddress a, ConnectionRequest a)
-class ConnectionTransportLayer a => ConnectingTransportLayer a
-connect :: ConnectingTransportLayer a => Transport a -> TransportAddress a -> ConnectionRequest a -> IO (Connection a)
-class AddressTranslatingTransport a where data TransportName a data TransportNameInfo a data TransportAddressInfo a data TransportAddressTranslationException a where {
-    data family TransportName a;
-    data family TransportNameInfo a;
-    data family TransportAddressInfo a;
-    data family TransportAddressTranslationException a;
-}
-name :: AddressTranslatingTransport a => TransportNameInfo a -> TransportName a
-address :: AddressTranslatingTransport a => TransportAddressInfo a -> TransportAddress a
-getNameInfo :: AddressTranslatingTransport a => TransportAddress a -> IO (NonEmpty (TransportNameInfo a))
-getAddressInfo :: AddressTranslatingTransport a => TransportName a -> IO (NonEmpty (TransportAddressInfo a))
-instance GHC.Show.Show (Network.TransportLayer.TransportException (System.Socket.Internal.Socket.Socket f t p))
-instance (Data.Typeable.Internal.Typeable f, Data.Typeable.Internal.Typeable t, Data.Typeable.Internal.Typeable p, System.Socket.Internal.Socket.Family f, System.Socket.Internal.Socket.Type t, System.Socket.Internal.Socket.Protocol p) => Network.TransportLayer.TransportLayer (System.Socket.Internal.Socket.Socket f t p)
-instance (Data.Typeable.Internal.Typeable f, Data.Typeable.Internal.Typeable t, Data.Typeable.Internal.Typeable p) => GHC.Exception.Exception (Network.TransportLayer.TransportException (System.Socket.Internal.Socket.Socket f t p))
-
-module Network.Transceiver
-class Transceiver a where type Data a type Exception a isTransceiverException _ _ = True where {
-    type family Data a;
-    type family Exception a;
-}
-isTransceiverException :: Transceiver a => a -> Exception a -> Bool
-class Closable a
-close :: Closable a => a -> IO ()
-class Closable a => Creatable a
-create :: Creatable a => IO a
-class (Transceiver a, Closable a) => Connection a where isConnectedException _ _ = False isNotConnectedException _ _ = False isConnectionAbortedException _ _ = False isConnectionRefusedException _ _ = False isConnectionTimeoutException _ _ = False isConnectionResetException _ _ = False
-isConnectedException :: Connection a => a -> Exception a -> Bool
-isNotConnectedException :: Connection a => a -> Exception a -> Bool
-isConnectionAbortedException :: Connection a => a -> Exception a -> Bool
-isConnectionRefusedException :: Connection a => a -> Exception a -> Bool
-isConnectionTimeoutException :: Connection a => a -> Exception a -> Bool
-isConnectionResetException :: Connection a => a -> Exception a -> Bool
-class (Connection a, Eq (Data a), Monoid (Data a)) => StreamConnection a where sendChunks a = mapM__ (sendChunk a) receiveChunks a = singleton <$> receiveChunk a
-sendChunk :: StreamConnection a => a -> Data a -> IO ()
-sendChunks :: (StreamConnection a, Chunks b, Chunk b ~ Data a) => a -> b -> IO ()
-receiveChunk :: StreamConnection a => a -> IO (Data a)
-receiveChunks :: (StreamConnection a, Chunks b, Chunk b ~ Data a) => a -> IO b
-class Addressable a where type Address a where {
-    type family Address a;
-}
-class (Connection a, Addressable a) => Bindable a where isAddressNotAvailableException _ _ = False
-bind :: Bindable a => a -> Address a -> IO ()
-isAddressNotAvailableException :: Bindable a => a -> Exception a -> Bool
-class (Connection a, Addressable a) => Connectable a
-connect :: Connectable a => a -> Address a -> IO ()
-class (Connection (AcceptedConnection a), Addressable (AcceptedConnection a)) => Acceptable a where type AcceptedConnection a where {
-    type family AcceptedConnection a;
-}
-listen :: Acceptable a => a -> Int -> IO ()
-accept :: Acceptable a => a -> IO (AcceptedConnection a, Address (AcceptedConnection a))
-class (Connection a) => DatagramConnection a where type Datagram a where {
-    type family Datagram a;
-}
-sendDatagram :: DatagramConnection a => a -> Datagram a -> IO ()
-receiveDatagram :: DatagramConnection a => a -> IO (Datagram a)
-class Chunks a where type Chunk a where {
-    type family Chunk a;
-}
-mapM__ :: Chunks a => (Chunk a -> IO ()) -> a -> IO ()
-singleton :: Chunks a => Chunk a -> a
-newtype TlsStream
-TlsStream :: Context -> TlsStream
-data SecureStreamServer t
-SecureStreamServer :: ServerParams -> t -> Address t -> SecureStreamServer t
-[serverParams] :: SecureStreamServer t -> ServerParams
-[transport] :: SecureStreamServer t -> t
-[bindAddress] :: SecureStreamServer t -> Address t
-data SecureStreamServerException t
-TlsException :: TLSException -> SecureStreamServerException t
-TlsTransportException :: (Exception t) -> SecureStreamServerException t
-instance Network.Transceiver.Chunks Data.ByteString.Lazy.Internal.ByteString
-instance Network.Transceiver.Chunks [a]
-instance Network.Transceiver.Transceiver (System.Socket.Internal.Socket.Socket f t p)
-instance Network.Transceiver.Closable (System.Socket.Internal.Socket.Socket f t p)
-instance (System.Socket.Internal.Socket.Family f, System.Socket.Internal.Socket.Type t, System.Socket.Internal.Socket.Protocol p) => Network.Transceiver.Creatable (System.Socket.Internal.Socket.Socket f t p)
-instance Network.Transceiver.Addressable (System.Socket.Internal.Socket.Socket f t p)
-instance Network.Transceiver.Connection (System.Socket.Internal.Socket.Socket f t p)
-instance Network.Transceiver.StreamConnection (System.Socket.Internal.Socket.Socket f System.Socket.Type.Stream.Stream p)
-instance Network.Transceiver.Connectable (System.Socket.Internal.Socket.Socket System.Socket.Family.Inet6.Inet6 t p)
-instance Network.Transceiver.Acceptable (System.Socket.Internal.Socket.Socket System.Socket.Family.Inet6.Inet6 t p)
-instance Network.Transceiver.Transceiver Network.Transceiver.TlsStream
-instance Network.Transceiver.Closable Network.Transceiver.TlsStream
-instance Network.Transceiver.Addressable Network.Transceiver.TlsStream
-instance Network.Transceiver.Connection Network.Transceiver.TlsStream
-instance Network.Transceiver.StreamConnection Network.Transceiver.TlsStream
-instance Network.Transceiver.Transceiver t => Network.Transceiver.Transceiver (Network.Transceiver.SecureStreamServer t)
-instance (Network.Transceiver.Acceptable t, Network.Transceiver.Data (Network.Transceiver.AcceptedConnection t) ~ Data.ByteString.Internal.ByteString, Network.Transceiver.AcceptedConnection t ~ t, Network.Transceiver.StreamConnection t) => Network.Transceiver.Acceptable (Network.Transceiver.SecureStreamServer t)
-
 
 module Network.MQTT.Topic
 
@@ -268,6 +154,7 @@ instance GHC.Show.Show Network.MQTT.Broker.QosLevel
 instance GHC.Classes.Ord Network.MQTT.Broker.QosLevel
 instance GHC.Classes.Eq Network.MQTT.Broker.QosLevel
 
+
 module Network.MQTT.Authentication
 
 -- | An <a>Authenticator</a> is able to determine a <a>Principal</a>'s
@@ -288,7 +175,7 @@ authenticate :: (Authenticator a, Request c) => a -> c -> IO (Maybe (Principal a
 -- | This class defines how the information gathered from a connection
 --   request looks like. An <a>Authenticator</a> may use whatever
 --   information it finds suitable to authenticate the <a>Principal</a>.
-class Request r where requestSecure = const False requestUsername = const Nothing requestPassword = const Nothing requestHeaders = const [] requestCertificateChain = const []
+class Request r where requestSecure = const False requestUsername = const Nothing requestPassword = const Nothing requestHeaders = const [] requestCertificateChain = const Nothing
 
 -- | Is this connection secure in terms of <a>Transport Layer Security</a>?
 requestSecure :: Request r => r -> Bool
@@ -308,7 +195,8 @@ requestHeaders :: Request r => r -> [(CI ByteString, ByteString)]
 --   the peer owns the corresponding private key. The validation of the
 --   certificate claims (including certificate chain checking) <i>must</i>
 --   be performed by the <a>Authenticator</a>.
-requestCertificateChain :: Request r => r -> [Certificate]
+requestCertificateChain :: Request r => r -> Maybe CertificateChain
+
 
 module Network.MQTT.Authorization
 
@@ -318,12 +206,12 @@ class (Authenticator a, Exception (AuthorizationException a)) => Authorizer a wh
     data family AuthorizationException a;
 }
 
--- | Determine the set of <a>Topic</a>s a <a>Principal</a> is allowed to
+-- | Determine the set of <tt>Topic</tt>s a <a>Principal</a> is allowed to
 --   publish on.
 --   
 --   Beware that this operation is called on each publication. The
---   implementation is advised to cache the result (i.e. in an <a>MVar</a>)
---   and update it from time to time.
+--   implementation is advised to cache the result (i.e. in an
+--   <tt>MVar</tt>) and update it from time to time.
 getPublishPermissions :: Authorizer a => Principal a -> IO (RoutingTree ())
 
 -- | Determine the set of <tt>Filter</tt>s a <a>Principal</a> is allowed to
@@ -332,14 +220,40 @@ getPublishPermissions :: Authorizer a => Principal a -> IO (RoutingTree ())
 --   <a>RoutingTree</a>.
 --   
 --   Beware that this operation is called on each subscription. The
---   implementation is advised to cache the result (i.e. in an <a>MVar</a>)
---   and update it from time to time.
+--   implementation is advised to cache the result (i.e. in an
+--   <tt>MVar</tt>) and update it from time to time.
 --   
 --   Also note that <tt>Filter</tt>s already subscribed by the client won't
 --   be unsubscribed if they are no longer in the current permission set.
 --   There is no way specified by MQTT to signal this to the client other
 --   than terminating the session.
 getSubscribePermissions :: Authorizer a => Principal a -> IO (RoutingTree ())
+
+
+module Network.MQTT.ServerStack
+data SocketServerStack
+data TlsServerStack a
+data WebSocketServerStack a
+class ServerStack a where data Server a data ServerConfig a data ServerConnection a data ServerConnectionRequest a where {
+    data family Server a;
+    data family ServerConfig a;
+    data family ServerConnection a;
+    data family ServerConnectionRequest a;
+}
+new :: ServerStack a => ServerConfig a -> IO (Server a)
+start :: ServerStack a => Server a -> IO ()
+stop :: ServerStack a => Server a -> IO ()
+accept :: ServerStack a => Server a -> IO (ServerConnection a)
+send :: ServerStack a => ServerConnection a -> ByteString -> IO ()
+receive :: ServerStack a => ServerConnection a -> IO ByteString
+close :: ServerStack a => ServerConnection a -> IO ()
+instance Network.MQTT.ServerStack.ServerStack Network.MQTT.ServerStack.SocketServerStack
+instance Network.MQTT.ServerStack.ServerStack a => Network.MQTT.ServerStack.ServerStack (Network.MQTT.ServerStack.TlsServerStack a)
+instance Network.MQTT.ServerStack.ServerStack a => Network.MQTT.ServerStack.ServerStack (Network.MQTT.ServerStack.WebSocketServerStack a)
+instance Network.MQTT.Authentication.Request (Network.MQTT.ServerStack.ServerConnectionRequest Network.MQTT.ServerStack.SocketServerStack)
+instance Network.MQTT.Authentication.Request (Network.MQTT.ServerStack.ServerConnectionRequest a) => Network.MQTT.Authentication.Request (Network.MQTT.ServerStack.ServerConnectionRequest (Network.MQTT.ServerStack.TlsServerStack a))
+instance Network.MQTT.Authentication.Request (Network.MQTT.ServerStack.ServerConnectionRequest a) => Network.MQTT.Authentication.Request (Network.MQTT.ServerStack.ServerConnectionRequest (Network.MQTT.ServerStack.WebSocketServerStack a))
+
 
 module Network.MQTT.Message
 newtype ClientIdentifier
@@ -453,6 +367,79 @@ Message :: Topic -> QoS -> Bool -> Bool -> Payload -> Message
 instance GHC.Show.Show Network.MQTT.Message
 instance GHC.Classes.Ord Network.MQTT.Message
 instance GHC.Classes.Eq Network.MQTT.Message
+
+module Network.Transceiver
+class Transceiver a where type Data a type Exception a isTransceiverException _ _ = True where {
+    type family Data a;
+    type family Exception a;
+}
+isTransceiverException :: Transceiver a => a -> Exception a -> Bool
+class Closable a
+close :: Closable a => a -> IO ()
+class Closable a => Creatable a
+create :: Creatable a => IO a
+class (Transceiver a, Closable a) => Connection a where isConnectedException _ _ = False isNotConnectedException _ _ = False isConnectionAbortedException _ _ = False isConnectionRefusedException _ _ = False isConnectionTimeoutException _ _ = False isConnectionResetException _ _ = False
+isConnectedException :: Connection a => a -> Exception a -> Bool
+isNotConnectedException :: Connection a => a -> Exception a -> Bool
+isConnectionAbortedException :: Connection a => a -> Exception a -> Bool
+isConnectionRefusedException :: Connection a => a -> Exception a -> Bool
+isConnectionTimeoutException :: Connection a => a -> Exception a -> Bool
+isConnectionResetException :: Connection a => a -> Exception a -> Bool
+class (Connection a, Eq (Data a), Monoid (Data a)) => StreamConnection a where sendChunks a = mapM__ (sendChunk a) receiveChunks a = singleton <$> receiveChunk a
+sendChunk :: StreamConnection a => a -> Data a -> IO ()
+sendChunks :: (StreamConnection a, Chunks b, Chunk b ~ Data a) => a -> b -> IO ()
+receiveChunk :: StreamConnection a => a -> IO (Data a)
+receiveChunks :: (StreamConnection a, Chunks b, Chunk b ~ Data a) => a -> IO b
+class Addressable a where type Address a where {
+    type family Address a;
+}
+class (Connection a, Addressable a) => Bindable a where isAddressNotAvailableException _ _ = False
+bind :: Bindable a => a -> Address a -> IO ()
+isAddressNotAvailableException :: Bindable a => a -> Exception a -> Bool
+class (Connection a, Addressable a) => Connectable a
+connect :: Connectable a => a -> Address a -> IO ()
+class (Connection (AcceptedConnection a), Addressable (AcceptedConnection a)) => Acceptable a where type AcceptedConnection a where {
+    type family AcceptedConnection a;
+}
+listen :: Acceptable a => a -> Int -> IO ()
+accept :: Acceptable a => a -> IO (AcceptedConnection a, Address (AcceptedConnection a))
+class (Connection a) => DatagramConnection a where type Datagram a where {
+    type family Datagram a;
+}
+sendDatagram :: DatagramConnection a => a -> Datagram a -> IO ()
+receiveDatagram :: DatagramConnection a => a -> IO (Datagram a)
+class Chunks a where type Chunk a where {
+    type family Chunk a;
+}
+mapM__ :: Chunks a => (Chunk a -> IO ()) -> a -> IO ()
+singleton :: Chunks a => Chunk a -> a
+newtype TlsStream
+TlsStream :: Context -> TlsStream
+data SecureStreamServer t
+SecureStreamServer :: ServerParams -> t -> Address t -> SecureStreamServer t
+[serverParams] :: SecureStreamServer t -> ServerParams
+[transport] :: SecureStreamServer t -> t
+[bindAddress] :: SecureStreamServer t -> Address t
+data SecureStreamServerException t
+TlsException :: TLSException -> SecureStreamServerException t
+TlsTransportException :: (Exception t) -> SecureStreamServerException t
+instance Network.Transceiver.Chunks Data.ByteString.Lazy.Internal.ByteString
+instance Network.Transceiver.Chunks [a]
+instance Network.Transceiver.Transceiver (System.Socket.Internal.Socket.Socket f t p)
+instance Network.Transceiver.Closable (System.Socket.Internal.Socket.Socket f t p)
+instance (System.Socket.Internal.Socket.Family f, System.Socket.Internal.Socket.Type t, System.Socket.Internal.Socket.Protocol p) => Network.Transceiver.Creatable (System.Socket.Internal.Socket.Socket f t p)
+instance Network.Transceiver.Addressable (System.Socket.Internal.Socket.Socket f t p)
+instance Network.Transceiver.Connection (System.Socket.Internal.Socket.Socket f t p)
+instance Network.Transceiver.StreamConnection (System.Socket.Internal.Socket.Socket f System.Socket.Type.Stream.Stream p)
+instance Network.Transceiver.Connectable (System.Socket.Internal.Socket.Socket System.Socket.Family.Inet6.Inet6 t p)
+instance Network.Transceiver.Acceptable (System.Socket.Internal.Socket.Socket System.Socket.Family.Inet6.Inet6 t p)
+instance Network.Transceiver.Transceiver Network.Transceiver.TlsStream
+instance Network.Transceiver.Closable Network.Transceiver.TlsStream
+instance Network.Transceiver.Addressable Network.Transceiver.TlsStream
+instance Network.Transceiver.Connection Network.Transceiver.TlsStream
+instance Network.Transceiver.StreamConnection Network.Transceiver.TlsStream
+instance Network.Transceiver.Transceiver t => Network.Transceiver.Transceiver (Network.Transceiver.SecureStreamServer t)
+instance (Network.Transceiver.Acceptable t, Network.Transceiver.Data (Network.Transceiver.AcceptedConnection t) ~ Data.ByteString.Internal.ByteString, Network.Transceiver.AcceptedConnection t ~ t, Network.Transceiver.StreamConnection t) => Network.Transceiver.Acceptable (Network.Transceiver.SecureStreamServer t)
 
 
 module Network.MQTT.IO
