@@ -20,13 +20,13 @@ module Network.MQTT.RoutingTree (
   , empty
   -- ** singleton
   , singleton
-  -- ** lookupWith
-  , matchTopic
-  -- ** matchTopicFilter
-  , matchTopicFilter
-  -- ** insert
-  , lookupWith
   -- ** matchTopic
+  , matchTopic
+  -- ** matchFilter
+  , matchFilter
+  -- ** lookupWith
+  , lookupWith
+  -- ** insert
   , insert
   -- ** insertWith
   , insertWith
@@ -207,9 +207,13 @@ matchTopic tf = matchTopic' (topicLevels tf)
       -- A '+' node on the other hand may contain subtrees and may not carry a value
       -- itself. This needs to be checked.
       where
-        match        = isJust ( nodeValue =<< M.lookup x m)
         matchPlus    = isJust ( nodeValue =<< M.lookup singleLevelWildcard m )
         matchHash    = M.member multiLevelWildcard m
+        match        = case M.lookup x m of
+          Nothing -> False
+          Just n  -> isJust (nodeValue n)
+                  || let RoutingTree m' = nodeTree n
+                     in  M.member multiLevelWildcard m'
     matchTopic' (x:|y:zs) (RoutingTree m) =
       M.member multiLevelWildcard m || case M.lookup x m of
         -- Same is true for '#' node here. In case no '#' hash node is present it is
@@ -239,8 +243,8 @@ matchTopic tf = matchTopic' (topicLevels tf)
 --   > match (singleton "a") "b"     = False
 --   > match (singleton "a") "+"     = False
 --   > match (singleton "a") "#"     = False
-matchTopicFilter :: RoutingTreeValue a => TopicFilter -> RoutingTree a -> Bool
-matchTopicFilter tf = matchTopicFilter' (topicFilterLevels tf)
+matchFilter :: RoutingTreeValue a => TopicFilter -> RoutingTree a -> Bool
+matchFilter tf = matchTopicFilter' (topicFilterLevels tf)
   where
     matchTopicFilter' (x:|[])   (RoutingTree m) =
       fromMaybe False $ not . nodeNull <$> ( nodeValue =<< M.lookup x m )

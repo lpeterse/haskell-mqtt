@@ -34,7 +34,17 @@ tests = testGroup "TopicFilter"
       ]
     ]
   , testGroup "TopicFilter"
-    [ testGroup "parseTopicFilter"
+    [ testGroup "show / fromString"
+      [ testCase "\"/\""          $ assertEqual "" "\"/\""      $ show ("/"      :: TopicFilter)
+      , testCase "\"\x2603\""     $ assertEqual "" "\"\x2603\"" $ show ("\x2603" :: TopicFilter)
+      , testCase "\"a/b/c\""      $ assertEqual "" "\"a/b/c\""  $ show ("a/b/c"  :: TopicFilter)
+      , testCase "\"#\""          $ assertEqual "" "\"#\""      $ show ("#"      :: TopicFilter)
+      , testCase "\"+\""          $ assertEqual "" "\"+\""      $ show ("+"      :: TopicFilter)
+      , testCase "\"a/#\""        $ assertEqual "" "\"a/#\""    $ show ("a/#"    :: TopicFilter)
+      , testCase "\"+/+/#\""      $ assertEqual "" "\"+/+/#\""  $ show ("+/+/#"  :: TopicFilter)
+      , testCase "\"/#\""         $ assertEqual "" "\"/#\""     $ show ("/#"     :: TopicFilter)
+      ]
+    , testGroup "parseTopicFilter"
       [ testCase "! \"\""             $ assertEqual "" (Left "Failed reading: invalid filter")  $ topicFilterLevels <$> A.parseOnly parseTopicFilter ""
       , testCase "! \"\\NUL\""        $ assertEqual "" (Left "Failed reading: invalid filter")  $ topicFilterLevels <$> A.parseOnly parseTopicFilter "\NUL"
       , testCase "  \"+\""            $ assertEqual "" (Right $ "+":|[])                        $ topicFilterLevels <$> A.parseOnly parseTopicFilter "+"

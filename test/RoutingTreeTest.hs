@@ -17,18 +17,42 @@ import           Network.MQTT.Topic
 tests :: TestTree
 tests = testGroup "RoutingTree"
   [ testGroup "null"
-    [ testCase "not $ null $ singleton \"a\" ()" $ assertBool "null" $ not $ R.null $ R.singleton "a" ()
-    , testCase "not $ null $ singleton \"a/b\" ()" $ assertBool "null" $ not $ R.null $ R.singleton "a/b" ()
+    [ testCase "! null               (singleton \"a\"     ())"   $ assertBool "" $ not $ R.null $ R.singleton "a" ()
+    , testCase "! null               (singleton \"a/b\"   ())"   $ assertBool "" $ not $ R.null $ R.singleton "a/b" ()
     ]
   , testGroup "empty"
-    [ testCase "null empty" $ assertBool "not null" $ R.null R.empty
+    [ testCase "  null empty" $ assertBool "not null" $ R.null R.empty
     ]
   , testGroup "singleton"
-    [ testCase "matchTopic \"a\" (singleton \"a\" ())" $ assertBool "null" $ R.matchTopic "a" $ R.singleton "a" ()
-    , testCase "matchTopic \"a/b/c\" (singleton \"a/b/c\" ())" $ assertBool "null" $ R.matchTopic "a/b/c" $ R.singleton "a/b/c" ()
+    [ testCase "  matchTopic \"a\"     (singleton \"a\"     ())"   $ assertBool "" $ R.matchTopic "a" $ R.singleton "a" ()
+    , testCase "  matchTopic \"a/b/c\" (singleton \"a/b/c\" ())"   $ assertBool "" $ R.matchTopic "a/b/c" $ R.singleton "a/b/c" ()
     ]
-  , testGroup "matchTopic" [ ]
-  , testGroup "matchFilter" [ missingTests ]
+  , testGroup "matchTopic"
+    [ testCase "  matchTopic \"a\"     (singleton \"a\"     ())"   $ assertBool ""       $ R.matchTopic "a"     $ R.singleton "a"   ()
+    , testCase "  matchTopic \"a\"     (singleton \"#\"     ())"   $ assertBool ""       $ R.matchTopic "a"     $ R.singleton "#"   ()
+    , testCase "  matchTopic \"a\"     (singleton \"a/#\"   ())"   $ assertBool ""       $ R.matchTopic "a"     $ R.singleton "a/#" ()
+    , testCase "  matchTopic \"a/b\"   (singleton \"a/#\"   ())"   $ assertBool ""       $ R.matchTopic "a/b"   $ R.singleton "a/#" ()
+    , testCase "  matchTopic \"a/b/c\" (singleton \"a/#\"   ())"   $ assertBool ""       $ R.matchTopic "a/b/c" $ R.singleton "a/#" ()
+    , testCase "! matchTopic \"b/c/d\" (singleton \"a/#\"   ())"   $ assertBool "" $ not $ R.matchTopic "b/c/d" $ R.singleton "a/#" ()
+    , testCase "! matchTopic \"a\"     (singleton \"a/+\"   ())"   $ assertBool "" $ not $ R.matchTopic "a"     $ R.singleton "a/+" ()
+    , testCase "! matchTopic \"a\"     (singleton \"/a\"    ())"   $ assertBool "" $ not $ R.matchTopic "a"     $ R.singleton "/a"  ()
+    , testCase "  matchTopic \"a/a\"   (singleton \"a/a\"   ())"   $ assertBool ""       $ R.matchTopic "a/a"   $ R.singleton "a/a"  ()
+    ]
+  , testGroup "matchFilter"
+    [ testCase "  matchFiler \"#\"     (singleton \"#\"     ())"   $ assertBool ""       $ R.matchFilter "#"     $ R.singleton "#"   ()
+    , testCase "  matchFiler \"+\"     (singleton \"#\"     ())"   $ assertBool ""       $ R.matchFilter "+"     $ R.singleton "#"   ()
+    , testCase "  matchFiler \"a\"     (singleton \"#\"     ())"   $ assertBool ""       $ R.matchFilter "a"     $ R.singleton "#"   ()
+    , testCase "! matchFiler \"#\"     (singleton \"+\"     ())"   $ assertBool "" $ not $ R.matchFilter "#"     $ R.singleton "+"   ()
+    , testCase "  matchFiler \"+\"     (singleton \"+\"     ())"   $ assertBool ""       $ R.matchFilter "+"     $ R.singleton "+"   ()
+    , testCase "  matchFiler \"a\"     (singleton \"+\"     ())"   $ assertBool ""       $ R.matchFilter "a"     $ R.singleton "+"   ()
+    , testCase "! matchFiler \"#\"     (singleton \"a\"     ())"   $ assertBool "" $ not $ R.matchFilter "#"     $ R.singleton "a"   ()
+    , testCase "! matchFiler \"+\"     (singleton \"a\"     ())"   $ assertBool "" $ not $ R.matchFilter "+"     $ R.singleton "a"   ()
+    , testCase "  matchFiler \"a\"     (singleton \"a\"     ())"   $ assertBool ""       $ R.matchFilter "a"     $ R.singleton "a"   ()
+    , testCase "  matchFiler \"a\"     (singleton \"a/#\"   ())"   $ assertBool ""       $ R.matchFilter "a"     $ R.singleton "a/#" ()
+    , testCase "! matchFiler \"a\"     (singleton \"a/+\"   ())"   $ assertBool "" $ not $ R.matchFilter "a"     $ R.singleton "a/+" ()
+    , testCase "  matchFiler \"a/#\"   (singleton \"#\"     ())"   $ assertBool ""       $ R.matchFilter "a/#"   $ R.singleton "#"   ()
+    , testCase "  matchFiler \"a/b/#\" (singleton \"#\"     ())"   $ assertBool ""       $ R.matchFilter "a/b/#" $ R.singleton "#"   ()
+    ]
   , testGroup "lookupWith" [ missingTests ]
   , testGroup "insert" [ missingTests ]
   , testGroup "insertWith" [ missingTests ]

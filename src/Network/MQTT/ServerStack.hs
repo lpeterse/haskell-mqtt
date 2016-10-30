@@ -26,9 +26,9 @@ import qualified System.Socket.Family.Inet   as S
 import qualified System.Socket.Protocol.TCP  as S
 import qualified System.Socket.Type.Stream   as S
 
-data SocketServerStack
-data TlsServerStack a
-data WebSocketServerStack a
+data Socket
+data TLS a
+data WebSocket a
 
 class ServerStack a where
   data Server a
@@ -43,17 +43,17 @@ class ServerStack a where
   receive :: ServerConnection a -> IO BS.ByteString
   close   :: ServerConnection a -> IO ()
 
-instance ServerStack SocketServerStack where
-  data Server SocketServerStack = SocketServer
+instance ServerStack Socket where
+  data Server Socket = SocketServer
     { socketServer       :: S.Socket S.Inet S.Stream S.TCP
-    , socketServerConfig :: ServerConfig SocketServerStack
+    , socketServerConfig :: ServerConfig Socket
     }
-  data ServerConfig SocketServerStack = SocketServerConfig
+  data ServerConfig Socket = SocketServerConfig
     { socketServerConfigBindAddress :: S.SocketAddress S.Inet
     , socketServerConfigListenQueueSize :: Int
     }
-  data ServerConnection SocketServerStack = SocketServerConnection (S.Socket S.Inet S.Stream S.TCP)
-  data ServerConnectionRequest SocketServerStack = SocketServerConnectionRequest (S.SocketAddress S.Inet)
+  data ServerConnection Socket = SocketServerConnection (S.Socket S.Inet S.Stream S.TCP)
+  data ServerConnectionRequest Socket = SocketServerConnectionRequest (S.SocketAddress S.Inet)
   new c = SocketServer <$> S.socket <*> pure c
   start server = do
     S.bind (socketServer server) (socketServerConfigBindAddress $ socketServerConfig server)
@@ -69,18 +69,18 @@ instance ServerStack SocketServerStack where
   receive (SocketServerConnection s) = S.receive s 8192 S.msgNoSignal
   close (SocketServerConnection s) = S.close s
 
-instance ServerStack a => ServerStack (TlsServerStack a) where
-  data Server (TlsServerStack a) = TlsServer
+instance ServerStack a => ServerStack (TLS a) where
+  data Server (TLS a) = TlsServer
     {
     }
-  data ServerConfig (TlsServerStack a) = TlsServerConfig
+  data ServerConfig (TLS a) = TlsServerConfig
     { tlsTransportConfig  :: ServerConfig a
     }
-  data ServerConnection (TlsServerStack a) = TlsServerConnection
+  data ServerConnection (TLS a) = TlsServerConnection
     { tlsTransportState   :: ServerConnection a
     , tlsContext          :: TLS.Context
     }
-  data ServerConnectionRequest (TlsServerStack a) = TlsServerConnectionRequest
+  data ServerConnectionRequest (TLS a) = TlsServerConnectionRequest
     { tlsCertificateChain :: X509.CertificateChain
     , tlsTransportConnectionRequest :: ServerConnectionRequest a
     }
@@ -94,18 +94,18 @@ instance ServerStack a => ServerStack (TlsServerStack a) where
     TLS.bye (tlsContext conn)
     close (tlsTransportState conn)
 
-instance ServerStack a => ServerStack (WebSocketServerStack a) where
-  data Server (WebSocketServerStack a) = WebSocketServer
+instance ServerStack a => ServerStack (WebSocket a) where
+  data Server (WebSocket a) = WebSocketServer
     { wsTransportServer            :: Server a
     }
-  data ServerConfig (WebSocketServerStack a) = WebSocketServerConfig
+  data ServerConfig (WebSocket a) = WebSocketServerConfig
     { wsTransportConfig            :: ServerConfig a
     }
-  data ServerConnection (WebSocketServerStack a) = WebSocketServerConnection
+  data ServerConnection (WebSocket a) = WebSocketServerConnection
     { wsConnection                 :: WS.Connection
     , wsTransportConnection        :: ServerConnection a
     }
-  data ServerConnectionRequest (WebSocketServerStack a) = WebSocketServerConnectionRequest
+  data ServerConnectionRequest (WebSocket a) = WebSocketServerConnectionRequest
     { wsConnectionRequest          :: WS.PendingConnection
     , wsTransportConnectionRequest :: ServerConnectionRequest a
     }
@@ -126,14 +126,14 @@ instance ServerStack a => ServerStack (WebSocketServerStack a) where
     WS.sendClose (wsConnection conn) ("Thank you for flying with Haskell airlines. Have a nice day!" :: BS.ByteString)
     close (wsTransportConnection conn)
 
-instance Request (ServerConnectionRequest SocketServerStack) where
+instance Request (ServerConnectionRequest Socket) where
 
-instance (Request (ServerConnectionRequest a)) => Request (ServerConnectionRequest (TlsServerStack a)) where
+instance (Request (ServerConnectionRequest a)) => Request (ServerConnectionRequest (TLS a)) where
   requestSecure             = const True
   requestCertificateChain   = Just . tlsCertificateChain
   requestHeaders a          = requestHeaders (tlsTransportConnectionRequest a)
 
-instance (Request (ServerConnectionRequest a)) => Request (ServerConnectionRequest (WebSocketServerStack a)) where
+instance (Request (ServerConnectionRequest a)) => Request (ServerConnectionRequest (WebSocket a)) where
   requestSecure conn        = requestSecure (wsTransportConnectionRequest conn)
   requestCertificateChain a = requestCertificateChain (wsTransportConnectionRequest a)
   requestHeaders conn       = WS.requestHeaders $ WS.pendingRequest (wsConnectionRequest conn)
