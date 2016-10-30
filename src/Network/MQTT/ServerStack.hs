@@ -32,18 +32,35 @@ data WebSocketServerStack a
 
 class ServerStack a where
   data Server a
+  data ServerConfig a
   data ServerConnection a
   data ServerConnectionRequest a
+  new     :: ServerConfig a -> IO (Server a)
+  start   :: Server a -> IO ()
+  stop    :: Server a -> IO ()
   accept  :: Server a -> IO (ServerConnection a)
   send    :: ServerConnection a -> BS.ByteString -> IO ()
   receive :: ServerConnection a -> IO BS.ByteString
   close   :: ServerConnection a -> IO ()
 
 instance ServerStack SocketServerStack where
-  data Server SocketServerStack = SocketServer (S.Socket S.Inet S.Stream S.TCP)
+  data Server SocketServerStack = SocketServer
+    { socketServer       :: S.Socket S.Inet S.Stream S.TCP
+    , socketServerConfig :: ServerConfig SocketServerStack
+    }
+  data ServerConfig SocketServerStack = SocketServerConfig
+    { socketServerConfigBindAddress :: S.SocketAddress S.Inet
+    , socketServerConfigListenQueueSize :: Int
+    }
   data ServerConnection SocketServerStack = SocketServerConnection (S.Socket S.Inet S.Stream S.TCP)
   data ServerConnectionRequest SocketServerStack = SocketServerConnectionRequest (S.SocketAddress S.Inet)
-  accept (SocketServer s) = SocketServerConnection . fst <$> S.accept s
+  new c = SocketServer <$> S.socket <*> pure c
+  start server = do
+    S.bind (socketServer server) (socketServerConfigBindAddress $ socketServerConfig server)
+    S.listen (socketServer server) (socketServerConfigListenQueueSize $ socketServerConfig server)
+  stop server =
+    S.close (socketServer server)
+  accept s = SocketServerConnection . fst <$> S.accept (socketServer s)
   send (SocketServerConnection s) = sendAll
     where
       sendAll bs = do
@@ -56,6 +73,9 @@ instance ServerStack a => ServerStack (TlsServerStack a) where
   data Server (TlsServerStack a) = TlsServer
     {
     }
+  data ServerConfig (TlsServerStack a) = TlsServerConfig
+    { tlsTransportConfig  :: ServerConfig a
+    }
   data ServerConnection (TlsServerStack a) = TlsServerConnection
     { tlsTransportState   :: ServerConnection a
     , tlsContext          :: TLS.Context
@@ -64,6 +84,9 @@ instance ServerStack a => ServerStack (TlsServerStack a) where
     { tlsCertificateChain :: X509.CertificateChain
     , tlsTransportConnectionRequest :: ServerConnectionRequest a
     }
+  new          = undefined
+  start        = undefined
+  stop         = undefined
   accept       = undefined
   send conn bs = TLS.sendData (tlsContext conn) (BSL.fromStrict bs)
   receive conn = TLS.recvData (tlsContext conn)
@@ -75,6 +98,9 @@ instance ServerStack a => ServerStack (WebSocketServerStack a) where
   data Server (WebSocketServerStack a) = WebSocketServer
     { wsTransportServer            :: Server a
     }
+  data ServerConfig (WebSocketServerStack a) = WebSocketServerConfig
+    { wsTransportConfig            :: ServerConfig a
+    }
   data ServerConnection (WebSocketServerStack a) = WebSocketServerConnection
     { wsConnection                 :: WS.Connection
     , wsTransportConnection        :: ServerConnection a
@@ -83,6 +109,9 @@ instance ServerStack a => ServerStack (WebSocketServerStack a) where
     { wsConnectionRequest          :: WS.PendingConnection
     , wsTransportConnectionRequest :: ServerConnectionRequest a
     }
+  new config = WebSocketServer <$> new (wsTransportConfig config)
+  start server = start (wsTransportServer server)
+  stop server = stop (wsTransportServer server)
   accept server = do
     transport <- accept (wsTransportServer server)
     let readSocket = (\bs-> if BS.null bs then Nothing else Just bs) <$> receive transport
