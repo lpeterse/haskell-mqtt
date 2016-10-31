@@ -32,7 +32,7 @@ tgRawMessage :: TestTree
 tgRawMessage = testGroup "RawMessage"
   [ tgRawMessageRemainingLength
   , tgRawMessageUtf8String
-  , tgRawMessageAll
+  --, tgRawMessageAll
   ]
 
 tgRawMessageUtf8String :: TestTree

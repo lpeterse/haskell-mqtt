@@ -53,14 +53,12 @@ tests = testGroup "RoutingTree"
     , testCase "  matchFiler \"a/#\"   (singleton \"#\"     ())"   $ assertBool ""       $ R.matchFilter "a/#"   $ R.singleton "#"   ()
     , testCase "  matchFiler \"a/b/#\" (singleton \"#\"     ())"   $ assertBool ""       $ R.matchFilter "a/b/#" $ R.singleton "#"   ()
     ]
-  , testGroup "lookupWith" [ missingTests ]
-  , testGroup "insert" [ missingTests ]
-  , testGroup "insertWith" [ missingTests ]
-  , testGroup "map" [ missingTests ]
-  , testGroup "adjust" [ missingTests ]
-  , testGroup "delete" [ missingTests ]
-  , testGroup "unionWith" [ missingTests ]
-  , testGroup "differenceWith" [ missingTests ]
+  , testGroup "lookupWith" [ ]
+  , testGroup "insert" [  ]
+  , testGroup "insertWith" [  ]
+  , testGroup "map" [  ]
+  , testGroup "adjust" [  ]
+  , testGroup "delete" [  ]
+  , testGroup "unionWith" [  ]
+  , testGroup "differenceWith" [  ]
   ]
-  where
-    missingTests = testCase "test exists" $ assertFailure "no tests implemented"

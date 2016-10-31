@@ -246,10 +246,20 @@ matchTopic tf = matchTopic' (topicLevels tf)
 matchFilter :: RoutingTreeValue a => TopicFilter -> RoutingTree a -> Bool
 matchFilter tf = matchTopicFilter' (topicFilterLevels tf)
   where
-    matchTopicFilter' (x:|[])   (RoutingTree m) =
-      fromMaybe False $ not . nodeNull <$> ( nodeValue =<< M.lookup x m )
-    matchTopicFilter' (x:|y:zs) (RoutingTree m) =
-      fromMaybe False $ matchTopicFilter' (y:|zs) . nodeTree <$> M.lookup x m
+    matchTopicFilter' (x:|[]) (RoutingTree m) =
+      matchMultiLevelWildcard || matchSingleLevelWildCard || matchExact
+      where
+        matchMultiLevelWildcard  = M.member multiLevelWildcard m
+        matchSingleLevelWildCard = isJust ( nodeValue =<< M.lookup singleLevelWildcard m )
+        matchExact               = isJust ( nodeValue =<< M.lookup x m )
+    matchTopicFilter' (x:|y:zs) (RoutingTree m)
+      | x == multiLevelWildcard  = matchMultiLevelWildcard
+      | x == singleLevelWildcard = matchMultiLevelWildcard || matchSingleLevelWildcard
+      | otherwise                = matchMultiLevelWildcard || matchSingleLevelWildcard || matchExact
+      where
+        matchMultiLevelWildcard  = fromMaybe False $ matchTopicFilter' (y:|zs) . nodeTree <$> M.lookup multiLevelWildcard  m
+        matchSingleLevelWildcard = fromMaybe False $ matchTopicFilter' (y:|zs) . nodeTree <$> M.lookup singleLevelWildcard m
+        matchExact               = fromMaybe False $ matchTopicFilter' (y:|zs) . nodeTree <$> M.lookup x m
 
 --------------------------------------------------------------------------------
 -- Specialised nodeTree implemenations using data families
