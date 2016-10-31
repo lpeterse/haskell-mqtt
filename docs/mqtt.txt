@@ -2,6 +2,10 @@
 -- See Hoogle, http://www.haskell.org/hoogle/
 
 
+-- | An MQTT protocol implementation (client and server).
+--   
+--   This project aims to supply a rock-solid MQTT implementation suitable
+--   for production use.
 @package mqtt
 @version 0.1.0.0
 
@@ -95,7 +99,7 @@ matchTopic :: RoutingTreeValue a => Topic -> RoutingTree a -> Bool
 --   match (singleton "a") "+"     = False
 --   match (singleton "a") "#"     = False
 --   </pre>
-matchTopicFilter :: RoutingTreeValue a => TopicFilter -> RoutingTree a -> Bool
+matchFilter :: RoutingTreeValue a => TopicFilter -> RoutingTree a -> Bool
 lookupWith :: (RoutingTreeValue a) => (a -> a -> a) -> Topic -> RoutingTree a -> Maybe a
 insert :: RoutingTreeValue a => TopicFilter -> a -> RoutingTree a -> RoutingTree a
 insertWith :: RoutingTreeValue a => (a -> a -> a) -> TopicFilter -> a -> RoutingTree a -> RoutingTree a
@@ -231,9 +235,9 @@ getSubscribePermissions :: Authorizer a => Principal a -> IO (RoutingTree ())
 
 
 module Network.MQTT.ServerStack
-data SocketServerStack
-data TlsServerStack a
-data WebSocketServerStack a
+data Socket
+data TLS a
+data WebSocket a
 class ServerStack a where data Server a data ServerConfig a data ServerConnection a data ServerConnectionRequest a where {
     data family Server a;
     data family ServerConfig a;
@@ -247,12 +251,12 @@ accept :: ServerStack a => Server a -> IO (ServerConnection a)
 send :: ServerStack a => ServerConnection a -> ByteString -> IO ()
 receive :: ServerStack a => ServerConnection a -> IO ByteString
 close :: ServerStack a => ServerConnection a -> IO ()
-instance Network.MQTT.ServerStack.ServerStack Network.MQTT.ServerStack.SocketServerStack
-instance Network.MQTT.ServerStack.ServerStack a => Network.MQTT.ServerStack.ServerStack (Network.MQTT.ServerStack.TlsServerStack a)
-instance Network.MQTT.ServerStack.ServerStack a => Network.MQTT.ServerStack.ServerStack (Network.MQTT.ServerStack.WebSocketServerStack a)
-instance Network.MQTT.Authentication.Request (Network.MQTT.ServerStack.ServerConnectionRequest Network.MQTT.ServerStack.SocketServerStack)
-instance Network.MQTT.Authentication.Request (Network.MQTT.ServerStack.ServerConnectionRequest a) => Network.MQTT.Authentication.Request (Network.MQTT.ServerStack.ServerConnectionRequest (Network.MQTT.ServerStack.TlsServerStack a))
-instance Network.MQTT.Authentication.Request (Network.MQTT.ServerStack.ServerConnectionRequest a) => Network.MQTT.Authentication.Request (Network.MQTT.ServerStack.ServerConnectionRequest (Network.MQTT.ServerStack.WebSocketServerStack a))
+instance (Foreign.Storable.Storable (System.Socket.Internal.Socket.SocketAddress f), System.Socket.Internal.Socket.Family f, System.Socket.Internal.Socket.Type t, System.Socket.Internal.Socket.Protocol p) => Network.MQTT.ServerStack.ServerStack (System.Socket.Internal.Socket.Socket f t p)
+instance Network.MQTT.ServerStack.ServerStack a => Network.MQTT.ServerStack.ServerStack (Network.MQTT.ServerStack.TLS a)
+instance Network.MQTT.ServerStack.ServerStack a => Network.MQTT.ServerStack.ServerStack (Network.MQTT.ServerStack.WebSocket a)
+instance Network.MQTT.Authentication.Request (Network.MQTT.ServerStack.ServerConnectionRequest Network.MQTT.ServerStack.Socket)
+instance Network.MQTT.Authentication.Request (Network.MQTT.ServerStack.ServerConnectionRequest a) => Network.MQTT.Authentication.Request (Network.MQTT.ServerStack.ServerConnectionRequest (Network.MQTT.ServerStack.TLS a))
+instance Network.MQTT.Authentication.Request (Network.MQTT.ServerStack.ServerConnectionRequest a) => Network.MQTT.Authentication.Request (Network.MQTT.ServerStack.ServerConnectionRequest (Network.MQTT.ServerStack.WebSocket a))
 
 
 module Network.MQTT.Message
