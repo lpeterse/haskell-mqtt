@@ -246,11 +246,13 @@ matchTopic tf = matchTopic' (topicLevels tf)
 matchFilter :: RoutingTreeValue a => TopicFilter -> RoutingTree a -> Bool
 matchFilter tf = matchTopicFilter' (topicFilterLevels tf)
   where
-    matchTopicFilter' (x:|[]) (RoutingTree m) =
-      matchMultiLevelWildcard || matchSingleLevelWildCard || matchExact
+    matchTopicFilter' (x:|[]) (RoutingTree m)
+      | x == multiLevelWildcard  = matchMultiLevelWildcard
+      | x == singleLevelWildcard = matchMultiLevelWildcard || matchSingleLevelWildcard
+      | otherwise                = matchMultiLevelWildcard || matchSingleLevelWildcard || matchExact
       where
         matchMultiLevelWildcard  = M.member multiLevelWildcard m
-        matchSingleLevelWildCard = x /= multiLevelWildcard && isJust ( nodeValue =<< M.lookup singleLevelWildcard m )
+        matchSingleLevelWildcard = isJust ( nodeValue =<< M.lookup singleLevelWildcard m )
         matchExact               = case M.lookup x m of
           Nothing -> False
           Just n' -> isJust (nodeValue n') || let RoutingTree m' = nodeTree n' in M.member multiLevelWildcard m'
