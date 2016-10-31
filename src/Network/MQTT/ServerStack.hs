@@ -1,7 +1,7 @@
 {-# LANGUAGE FlexibleContexts  #-}
 {-# LANGUAGE FlexibleInstances #-}
-{-# LANGUAGE TypeFamilies      #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE TypeFamilies      #-}
 --------------------------------------------------------------------------------
 -- |
 -- Module      :  Network.MQTT.ServerStack
@@ -13,18 +13,17 @@
 --------------------------------------------------------------------------------
 module Network.MQTT.ServerStack where
 
-import qualified Data.X509                   as X509
+import           Control.Exception
 import           Control.Monad
 import qualified Data.ByteString             as BS
 import qualified Data.ByteString.Lazy        as BSL
+import qualified Data.X509                   as X509
+import           Foreign.Storable
 import           Network.MQTT.Authentication
 import qualified Network.TLS                 as TLS
 import qualified Network.WebSockets          as WS
 import qualified Network.WebSockets.Stream   as WS
 import qualified System.Socket               as S
-import qualified System.Socket.Family.Inet   as S
-import qualified System.Socket.Protocol.TCP  as S
-import qualified System.Socket.Type.Stream   as S
 
 data Socket
 data TLS a
@@ -43,17 +42,17 @@ class ServerStack a where
   receive :: ServerConnection a -> IO BS.ByteString
   close   :: ServerConnection a -> IO ()
 
-instance ServerStack Socket where
-  data Server Socket = SocketServer
-    { socketServer       :: S.Socket S.Inet S.Stream S.TCP
-    , socketServerConfig :: ServerConfig Socket
+instance (Storable (S.SocketAddress f), S.Family f, S.Type t, S.Protocol p) => ServerStack (S.Socket f t p) where
+  data Server (S.Socket f t p) = SocketServer
+    { socketServer       :: S.Socket f t p
+    , socketServerConfig :: ServerConfig (S.Socket f t p)
     }
-  data ServerConfig Socket = SocketServerConfig
-    { socketServerConfigBindAddress :: S.SocketAddress S.Inet
+  data ServerConfig (S.Socket f t p) = SocketServerConfig
+    { socketServerConfigBindAddress :: S.SocketAddress f
     , socketServerConfigListenQueueSize :: Int
     }
-  data ServerConnection Socket = SocketServerConnection (S.Socket S.Inet S.Stream S.TCP)
-  data ServerConnectionRequest Socket = SocketServerConnectionRequest (S.SocketAddress S.Inet)
+  data ServerConnection (S.Socket f t p) = SocketServerConnection (S.Socket f t p)
+  data ServerConnectionRequest (S.Socket f t p) = SocketServerConnectionRequest (S.SocketAddress f)
   new c = SocketServer <$> S.socket <*> pure c
   start server = do
     S.bind (socketServer server) (socketServerConfigBindAddress $ socketServerConfig server)
@@ -77,8 +76,8 @@ instance ServerStack a => ServerStack (TLS a) where
     { tlsTransportConfig  :: ServerConfig a
     }
   data ServerConnection (TLS a) = TlsServerConnection
-    { tlsTransportState   :: ServerConnection a
-    , tlsContext          :: TLS.Context
+    { tlsTransportConnection :: ServerConnection a
+    , tlsContext             :: TLS.Context
     }
   data ServerConnectionRequest (TLS a) = TlsServerConnectionRequest
     { tlsCertificateChain :: X509.CertificateChain
@@ -90,9 +89,7 @@ instance ServerStack a => ServerStack (TLS a) where
   accept       = undefined
   send conn bs = TLS.sendData (tlsContext conn) (BSL.fromStrict bs)
   receive conn = TLS.recvData (tlsContext conn)
-  close conn   = do
-    TLS.bye (tlsContext conn)
-    close (tlsTransportState conn)
+  close conn   = TLS.bye (tlsContext conn) `finally` close (tlsTransportConnection conn)
 
 instance ServerStack a => ServerStack (WebSocket a) where
   data Server (WebSocket a) = WebSocketServer
@@ -122,9 +119,10 @@ instance ServerStack a => ServerStack (WebSocket a) where
     WebSocketServerConnection <$> WS.acceptRequest pendingConnection <*> pure transport
   send conn    = WS.sendBinaryData (wsConnection conn)
   receive conn = WS.receiveData (wsConnection conn)
-  close conn = do
-    WS.sendClose (wsConnection conn) ("Thank you for flying with Haskell airlines. Have a nice day!" :: BS.ByteString)
-    close (wsTransportConnection conn)
+  close conn = closeWebSocket `finally` closeTransport
+    where
+      closeWebSocket = WS.sendClose (wsConnection conn) ("Thank you for flying with Haskell airlines. Have a nice day!" :: BS.ByteString)
+      closeTransport = close (wsTransportConnection conn)
 
 instance Request (ServerConnectionRequest Socket) where
 
