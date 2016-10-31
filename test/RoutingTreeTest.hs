@@ -36,7 +36,10 @@ tests = testGroup "RoutingTree"
     , testCase "! matchTopic \"b/c/d\" (singleton \"a/#\"   ())"   $ assertBool "" $ not $ R.matchTopic "b/c/d" $ R.singleton "a/#" ()
     , testCase "! matchTopic \"a\"     (singleton \"a/+\"   ())"   $ assertBool "" $ not $ R.matchTopic "a"     $ R.singleton "a/+" ()
     , testCase "! matchTopic \"a\"     (singleton \"/a\"    ())"   $ assertBool "" $ not $ R.matchTopic "a"     $ R.singleton "/a"  ()
-    , testCase "  matchTopic \"a/a\"   (singleton \"a/a\"   ())"   $ assertBool ""       $ R.matchTopic "a/a"   $ R.singleton "a/a"  ()
+    , testCase "  matchTopic \"a/b\"   (singleton \"a/b\"   ())"   $ assertBool ""       $ R.matchTopic "a/b"   $ R.singleton "a/b" ()
+    , testCase "  matchTopic \"a/b\"   (singleton \"a/+\"   ())"   $ assertBool ""       $ R.matchTopic "a/b"   $ R.singleton "a/+" ()
+    , testCase "  matchTopic \"a/b\"   (singleton \"a/#\"   ())"   $ assertBool ""       $ R.matchTopic "a/b"   $ R.singleton "a/#" ()
+    , testCase "  matchTopic \"a/b\"   (singleton \"a/b/#\" ())"   $ assertBool ""       $ R.matchTopic "a/b"   $ R.singleton "a/b/#" ()
     ]
   , testGroup "matchFilter"
     [ testCase "  matchFiler \"#\"     (singleton \"#\"     ())"   $ assertBool ""       $ R.matchFilter "#"     $ R.singleton "#"   ()
