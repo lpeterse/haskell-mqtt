@@ -250,14 +250,16 @@ matchFilter tf = matchTopicFilter' (topicFilterLevels tf)
       matchMultiLevelWildcard || matchSingleLevelWildCard || matchExact
       where
         matchMultiLevelWildcard  = M.member multiLevelWildcard m
-        matchSingleLevelWildCard = isJust ( nodeValue =<< M.lookup singleLevelWildcard m )
-        matchExact               = isJust ( nodeValue =<< M.lookup x m )
+        matchSingleLevelWildCard = x /= multiLevelWildcard && isJust ( nodeValue =<< M.lookup singleLevelWildcard m )
+        matchExact               = case M.lookup x m of
+          Nothing -> False
+          Just n' -> isJust (nodeValue n') || let RoutingTree m' = nodeTree n' in M.member multiLevelWildcard m'
     matchTopicFilter' (x:|y:zs) (RoutingTree m)
       | x == multiLevelWildcard  = matchMultiLevelWildcard
       | x == singleLevelWildcard = matchMultiLevelWildcard || matchSingleLevelWildcard
       | otherwise                = matchMultiLevelWildcard || matchSingleLevelWildcard || matchExact
       where
-        matchMultiLevelWildcard  = fromMaybe False $ matchTopicFilter' (y:|zs) . nodeTree <$> M.lookup multiLevelWildcard  m
+        matchMultiLevelWildcard  = M.member multiLevelWildcard  m
         matchSingleLevelWildcard = fromMaybe False $ matchTopicFilter' (y:|zs) . nodeTree <$> M.lookup singleLevelWildcard m
         matchExact               = fromMaybe False $ matchTopicFilter' (y:|zs) . nodeTree <$> M.lookup x m
 
