@@ -1,7 +1,7 @@
-{-# LANGUAGE FlexibleContexts  #-}
-{-# LANGUAGE FlexibleInstances #-}
-{-# LANGUAGE TypeFamilies      #-}
+{-# LANGUAGE FlexibleContexts    #-}
+{-# LANGUAGE FlexibleInstances   #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TypeFamilies        #-}
 --------------------------------------------------------------------------------
 -- |
 -- Module      :  Network.MQTT.Server
@@ -18,6 +18,7 @@ import           Control.Monad               (join)
 import qualified Data.ByteString             as BS
 import qualified Data.ByteString.Builder     as BS
 import qualified Data.ByteString.Lazy        as BSL
+import           Data.IORef
 import qualified Data.Serialize.Get          as SG
 import qualified Data.Text                   as T
 import           Data.Typeable
@@ -42,6 +43,7 @@ instance (Typeable auth, Typeable transport, SS.ServerStack transport, SS.Server
     }
   data ServerConnection (MQTT auth transport) = MqttServerConnection
     { mqttTransportConnection :: SS.ServerConnection transport
+    , mqttTransportLeftover   :: IORef BS.ByteString
     , mqttUsername            :: Maybe T.Text
     , mqttPassword            :: Maybe BS.ByteString
     }
@@ -52,26 +54,44 @@ instance (Typeable auth, Typeable transport, SS.ServerStack transport, SS.Server
   new config = MqttServer <$> SS.new (mqttTransportConfig config) <*> pure config
   start server = SS.start (mqttTransportServer server)
   stop server = SS.stop (mqttTransportServer server)
-  accept server = bracket (SS.accept $ mqttTransportServer server) SS.close $ \transportConnection->
-    fetchRequest transportConnection =<< (SG.runGetPartial pRawMessage <$> SS.receive transportConnection 4096)
+  accept server = bracket (SS.accept $ mqttTransportServer server) SS.close f
     where
-      fetchRequest transportConnection x = case x of
-        SG.Partial continuation -> fetchRequest transportConnection =<< (continuation <$> SS.receive transportConnection 4096)
-        SG.Done rawMessage _    -> decideRequest transportConnection rawMessage
-        SG.Fail e _             -> throwIO (ProtocolViolation e :: SS.ServerException (MQTT auth transport))
-      decideRequest transportConnection c@Connect {} = do
-        let mqttConnection = MqttServerConnection transportConnection (fst <$> connectCredentials c) (join $ snd <$> connectCredentials c)
-        mp <- authenticate (Broker.brokerAuthenticator $ mqttBroker $ mqttConfig server) mqttConnection
-        case mp of
-          Just principal -> pure mqttConnection
-          Nothing -> do
-            SS.send transportConnection $ BSL.toStrict $ BS.toLazyByteString $ bRawMessage $ ConnectAcknowledgement (Left NotAuthorized)
-            throwIO (ConnectionRefused NotAuthorized :: SS.ServerException (MQTT auth transport))
-      decideRequest _ _ = throwIO (ProtocolViolation "Expected CONN message, got something else." :: SS.ServerException (MQTT auth transport))
-  flush connection   = SS.flush (mqttTransportConnection connection)
-  close connection   = SS.close (mqttTransportConnection connection)
-  send connection    = undefined
-  receive connection = undefined
+      f transportConnection = parse <$> fetch >>= process
+        where
+          parse = SG.runGetPartial pRawMessage
+          fetch = SS.receive transportConnection 4096
+          process (SG.Partial continuation) = continuation <$> fetch >>= process
+          process (SG.Fail failure _)       = throwIO (ProtocolViolation failure :: SS.ServerException (MQTT auth transport))
+          process (SG.Done msg leftover)    = case msg of
+            c@Connect {} -> do
+              mqttConnection <- MqttServerConnection
+                            <$> pure transportConnection
+                            <*> newIORef leftover
+                            <*> pure (fst <$> connectCredentials c)
+                            <*> pure (join $ snd <$> connectCredentials c)
+              mp <- authenticate (Broker.brokerAuthenticator $ mqttBroker $ mqttConfig server) mqttConnection
+              case mp of
+                Just _principal ->
+                  pure mqttConnection
+                Nothing -> do
+                  SS.send transportConnection $ BSL.toStrict $ BS.toLazyByteString $ bRawMessage $ ConnectAcknowledgement (Left NotAuthorized)
+                  throwIO (ConnectionRefused NotAuthorized :: SS.ServerException (MQTT auth transport))
+            _ -> throwIO (ProtocolViolation "Expected CONN message, got something else." :: SS.ServerException (MQTT auth transport))
+  flush connection     = SS.flush (mqttTransportConnection connection)
+  close connection =
+    -- DISCONNECT shall only be sent from the client from the server, so
+    -- nothing to do but closing the transport here.
+    SS.close (mqttTransportConnection connection)
+  send connection =
+    SS.send (mqttTransportConnection connection) . BSL.toStrict . BS.toLazyByteString . bRawMessage
+  receive connection i =
+    parse <$> readIORef (mqttTransportLeftover connection) >>= process
+    where
+      parse = SG.runGetPartial pRawMessage
+      fetch = SS.receive (mqttTransportConnection connection) i
+      process (SG.Partial continuation) = continuation <$> fetch >>= process
+      process (SG.Fail failure _)       = throwIO (ProtocolViolation failure :: SS.ServerException (MQTT auth transport))
+      process (SG.Done msg bs)          = writeIORef (mqttTransportLeftover connection) bs >> pure msg
 
 instance (Request (SS.ServerConnection transport)) => Request (SS.ServerConnection (MQTT auth transport)) where
   requestSecure           = requestSecure . mqttTransportConnection
