@@ -26,7 +26,6 @@ import qualified Network.WebSockets          as WS
 import qualified Network.WebSockets.Stream   as WS
 import qualified System.Socket               as S
 
-data Socket
 data TLS a
 data WebSocket a
 
@@ -140,7 +139,7 @@ instance ServerStack a => ServerStack (WebSocket a) where
         ("Thank you for flying Haskell." :: BS.ByteString)
       closeTransport = close (wsTransportConnection conn)
 
-instance Request (ServerConnection Socket) where
+instance Request (ServerConnection (S.Socket f t p)) where
 
 instance (Request (ServerConnection a)) => Request (ServerConnection (TLS a)) where
   requestSecure             = const True

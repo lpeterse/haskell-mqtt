@@ -1,4 +1,7 @@
-.PHONY: docs profbench test
+.PHONY: docs profbench test all
+
+all:
+	stack install
 
 profbench:
 	stack bench --library-profiling --executable-profiling --benchmark-arguments '+RTS -N -s -p'

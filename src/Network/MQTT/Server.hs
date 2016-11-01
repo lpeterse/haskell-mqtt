@@ -1,4 +1,5 @@
-{-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE TypeFamilies     #-}
 --------------------------------------------------------------------------------
 -- |
 -- Module      :  Network.MQTT.Server
@@ -10,49 +11,58 @@
 --------------------------------------------------------------------------------
 module Network.MQTT.Server where
 
-import Control.Monad
-import Control.Concurrent
-import Control.Concurrent.MVar
-import Control.Concurrent.Async
-import Control.Exception
+import           Control.Concurrent
+import           Control.Exception
+import           Control.Monad               (join)
+import qualified Data.ByteString             as BS
+import qualified Data.ByteString.Builder     as BS
+import qualified Data.ByteString.Lazy        as BSL
+import qualified Data.Serialize.Get          as SG
+import qualified Data.Text                   as T
+import           Data.Typeable
+import           Network.MQTT.Authentication
+import qualified Network.MQTT.Broker         as Broker
+import           Network.MQTT.Message
+import qualified Network.MQTT.ServerStack    as SS
 
-import qualified Data.Set as S
+data ServerException
+   = ProtocolViolation String
+   | ConnectionRefused ConnectionRefusal
+   deriving (Eq, Ord, Show, Typeable)
 
-import Network.MQTT.Broker ( Broker (..), Session (..) )
+instance Exception ServerException
 
-class ConnectionSource s where
-  type Stream s
-  type ConnectionMetaInformation s
-  accept :: s -> IO (Stream s, ConnectionMetaInformation s)
-  close  :: s -> IO ()
+data MqttConnection a = MqttConnection {
+    mqttTransport :: a
+  , mqttUsername  :: Maybe T.Text
+  , mqttPassword  :: Maybe BS.ByteString
+  }
 
-data Server s
-   = Server
-   { serverConnectionSource :: s
-   , serverBroker           :: Broker
-   , serverConnections      :: MVar (S.Set (Connection s))
-   }
+instance (Request a) => Request (MqttConnection a) where
+  requestSecure           = requestSecure . mqttTransport
+  requestUsername         = mqttUsername
+  requestPassword         = mqttPassword
+  requestHeaders          = requestHeaders . mqttTransport
+  requestCertificateChain = requestCertificateChain . mqttTransport
 
-data Connection s
-   = Connection
-   { connectionStream       :: s
-   }
-
-{--
-run :: ConnectionSource s => Server s -> IO ()
-run server = (forever $ accept (serverConnectionSource server) >>= forkIO . f) `finally` shutdown
+handle :: (SS.ServerStack a, Request (SS.ServerConnection a), Authenticator auth) => Broker.Broker auth -> SS.ServerConnection a -> IO ()
+handle broker connection = do
+  bs <- parseRequest =<< (SG.runGetPartial pRawMessage <$> SS.receive connection 4096)
+  print bs
   where
-    f (stream, meta) = bracket
-      ( Connection <$> stream )
-      ( \connection-> modifyMVar_
-          (serverConnections server)
-          (\connections-> pure $! S.delete connection connections)
-      )
-      ( \connection-> do
-          modifyMVar_
-            (serverConnections server)
-            (\connections-> pure $! S.insert connection connections)
-          handle connection
-      )
-    handle = undefined
---}
+    parseRequest :: SG.Result RawMessage -> IO BS.ByteString
+    parseRequest x = case x of
+      SG.Partial continuation -> parseRequest =<< (continuation <$> SS.receive connection 4096)
+      SG.Done rawMessage bs   -> acceptRequest rawMessage >> pure bs
+      SG.Fail e _             -> throwIO $ ProtocolViolation e
+    acceptRequest c@Connect {} = do
+      let mqttConnection = MqttConnection connection (fst <$> connectCredentials c) (join $ snd <$> connectCredentials c)
+      mp <- authenticate (Broker.brokerAuthenticator broker) mqttConnection
+      case mp of
+        Nothing -> do
+          SS.send connection $ BSL.toStrict $ BS.toLazyByteString $ bRawMessage $ ConnectAcknowledgement (Left NotAuthorized)
+          throwIO $ ConnectionRefused NotAuthorized
+        Just principal -> do
+          print principal
+          threadDelay 10000000
+    acceptRequest _            = throwIO $ ProtocolViolation "Expected CONN message, got something else."

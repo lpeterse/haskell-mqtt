@@ -1,4 +1,6 @@
-{-# LANGUAGE TypeFamilies, FlexibleContexts #-}
+{-# LANGUAGE FlexibleContexts  #-}
+{-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE TypeFamilies      #-}
 --------------------------------------------------------------------------------
 -- |
 -- Module      :  Network.MQTT.Authentication
@@ -11,14 +13,14 @@
 module Network.MQTT.Authentication where
 
 import           Control.Exception
-import qualified Data.Text as T
-import qualified Data.ByteString as BS
-import qualified Data.X509 as X509
-import           Data.CaseInsensitive ( CI )
+import qualified Data.ByteString      as BS
+import           Data.CaseInsensitive (CI)
+import qualified Data.Text            as T
+import qualified Data.X509            as X509
 
 -- | An `Authenticator` is able to determine a `Principal`'s identity from a
 --   `Request`.
-class Exception (AuthenticationException a) => Authenticator a where
+class (Show (Principal a), Exception (AuthenticationException a)) => Authenticator a where
   -- | A peer identity optionally associated with connection/session
   --   specific information.
   data Principal a
@@ -31,7 +33,7 @@ class Exception (AuthenticationException a) => Authenticator a where
   --   The operation shall return `Nothing` in case the authentication
   --   mechanism is working, but couldn't associate an identity. It shall
   --   throw and `AuthenticationException` in case of other problems.
-  authenticate :: Request c => a -> c -> IO (Maybe (Principal a))
+  authenticate :: Request r => a -> r -> IO (Maybe (Principal a))
 
 -- | This class defines how the information gathered from a
 --   connection request looks like. An `Authenticator` may use

@@ -12,19 +12,24 @@ module Network.MQTT.Broker where
 
 import           Control.Concurrent
 import           Control.Concurrent.BoundedChan
-import           Control.Monad
 import           Data.Functor.Identity
 import qualified Data.IntMap                    as IM
 import qualified Data.IntSet                    as IS
-import           Data.Maybe
 import qualified Network.MQTT.RoutingTree       as R
 import           Network.MQTT.Topic
 
 type SessionKey = Int
 type Message = ()
 
-newtype Broker  = Broker  { unBroker  :: MVar BrokerState }
-newtype Session = Session { unSession :: MVar SessionState }
+data Broker authenticator  = Broker  {
+    brokerAuthenticator :: authenticator
+  , brokerState         :: MVar (BrokerState authenticator)
+  }
+
+data Session authenticator = Session {
+    sessionBroker :: Broker authenticator
+  , sessionState  :: MVar SessionState
+  }
 
 data QosLevel
    = Qos0
@@ -32,17 +37,16 @@ data QosLevel
    | Qos2
    deriving (Eq, Ord, Show)
 
-data BrokerState
+data BrokerState authenticator
   =  BrokerState
     { brokerMaxSessionKey :: !SessionKey
     , brokerSubscriptions :: !(R.RoutingTree IS.IntSet)
-    , brokerSessions      :: !(IM.IntMap Session)
+    , brokerSessions      :: !(IM.IntMap (Session authenticator))
     }
 
 data SessionState
   =  SessionState
-    { sessionBroker        :: !Broker
-    , sessionKey           :: !SessionKey
+    { sessionKey           :: !SessionKey
     , sessionTermination   :: !(MVar ())
     , sessionSubscriptions :: !(R.RoutingTree (Identity QosLevel))
     , sessionQueue0        :: !(BoundedChan (Topic, Message))
@@ -50,12 +54,16 @@ data SessionState
     , sessionQueue2        :: !(BoundedChan (Topic, Message))
     }
 
-newBroker  :: IO Broker
-newBroker =
-  Broker <$> newMVar BrokerState
+new :: authenticator -> IO (Broker authenticator)
+new authenticator = do
+  st <-newMVar BrokerState
     { brokerMaxSessionKey = 0
     , brokerSubscriptions = mempty
     , brokerSessions      = mempty
+    }
+  pure Broker {
+      brokerAuthenticator = authenticator
+    , brokerState         = st
     }
 
 data SessionConfig
@@ -64,6 +72,8 @@ data SessionConfig
      , sessionConfigQueue1MaxSize :: Int
      , sessionConfigQueue2MaxSize :: Int
      }
+
+{-
 
 createSession :: Broker -> SessionConfig -> IO Session
 createSession (Broker broker) config =
@@ -158,7 +168,7 @@ publishBroker (Broker broker) topic message = do
     case IM.lookup (key :: Int) (brokerSessions brokerState) of
       Nothing      -> pure ()
       Just session -> deliverSession session topic message
-
+-}
 {-
 type  SessionKey = Int
 

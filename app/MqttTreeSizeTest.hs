@@ -9,15 +9,14 @@ import           Network.MQTT.RoutingTree as R
 import           Network.MQTT.Topic
 import           System.Mem
 import           System.Random            (randomIO)
-import qualified Data.IntSet              as IS
 import qualified Data.Map                 as M
 
 main :: IO ()
 main  = do
   r <- randomTree 7 10 :: IO (RoutingTree IS.IntSet)
-  r `seq` print "Evaluated."
+  r `seq` putStrLn "Evaluated."
   performGC
-  print "Performed GC. See memory consumption now!"
+  putStrLn "Performed GC. See memory consumption now!"
   threadDelay 100000000
   print (R.null r)
 
