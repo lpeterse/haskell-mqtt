@@ -20,16 +20,23 @@ import qualified System.Socket.Type.Stream   as S
 main :: IO ()
 main  = do
   broker <- Broker.new FakeAuthenticator
-  server <- SS.new config :: IO (SS.Server (S.Socket S.Inet S.Stream S.TCP))
+  server <- SS.new (mqttConfig broker) :: IO (SS.Server (Server.MQTT FakeAuthenticator (S.Socket S.Inet S.Stream S.TCP)))
   SS.start server
   forever $ do
     connection <- SS.accept server
-    forkIO $ Server.handle broker connection `finally` SS.close connection >> putStrLn "closed"
+    forkIO $ withConnection connection `finally` SS.close connection >> putStrLn "closed"
   where
-    config = SS.SocketServerConfig {
+    socketConfig = SS.SocketServerConfig {
       SS.socketServerConfigBindAddress = S.SocketAddressInet  S.inetLoopback 1883
     , SS.socketServerConfigListenQueueSize = 5
     }
+    mqttConfig broker = Server.MqttServerConfig {
+      Server.mqttTransportConfig = socketConfig
+    , Server.mqttBroker = broker
+    }
+    withConnection connection = do
+      print $ Server.mqttUsername connection
+      threadDelay 10000000
 
 data FakeAuthenticator = FakeAuthenticator
 

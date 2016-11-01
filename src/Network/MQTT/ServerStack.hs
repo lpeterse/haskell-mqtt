@@ -30,28 +30,32 @@ data TLS a
 data WebSocket a
 
 class ServerStack a where
+  type ServerMessage a
   data Server a
   data ServerConfig a
+  data ServerException a
   data ServerConnection a
   new     :: ServerConfig a -> IO (Server a)
   start   :: Server a -> IO ()
   stop    :: Server a -> IO ()
   accept  :: Server a -> IO (ServerConnection a)
   flush   :: ServerConnection a -> IO ()
-  send    :: ServerConnection a -> BS.ByteString -> IO ()
-  receive :: ServerConnection a -> Int -> IO BS.ByteString
+  send    :: ServerConnection a -> ServerMessage a -> IO ()
+  receive :: ServerConnection a -> Int -> IO (ServerMessage a)
   close   :: ServerConnection a -> IO ()
 
 instance (Storable (S.SocketAddress f), S.Family f, S.Type t, S.Protocol p) => ServerStack (S.Socket f t p) where
+  type ServerMessage (S.Socket f t p) = BS.ByteString
   data Server (S.Socket f t p) = SocketServer
-    { socketServer       :: S.Socket f t p
-    , socketServerConfig :: ServerConfig (S.Socket f t p)
+    { socketServer       :: !(S.Socket f t p)
+    , socketServerConfig :: !(ServerConfig (S.Socket f t p))
     }
   data ServerConfig (S.Socket f t p) = SocketServerConfig
-    { socketServerConfigBindAddress :: S.SocketAddress f
+    { socketServerConfigBindAddress :: !(S.SocketAddress f)
     , socketServerConfigListenQueueSize :: Int
     }
-  data ServerConnection (S.Socket f t p) = SocketServerConnection (S.Socket f t p)
+  data ServerException (S.Socket f t p) = SocketServerException !S.SocketException
+  data ServerConnection (S.Socket f t p) = SocketServerConnection !(S.Socket f t p)
   new c = SocketServer <$> S.socket <*> pure c
   start server = do
     S.bind (socketServer server) (socketServerConfigBindAddress $ socketServerConfig server)
@@ -68,7 +72,8 @@ instance (Storable (S.SocketAddress f), S.Family f, S.Type t, S.Protocol p) => S
   receive (SocketServerConnection s) i = S.receive s i S.msgNoSignal
   close (SocketServerConnection s) = S.close s
 
-instance ServerStack a => ServerStack (TLS a) where
+instance (ServerStack a, ServerMessage a ~ BS.ByteString) => ServerStack (TLS a) where
+  type ServerMessage (TLS a) = ServerMessage a
   data Server (TLS a) = TlsServer
     { tlsTransportServer            :: Server a
     , tlsServerConfig               :: ServerConfig (TLS a)
@@ -77,6 +82,7 @@ instance ServerStack a => ServerStack (TLS a) where
     { tlsTransportConfig            :: ServerConfig a
     , tlsServerParams               :: TLS.ServerParams
     }
+  data ServerException (TLS a) = TlsServerException
   data ServerConnection (TLS a) = TlsServerConnection
     { tlsTransportConnection        :: ServerConnection a
     , tlsContext                    :: TLS.Context
@@ -105,13 +111,15 @@ instance ServerStack a => ServerStack (TLS a) where
   receive conn _ = TLS.recvData     (tlsContext conn)
   close conn     = TLS.bye          (tlsContext conn) `finally` close (tlsTransportConnection conn)
 
-instance ServerStack a => ServerStack (WebSocket a) where
+instance (ServerStack a, ServerMessage a ~ BS.ByteString) => ServerStack (WebSocket a) where
+  type ServerMessage (WebSocket a) = BS.ByteString
   data Server (WebSocket a) = WebSocketServer
     { wsTransportServer            :: Server a
     }
   data ServerConfig (WebSocket a) = WebSocketServerConfig
     { wsTransportConfig            :: ServerConfig a
     }
+  data ServerException (WebSocket a) = WebSocketServerException
   data ServerConnection (WebSocket a) = WebSocketServerConnection
     { wsTransportConnection        :: ServerConnection a
     , wsPendingConnection          :: WS.PendingConnection
