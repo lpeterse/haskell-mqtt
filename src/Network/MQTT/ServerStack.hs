@@ -16,6 +16,7 @@ module Network.MQTT.ServerStack where
 import           Control.Concurrent.MVar
 import           Control.Exception
 import           Control.Monad
+import           Control.Concurrent.Async
 import qualified Data.ByteString             as BS
 import qualified Data.ByteString.Lazy        as BSL
 import qualified Data.X509                   as X509
@@ -35,14 +36,14 @@ class ServerStack a where
   data ServerConfig a
   data ServerException a
   data ServerConnection a
-  new     :: ServerConfig a -> IO (Server a)
-  start   :: Server a -> IO ()
-  stop    :: Server a -> IO ()
-  accept  :: Server a -> IO (ServerConnection a)
-  flush   :: ServerConnection a -> IO ()
-  send    :: ServerConnection a -> ServerMessage a -> IO ()
-  receive :: ServerConnection a -> Int -> IO (ServerMessage a)
-  close   :: ServerConnection a -> IO ()
+  new        :: ServerConfig a -> IO (Server a)
+  start      :: Server a -> IO ()
+  stop       :: Server a -> IO ()
+  acceptWith :: Server a -> (ServerConnection a -> IO b) -> IO (Async b)
+  flush      :: ServerConnection a -> IO ()
+  send       :: ServerConnection a -> ServerMessage a -> IO ()
+  receive    :: ServerConnection a -> Int -> IO (ServerMessage a)
+  close      :: ServerConnection a -> IO ()
 
 instance (Storable (S.SocketAddress f), S.Family f, S.Type t, S.Protocol p) => ServerStack (S.Socket f t p) where
   type ServerMessage (S.Socket f t p) = BS.ByteString
@@ -62,8 +63,11 @@ instance (Storable (S.SocketAddress f), S.Family f, S.Type t, S.Protocol p) => S
     S.listen (socketServer server) (socketServerConfigListenQueueSize $ socketServerConfig server)
   stop server =
     S.close (socketServer server)
-  accept s = SocketServerConnection . fst <$> S.accept (socketServer s)
-  flush = const (pure ())
+  acceptWith server handleConnection =
+    bracketOnError (SocketServerConnection . fst <$> S.accept (socketServer server)) close $ \connection->
+      async (handleConnection connection `finally` close connection)
+  flush =
+    const (pure ())
   send (SocketServerConnection s) = sendAll
     where
       sendAll bs = do
@@ -93,19 +97,20 @@ instance (ServerStack a, ServerMessage a ~ BS.ByteString) => ServerStack (TLS a)
     pure (TlsServer transportServer config)
   start  server = start (tlsTransportServer server)
   stop   server = stop  (tlsTransportServer server)
-  accept server = bracket (accept $ tlsTransportServer server) close $ \connection-> do
-    let backend = TLS.Backend {
-        TLS.backendFlush = flush connection
-      , TLS.backendClose = close connection
-      , TLS.backendSend  = send connection
-      , TLS.backendRecv  = receive connection
-      }
-    mvar <- newEmptyMVar
-    context <- TLS.contextNew backend (tlsServerParams $ tlsServerConfig server)
-    TLS.contextHookSetCertificateRecv context (putMVar mvar)
-    TLS.handshake context
-    certificateChain <- tryTakeMVar mvar
-    pure (TlsServerConnection connection context certificateChain)
+  acceptWith server handleConnection =
+    acceptWith (tlsTransportServer server) $ \connection-> do
+      let backend = TLS.Backend {
+          TLS.backendFlush = flush connection
+        , TLS.backendClose = close connection
+        , TLS.backendSend  = send connection
+        , TLS.backendRecv  = receive connection
+        }
+      mvar <- newEmptyMVar
+      context <- TLS.contextNew backend (tlsServerParams $ tlsServerConfig server)
+      TLS.contextHookSetCertificateRecv context (putMVar mvar)
+      TLS.handshake context
+      certificateChain <- tryTakeMVar mvar
+      handleConnection (TlsServerConnection connection context certificateChain)
   flush conn     = TLS.contextFlush (tlsContext conn)
   send conn bs   = TLS.sendData     (tlsContext conn) (BSL.fromStrict bs)
   receive conn _ = TLS.recvData     (tlsContext conn)
@@ -128,16 +133,17 @@ instance (ServerStack a, ServerMessage a ~ BS.ByteString) => ServerStack (WebSoc
   new config = WebSocketServer <$> new (wsTransportConfig config)
   start server = start (wsTransportServer server)
   stop server = stop (wsTransportServer server)
-  accept server = do
-    transport <- accept (wsTransportServer server)
-    let readSocket = (\bs-> if BS.null bs then Nothing else Just bs) <$> receive transport 4096
-    let writeSocket Nothing   = undefined
-        writeSocket (Just bs) = send transport (BSL.toStrict bs)
-    stream <- WS.makeStream readSocket writeSocket
-    pendingConnection <- WS.makePendingConnectionFromStream stream (WS.ConnectionOptions $ pure ())
-    WebSocketServerConnection <$> pure transport
-                              <*> pure pendingConnection
-                              <*> WS.acceptRequest pendingConnection
+  acceptWith server handleConnection =
+    acceptWith (wsTransportServer server) $ \connection-> do
+      let readSocket = (\bs-> if BS.null bs then Nothing else Just bs) <$> receive connection 4096
+      let writeSocket Nothing   = undefined
+          writeSocket (Just bs) = send connection (BSL.toStrict bs)
+      stream <- WS.makeStream readSocket writeSocket
+      pendingConnection <- WS.makePendingConnectionFromStream stream (WS.ConnectionOptions $ pure ())
+      handleConnection =<< WebSocketServerConnection
+        <$> pure connection
+        <*> pure pendingConnection
+        <*> WS.acceptRequest pendingConnection
   flush conn     = flush (wsTransportConnection conn)
   send conn      = WS.sendBinaryData (wsConnection conn)
   receive conn _ = WS.receiveData (wsConnection conn)

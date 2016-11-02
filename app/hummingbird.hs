@@ -19,25 +19,22 @@ import qualified System.Socket.Type.Stream   as S
 
 main :: IO ()
 main  = do
-  broker <- Broker.new FakeAuthenticator
-  server <- SS.new (mqttConfig broker) :: IO (SS.Server (Server.MQTT FakeAuthenticator (S.Socket S.Inet S.Stream S.TCP)))
+  server <- SS.new mqttConfig :: IO (SS.Server (Server.MQTT (S.Socket S.Inet S.Stream S.TCP)))
   SS.start server
   forever $ do
-    connection <- SS.accept server
-    forkIO $ withConnection connection `finally` SS.close connection >> putStrLn "closed"
+    putStrLn "Waiting for connection..."
+    SS.acceptWith server $ \_connection->
+      putStrLn "New connection!"
   where
     socketConfig = SS.SocketServerConfig {
       SS.socketServerConfigBindAddress = S.SocketAddressInet  S.inetLoopback 1883
     , SS.socketServerConfigListenQueueSize = 5
     }
-    mqttConfig broker = Server.MqttServerConfig {
+    mqttConfig = Server.MqttServerConfig {
       Server.mqttTransportConfig = socketConfig
-    , Server.mqttBroker = broker
     }
-    withConnection connection = do
-      print $ Server.mqttUsername connection
-      threadDelay 10000000
 
+{-
 data FakeAuthenticator = FakeAuthenticator
 
 instance Exception (AuthenticationException FakeAuthenticator)
@@ -50,3 +47,4 @@ instance Authenticator FakeAuthenticator where
 
 instance Authorizer FakeAuthenticator where
   data AuthorizationException FakeAuthenticator = FakeAuthorizationException deriving (Eq, Ord, Show, Typeable)
+-}
