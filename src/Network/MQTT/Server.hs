@@ -13,17 +13,17 @@
 --------------------------------------------------------------------------------
 module Network.MQTT.Server where
 
-import           Control.Exception
-import qualified Data.ByteString             as BS
-import qualified Data.ByteString.Builder     as BS
-import qualified Data.ByteString.Lazy        as BSL
+import qualified Control.Exception as E
+import qualified Data.ByteString          as BS
+import qualified Data.ByteString.Builder  as BS
+import qualified Data.ByteString.Lazy     as BSL
 import           Data.IORef
-import qualified Data.Serialize.Get          as SG
+import qualified Data.Serialize.Get       as SG
 import           Data.Typeable
 import           Network.MQTT.Message
-import qualified Network.MQTT.ServerStack    as SS
+import qualified Network.MQTT.ServerStack as SS
 
-instance (Typeable transport) => Exception (SS.ServerException (MQTT transport))
+instance (Typeable transport) => E.Exception (SS.ServerException (MQTT transport))
 
 data MQTT transport
 
@@ -44,19 +44,15 @@ instance (SS.ServerStack transport, SS.ServerMessage transport ~ BS.ByteString) 
     = ProtocolViolation String
     | ConnectionRefused ConnectionRefusal
     deriving (Eq, Ord, Show, Typeable)
-  new config = MqttServer <$> SS.new (mqttTransportConfig config) <*> pure config
-  start server = SS.start (mqttTransportServer server)
-  stop server = SS.stop (mqttTransportServer server)
-  acceptWith server handleConnection =
-    SS.acceptWith (mqttTransportServer server) $ \connection->
+  withServer config handle =
+    SS.withServer (mqttTransportConfig config) $ \server->
+      handle (MqttServer server config)
+  withConnection server handleConnection =
+    SS.withConnection (mqttTransportServer server) $ \connection->
       handleConnection =<< MqttServerConnection
         <$> pure connection
         <*> newIORef mempty
-  flush connection     = SS.flush (mqttTransportConnection connection)
-  close connection =
-    -- DISCONNECT shall only be sent from the client from the server, so
-    -- nothing to do but closing the transport here.
-    SS.close (mqttTransportConnection connection)
+  flush connection = SS.flush (mqttTransportConnection connection)
   send connection =
     SS.send (mqttTransportConnection connection) . BSL.toStrict . BS.toLazyByteString . bRawMessage
   receive connection i =
@@ -65,5 +61,5 @@ instance (SS.ServerStack transport, SS.ServerMessage transport ~ BS.ByteString) 
       parse = SG.runGetPartial pRawMessage
       fetch = SS.receive (mqttTransportConnection connection) i
       process (SG.Partial continuation) = continuation <$> fetch >>= process
-      process (SG.Fail failure _)       = throwIO (ProtocolViolation failure :: SS.ServerException (MQTT transport))
+      process (SG.Fail failure _)       = E.throwIO (ProtocolViolation failure :: SS.ServerException (MQTT transport))
       process (SG.Done msg bs)          = writeIORef (mqttTransportLeftover connection) bs >> pure msg

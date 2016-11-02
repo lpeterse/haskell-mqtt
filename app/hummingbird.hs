@@ -14,27 +14,25 @@ import qualified System.Socket.Protocol.TCP as S
 import qualified System.Socket.Type.Stream  as S
 
 main :: IO ()
-main  = do
-  socketServer    <- SS.new sockConfig    :: IO (SS.Server (Server.MQTT (S.Socket S.Inet S.Stream S.TCP)))
-  webSocketServer <- SS.new wsConfig      :: IO (SS.Server (Server.MQTT (SS.WebSocket (S.Socket S.Inet S.Stream S.TCP))))
-  runServer socketServer `race_` runServer webSocketServer
+main  =
+  SS.withServer sockConfig handleServer `race_` SS.withServer wsConfig handleServer
   where
-    runServer :: (SS.ServerStack a, SS.ServerMessage a ~ BS.ByteString) => SS.Server (Server.MQTT a) -> IO ()
-    runServer server = do
-      SS.start server
-      forever $ do
+    handleServer :: (SS.ServerStack a, SS.ServerMessage a ~ BS.ByteString) => SS.Server (Server.MQTT a) -> IO ()
+    handleServer server = forever $ do
         putStrLn "Waiting for connection..."
-        SS.acceptWith server $ \connection-> do
+        SS.withConnection server $ \connection-> do
           putStrLn "New connection!"
           SS.receive connection 4096 >>= print
           SS.send connection (ConnectAcknowledgement $ Right False)
           forever $ SS.receive connection 4096 >>= print
+    sockConfig :: SS.ServerConfig (Server.MQTT (S.Socket S.Inet S.Stream S.TCP))
     sockConfig = Server.MqttServerConfig {
       Server.mqttTransportConfig = SS.SocketServerConfig {
         SS.socketServerConfigBindAddress = S.SocketAddressInet  S.inetLoopback 1883
       , SS.socketServerConfigListenQueueSize = 5
       }
     }
+    wsConfig :: SS.ServerConfig (Server.MQTT (SS.WebSocket (S.Socket S.Inet S.Stream S.TCP)))
     wsConfig = Server.MqttServerConfig {
       Server.mqttTransportConfig = SS.WebSocketServerConfig {
         SS.wsTransportConfig = SS.SocketServerConfig {
