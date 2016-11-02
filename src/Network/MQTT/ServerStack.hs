@@ -13,12 +13,13 @@
 --------------------------------------------------------------------------------
 module Network.MQTT.ServerStack where
 
-import           Control.Concurrent.MVar
-import           Control.Exception
-import           Control.Monad
 import           Control.Concurrent.Async
+import           Control.Concurrent.MVar
+import qualified Control.Exception           as E
+import           Control.Monad
 import qualified Data.ByteString             as BS
 import qualified Data.ByteString.Lazy        as BSL
+import           Data.Typeable
 import qualified Data.X509                   as X509
 import           Foreign.Storable
 import           Network.MQTT.Authentication
@@ -30,7 +31,7 @@ import qualified System.Socket               as S
 data TLS a
 data WebSocket a
 
-class ServerStack a where
+class Typeable a => ServerStack a where
   type ServerMessage a
   data Server a
   data ServerConfig a
@@ -45,7 +46,7 @@ class ServerStack a where
   receive    :: ServerConnection a -> Int -> IO (ServerMessage a)
   close      :: ServerConnection a -> IO ()
 
-instance (Storable (S.SocketAddress f), S.Family f, S.Type t, S.Protocol p) => ServerStack (S.Socket f t p) where
+instance (Storable (S.SocketAddress f), S.Family f, S.Type t, S.Protocol p, Typeable f, Typeable t, Typeable p) => ServerStack (S.Socket f t p) where
   type ServerMessage (S.Socket f t p) = BS.ByteString
   data Server (S.Socket f t p) = SocketServer
     { socketServer       :: !(S.Socket f t p)
@@ -63,9 +64,9 @@ instance (Storable (S.SocketAddress f), S.Family f, S.Type t, S.Protocol p) => S
     S.listen (socketServer server) (socketServerConfigListenQueueSize $ socketServerConfig server)
   stop server =
     S.close (socketServer server)
-  acceptWith server handleConnection =
-    bracketOnError (SocketServerConnection . fst <$> S.accept (socketServer server)) close $ \connection->
-      async (handleConnection connection `finally` close connection)
+  acceptWith server handle =
+    E.bracketOnError (SocketServerConnection . fst <$> S.accept (socketServer server)) close $ \connection->
+      async (handle connection `E.finally` close connection)
   flush =
     const (pure ())
   send (SocketServerConnection s) = sendAll
@@ -97,7 +98,7 @@ instance (ServerStack a, ServerMessage a ~ BS.ByteString) => ServerStack (TLS a)
     pure (TlsServer transportServer config)
   start  server = start (tlsTransportServer server)
   stop   server = stop  (tlsTransportServer server)
-  acceptWith server handleConnection =
+  acceptWith server handle =
     acceptWith (tlsTransportServer server) $ \connection-> do
       let backend = TLS.Backend {
           TLS.backendFlush = flush connection
@@ -110,11 +111,11 @@ instance (ServerStack a, ServerMessage a ~ BS.ByteString) => ServerStack (TLS a)
       TLS.contextHookSetCertificateRecv context (putMVar mvar)
       TLS.handshake context
       certificateChain <- tryTakeMVar mvar
-      handleConnection (TlsServerConnection connection context certificateChain)
+      handle (TlsServerConnection connection context certificateChain)
   flush conn     = TLS.contextFlush (tlsContext conn)
   send conn bs   = TLS.sendData     (tlsContext conn) (BSL.fromStrict bs)
   receive conn _ = TLS.recvData     (tlsContext conn)
-  close conn     = TLS.bye          (tlsContext conn) `finally` close (tlsTransportConnection conn)
+  close conn     = TLS.bye          (tlsContext conn) `E.finally` close (tlsTransportConnection conn)
 
 instance (ServerStack a, ServerMessage a ~ BS.ByteString) => ServerStack (WebSocket a) where
   type ServerMessage (WebSocket a) = BS.ByteString
@@ -133,21 +134,21 @@ instance (ServerStack a, ServerMessage a ~ BS.ByteString) => ServerStack (WebSoc
   new config = WebSocketServer <$> new (wsTransportConfig config)
   start server = start (wsTransportServer server)
   stop server = stop (wsTransportServer server)
-  acceptWith server handleConnection =
+  acceptWith server handle =
     acceptWith (wsTransportServer server) $ \connection-> do
       let readSocket = (\bs-> if BS.null bs then Nothing else Just bs) <$> receive connection 4096
       let writeSocket Nothing   = undefined
           writeSocket (Just bs) = send connection (BSL.toStrict bs)
       stream <- WS.makeStream readSocket writeSocket
       pendingConnection <- WS.makePendingConnectionFromStream stream (WS.ConnectionOptions $ pure ())
-      handleConnection =<< WebSocketServerConnection
+      handle =<< WebSocketServerConnection
         <$> pure connection
         <*> pure pendingConnection
         <*> WS.acceptRequest pendingConnection
   flush conn     = flush (wsTransportConnection conn)
   send conn      = WS.sendBinaryData (wsConnection conn)
   receive conn _ = WS.receiveData (wsConnection conn)
-  close conn     = closeWebSocket `finally` closeTransport
+  close conn     = closeWebSocket `E.finally` closeTransport
     where
       closeWebSocket = WS.sendClose (wsConnection conn)
         ("Thank you for flying Haskell." :: BS.ByteString)

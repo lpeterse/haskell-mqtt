@@ -2,37 +2,48 @@
 {-# LANGUAGE TypeFamilies      #-}
 module Main where
 
-import           Control.Concurrent
-import           Control.Exception
+import           Control.Concurrent.Async
 import           Control.Monad
-import qualified Data.Text                   as T
-import           Data.Typeable
-import           Network.MQTT.Authentication
-import           Network.MQTT.Authorization
-import qualified Network.MQTT.Broker         as Broker
-import qualified Network.MQTT.Server         as Server
-import qualified Network.MQTT.ServerStack    as SS
-import qualified System.Socket               as S
-import qualified System.Socket.Family.Inet   as S
-import qualified System.Socket.Protocol.TCP  as S
-import qualified System.Socket.Type.Stream   as S
+import qualified Data.ByteString            as BS
+import           Network.MQTT.Message
+import qualified Network.MQTT.Server        as Server
+import qualified Network.MQTT.ServerStack   as SS
+import qualified System.Socket              as S
+import qualified System.Socket.Family.Inet  as S
+import qualified System.Socket.Protocol.TCP as S
+import qualified System.Socket.Type.Stream  as S
 
 main :: IO ()
 main  = do
-  server <- SS.new mqttConfig :: IO (SS.Server (Server.MQTT (S.Socket S.Inet S.Stream S.TCP)))
-  SS.start server
-  forever $ do
-    putStrLn "Waiting for connection..."
-    SS.acceptWith server $ \_connection->
-      putStrLn "New connection!"
+  socketServer    <- SS.new sockConfig    :: IO (SS.Server (Server.MQTT (S.Socket S.Inet S.Stream S.TCP)))
+  webSocketServer <- SS.new wsConfig      :: IO (SS.Server (Server.MQTT (SS.WebSocket (S.Socket S.Inet S.Stream S.TCP))))
+  runServer socketServer `race_` runServer webSocketServer
   where
-    socketConfig = SS.SocketServerConfig {
-      SS.socketServerConfigBindAddress = S.SocketAddressInet  S.inetLoopback 1883
-    , SS.socketServerConfigListenQueueSize = 5
+    runServer :: (SS.ServerStack a, SS.ServerMessage a ~ BS.ByteString) => SS.Server (Server.MQTT a) -> IO ()
+    runServer server = do
+      SS.start server
+      forever $ do
+        putStrLn "Waiting for connection..."
+        SS.acceptWith server $ \connection-> do
+          putStrLn "New connection!"
+          SS.receive connection 4096 >>= print
+          SS.send connection (ConnectAcknowledgement $ Right False)
+          forever $ SS.receive connection 4096 >>= print
+    sockConfig = Server.MqttServerConfig {
+      Server.mqttTransportConfig = SS.SocketServerConfig {
+        SS.socketServerConfigBindAddress = S.SocketAddressInet  S.inetLoopback 1883
+      , SS.socketServerConfigListenQueueSize = 5
+      }
     }
-    mqttConfig = Server.MqttServerConfig {
-      Server.mqttTransportConfig = socketConfig
+    wsConfig = Server.MqttServerConfig {
+      Server.mqttTransportConfig = SS.WebSocketServerConfig {
+        SS.wsTransportConfig = SS.SocketServerConfig {
+          SS.socketServerConfigBindAddress = S.SocketAddressInet  S.inetLoopback 1884
+        , SS.socketServerConfigListenQueueSize = 5
+        }
+      }
     }
+
 
 {-
 data FakeAuthenticator = FakeAuthenticator

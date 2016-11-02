@@ -118,42 +118,37 @@ instance Network.MQTT.RoutingTree.RoutingTreeValue GHC.Types.Bool
 module Network.MQTT.Broker
 type SessionKey = Int
 type Message = ()
-newtype Broker
-Broker :: MVar BrokerState -> Broker
-[unBroker] :: Broker -> MVar BrokerState
-newtype Session
-Session :: MVar SessionState -> Session
-[unSession] :: Session -> MVar SessionState
+data Broker authenticator
+Broker :: authenticator -> MVar (BrokerState authenticator) -> Broker authenticator
+[brokerAuthenticator] :: Broker authenticator -> authenticator
+[brokerState] :: Broker authenticator -> MVar (BrokerState authenticator)
+data Session authenticator
+Session :: Broker authenticator -> MVar SessionState -> Session authenticator
+[sessionBroker] :: Session authenticator -> Broker authenticator
+[sessionState] :: Session authenticator -> MVar SessionState
 data QosLevel
 Qos0 :: QosLevel
 Qos1 :: QosLevel
 Qos2 :: QosLevel
-data BrokerState
-BrokerState :: !SessionKey -> !(RoutingTree IntSet) -> !(IntMap Session) -> BrokerState
-[brokerMaxSessionKey] :: BrokerState -> !SessionKey
-[brokerSubscriptions] :: BrokerState -> !(RoutingTree IntSet)
-[brokerSessions] :: BrokerState -> !(IntMap Session)
+data BrokerState authenticator
+BrokerState :: !SessionKey -> !(RoutingTree IntSet) -> !(IntMap (Session authenticator)) -> BrokerState authenticator
+[brokerMaxSessionKey] :: BrokerState authenticator -> !SessionKey
+[brokerSubscriptions] :: BrokerState authenticator -> !(RoutingTree IntSet)
+[brokerSessions] :: BrokerState authenticator -> !(IntMap (Session authenticator))
 data SessionState
-SessionState :: !Broker -> !SessionKey -> !(MVar ()) -> !(RoutingTree (Identity QosLevel)) -> !(BoundedChan (Topic, Message)) -> !(BoundedChan (Topic, Message)) -> !(BoundedChan (Topic, Message)) -> SessionState
-[sessionBroker] :: SessionState -> !Broker
+SessionState :: !SessionKey -> !(MVar ()) -> !(RoutingTree (Identity QosLevel)) -> !(BoundedChan (Topic, Message)) -> !(BoundedChan (Topic, Message)) -> !(BoundedChan (Topic, Message)) -> SessionState
 [sessionKey] :: SessionState -> !SessionKey
 [sessionTermination] :: SessionState -> !(MVar ())
 [sessionSubscriptions] :: SessionState -> !(RoutingTree (Identity QosLevel))
 [sessionQueue0] :: SessionState -> !(BoundedChan (Topic, Message))
 [sessionQueue1] :: SessionState -> !(BoundedChan (Topic, Message))
 [sessionQueue2] :: SessionState -> !(BoundedChan (Topic, Message))
-newBroker :: IO Broker
+new :: authenticator -> IO (Broker authenticator)
 data SessionConfig
 SessionConfig :: Int -> Int -> Int -> SessionConfig
 [sessionConfigQueue0MaxSize] :: SessionConfig -> Int
 [sessionConfigQueue1MaxSize] :: SessionConfig -> Int
 [sessionConfigQueue2MaxSize] :: SessionConfig -> Int
-createSession :: Broker -> SessionConfig -> IO Session
-closeSession :: Session -> IO ()
-subscribeSession :: Session -> [(TopicFilter, QosLevel)] -> IO ()
-unsubscribeSession :: Session -> [TopicFilter] -> IO ()
-deliverSession :: Session -> Topic -> Message -> IO ()
-publishBroker :: Broker -> Topic -> Message -> IO ()
 instance GHC.Show.Show Network.MQTT.Broker.QosLevel
 instance GHC.Classes.Ord Network.MQTT.Broker.QosLevel
 instance GHC.Classes.Eq Network.MQTT.Broker.QosLevel
@@ -163,7 +158,7 @@ module Network.MQTT.Authentication
 
 -- | An <a>Authenticator</a> is able to determine a <a>Principal</a>'s
 --   identity from a <a>Request</a>.
-class Exception (AuthenticationException a) => Authenticator a where data Principal a data AuthenticationException a where {
+class (Show (Principal a), Exception (AuthenticationException a)) => Authenticator a where data Principal a data AuthenticationException a where {
     data family Principal a;
     data family AuthenticationException a;
 }
@@ -174,7 +169,7 @@ class Exception (AuthenticationException a) => Authenticator a where data Princi
 --   The operation shall return <a>Nothing</a> in case the authentication
 --   mechanism is working, but couldn't associate an identity. It shall
 --   throw and <a>AuthenticationException</a> in case of other problems.
-authenticate :: (Authenticator a, Request c) => a -> c -> IO (Maybe (Principal a))
+authenticate :: (Authenticator a, Request r) => a -> r -> IO (Maybe (Principal a))
 
 -- | This class defines how the information gathered from a connection
 --   request looks like. An <a>Authenticator</a> may use whatever
@@ -235,28 +230,29 @@ getSubscribePermissions :: Authorizer a => Principal a -> IO (RoutingTree ())
 
 
 module Network.MQTT.ServerStack
-data Socket
 data TLS a
 data WebSocket a
-class ServerStack a where data Server a data ServerConfig a data ServerConnection a data ServerConnectionRequest a where {
+class Typeable a => ServerStack a where type ServerMessage a data Server a data ServerConfig a data ServerException a data ServerConnection a where {
+    type family ServerMessage a;
     data family Server a;
     data family ServerConfig a;
+    data family ServerException a;
     data family ServerConnection a;
-    data family ServerConnectionRequest a;
 }
 new :: ServerStack a => ServerConfig a -> IO (Server a)
 start :: ServerStack a => Server a -> IO ()
 stop :: ServerStack a => Server a -> IO ()
-accept :: ServerStack a => Server a -> IO (ServerConnection a)
-send :: ServerStack a => ServerConnection a -> ByteString -> IO ()
-receive :: ServerStack a => ServerConnection a -> IO ByteString
+acceptWith :: ServerStack a => Server a -> (ServerConnection a -> IO b) -> IO (Async b)
+flush :: ServerStack a => ServerConnection a -> IO ()
+send :: ServerStack a => ServerConnection a -> ServerMessage a -> IO ()
+receive :: ServerStack a => ServerConnection a -> Int -> IO (ServerMessage a)
 close :: ServerStack a => ServerConnection a -> IO ()
-instance (Foreign.Storable.Storable (System.Socket.Internal.Socket.SocketAddress f), System.Socket.Internal.Socket.Family f, System.Socket.Internal.Socket.Type t, System.Socket.Internal.Socket.Protocol p) => Network.MQTT.ServerStack.ServerStack (System.Socket.Internal.Socket.Socket f t p)
-instance Network.MQTT.ServerStack.ServerStack a => Network.MQTT.ServerStack.ServerStack (Network.MQTT.ServerStack.TLS a)
-instance Network.MQTT.ServerStack.ServerStack a => Network.MQTT.ServerStack.ServerStack (Network.MQTT.ServerStack.WebSocket a)
-instance Network.MQTT.Authentication.Request (Network.MQTT.ServerStack.ServerConnectionRequest Network.MQTT.ServerStack.Socket)
-instance Network.MQTT.Authentication.Request (Network.MQTT.ServerStack.ServerConnectionRequest a) => Network.MQTT.Authentication.Request (Network.MQTT.ServerStack.ServerConnectionRequest (Network.MQTT.ServerStack.TLS a))
-instance Network.MQTT.Authentication.Request (Network.MQTT.ServerStack.ServerConnectionRequest a) => Network.MQTT.Authentication.Request (Network.MQTT.ServerStack.ServerConnectionRequest (Network.MQTT.ServerStack.WebSocket a))
+instance (Foreign.Storable.Storable (System.Socket.Internal.Socket.SocketAddress f), System.Socket.Internal.Socket.Family f, System.Socket.Internal.Socket.Type t, System.Socket.Internal.Socket.Protocol p, Data.Typeable.Internal.Typeable f, Data.Typeable.Internal.Typeable t, Data.Typeable.Internal.Typeable p) => Network.MQTT.ServerStack.ServerStack (System.Socket.Internal.Socket.Socket f t p)
+instance (Network.MQTT.ServerStack.ServerStack a, Network.MQTT.ServerStack.ServerMessage a ~ Data.ByteString.Internal.ByteString) => Network.MQTT.ServerStack.ServerStack (Network.MQTT.ServerStack.TLS a)
+instance (Network.MQTT.ServerStack.ServerStack a, Network.MQTT.ServerStack.ServerMessage a ~ Data.ByteString.Internal.ByteString) => Network.MQTT.ServerStack.ServerStack (Network.MQTT.ServerStack.WebSocket a)
+instance Network.MQTT.Authentication.Request (Network.MQTT.ServerStack.ServerConnection (System.Socket.Internal.Socket.Socket f t p))
+instance Network.MQTT.Authentication.Request (Network.MQTT.ServerStack.ServerConnection a) => Network.MQTT.Authentication.Request (Network.MQTT.ServerStack.ServerConnection (Network.MQTT.ServerStack.TLS a))
+instance Network.MQTT.Authentication.Request (Network.MQTT.ServerStack.ServerConnection a) => Network.MQTT.Authentication.Request (Network.MQTT.ServerStack.ServerConnection (Network.MQTT.ServerStack.WebSocket a))
 
 
 module Network.MQTT.Message
@@ -358,6 +354,15 @@ instance Data.String.IsString Network.MQTT.Message.ClientIdentifier
 instance GHC.Show.Show Network.MQTT.Message.ClientIdentifier
 instance GHC.Classes.Ord Network.MQTT.Message.ClientIdentifier
 instance GHC.Classes.Eq Network.MQTT.Message.ClientIdentifier
+
+
+module Network.MQTT.Server
+data MQTT transport
+instance GHC.Show.Show (Network.MQTT.ServerStack.ServerException (Network.MQTT.Server.MQTT transport))
+instance GHC.Classes.Ord (Network.MQTT.ServerStack.ServerException (Network.MQTT.Server.MQTT transport))
+instance GHC.Classes.Eq (Network.MQTT.ServerStack.ServerException (Network.MQTT.Server.MQTT transport))
+instance Data.Typeable.Internal.Typeable transport => GHC.Exception.Exception (Network.MQTT.ServerStack.ServerException (Network.MQTT.Server.MQTT transport))
+instance (Network.MQTT.ServerStack.ServerStack transport, Network.MQTT.ServerStack.ServerMessage transport ~ Data.ByteString.Internal.ByteString) => Network.MQTT.ServerStack.ServerStack (Network.MQTT.Server.MQTT transport)
 
 
 module Network.MQTT

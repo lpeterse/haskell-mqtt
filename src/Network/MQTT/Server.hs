@@ -14,16 +14,12 @@
 module Network.MQTT.Server where
 
 import           Control.Exception
-import           Control.Monad               (join)
 import qualified Data.ByteString             as BS
 import qualified Data.ByteString.Builder     as BS
 import qualified Data.ByteString.Lazy        as BSL
 import           Data.IORef
 import qualified Data.Serialize.Get          as SG
-import qualified Data.Text                   as T
 import           Data.Typeable
-import           Network.MQTT.Authentication
-import qualified Network.MQTT.Broker         as Broker
 import           Network.MQTT.Message
 import qualified Network.MQTT.ServerStack    as SS
 
@@ -31,7 +27,7 @@ instance (Typeable transport) => Exception (SS.ServerException (MQTT transport))
 
 data MQTT transport
 
-instance (Typeable transport, SS.ServerStack transport, SS.ServerMessage transport ~ BS.ByteString) => SS.ServerStack (MQTT transport) where
+instance (SS.ServerStack transport, SS.ServerMessage transport ~ BS.ByteString) => SS.ServerStack (MQTT transport) where
   type ServerMessage (MQTT transport) = RawMessage
   data Server (MQTT transport) = MqttServer
     { mqttTransportServer     :: SS.Server transport
