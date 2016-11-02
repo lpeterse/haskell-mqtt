@@ -20,6 +20,7 @@ library
   ---fprof-auto -Wall
   exposed-modules:     Control.Concurrent.Broadcast,
                        Network.Transceiver,
+                       Network.Stack.Server,
                        Network.MQTT,
                        Network.MQTT.Authentication,
                        Network.MQTT.Authorization,
@@ -29,7 +30,6 @@ library
                        Network.MQTT.Broker,
                        Network.MQTT.Topic,
                        Network.MQTT.RoutingTree,
-                       Network.MQTT.ServerStack,
                        Network.MQTT.Server
   build-depends:       async,
                        attoparsec,

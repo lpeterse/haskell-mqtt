@@ -154,107 +154,6 @@ instance GHC.Classes.Ord Network.MQTT.Broker.QosLevel
 instance GHC.Classes.Eq Network.MQTT.Broker.QosLevel
 
 
-module Network.MQTT.Authentication
-
--- | An <a>Authenticator</a> is able to determine a <a>Principal</a>'s
---   identity from a <a>Request</a>.
-class (Show (Principal a), Exception (AuthenticationException a)) => Authenticator a where data Principal a data AuthenticationException a where {
-    data family Principal a;
-    data family AuthenticationException a;
-}
-
--- | Try to determine a <a>Principal</a>'s identity from connection
---   <a>Request</a>.
---   
---   The operation shall return <a>Nothing</a> in case the authentication
---   mechanism is working, but couldn't associate an identity. It shall
---   throw and <a>AuthenticationException</a> in case of other problems.
-authenticate :: (Authenticator a, Request r) => a -> r -> IO (Maybe (Principal a))
-
--- | This class defines how the information gathered from a connection
---   request looks like. An <a>Authenticator</a> may use whatever
---   information it finds suitable to authenticate the <a>Principal</a>.
-class Request r where requestSecure = const False requestUsername = const Nothing requestPassword = const Nothing requestHeaders = const [] requestCertificateChain = const Nothing
-
--- | Is this connection secure in terms of <a>Transport Layer Security</a>?
-requestSecure :: Request r => r -> Bool
-
--- | The username supplied with the MQTT handshake.
-requestUsername :: Request r => r -> Maybe Text
-
--- | The password supplied with the MQTT handshake.
-requestPassword :: Request r => r -> Maybe ByteString
-
--- | The HTTP request headers in case the client connected via
---   <a>WebSocket</a>.
-requestHeaders :: Request r => r -> [(CI ByteString, ByteString)]
-
--- | An <a>X.509 certificate</a> chain supplied by the peer. It can be
---   assumed that the transport layer implementation already verified that
---   the peer owns the corresponding private key. The validation of the
---   certificate claims (including certificate chain checking) <i>must</i>
---   be performed by the <a>Authenticator</a>.
-requestCertificateChain :: Request r => r -> Maybe CertificateChain
-
-
-module Network.MQTT.Authorization
-
--- | An <a>Authorizer</a> is able to determine a <a>Principal</a>'s
---   permissions.
-class (Authenticator a, Exception (AuthorizationException a)) => Authorizer a where data AuthorizationException a getPublishPermissions = pure mempty getSubscribePermissions = pure mempty where {
-    data family AuthorizationException a;
-}
-
--- | Determine the set of <tt>Topic</tt>s a <a>Principal</a> is allowed to
---   publish on.
---   
---   Beware that this operation is called on each publication. The
---   implementation is advised to cache the result (i.e. in an
---   <tt>MVar</tt>) and update it from time to time.
-getPublishPermissions :: Authorizer a => Principal a -> IO (RoutingTree ())
-
--- | Determine the set of <tt>Filter</tt>s a <a>Principal</a> is allowed to
---   subscribe. The <a>Principal</a> is implicitly allowed to subscribe all
---   filters that are more specific than those explicitly stated in the
---   <a>RoutingTree</a>.
---   
---   Beware that this operation is called on each subscription. The
---   implementation is advised to cache the result (i.e. in an
---   <tt>MVar</tt>) and update it from time to time.
---   
---   Also note that <tt>Filter</tt>s already subscribed by the client won't
---   be unsubscribed if they are no longer in the current permission set.
---   There is no way specified by MQTT to signal this to the client other
---   than terminating the session.
-getSubscribePermissions :: Authorizer a => Principal a -> IO (RoutingTree ())
-
-
-module Network.MQTT.ServerStack
-data TLS a
-data WebSocket a
-class Typeable a => ServerStack a where type ServerMessage a data Server a data ServerConfig a data ServerException a data ServerConnection a where {
-    type family ServerMessage a;
-    data family Server a;
-    data family ServerConfig a;
-    data family ServerException a;
-    data family ServerConnection a;
-}
-new :: ServerStack a => ServerConfig a -> IO (Server a)
-start :: ServerStack a => Server a -> IO ()
-stop :: ServerStack a => Server a -> IO ()
-acceptWith :: ServerStack a => Server a -> (ServerConnection a -> IO b) -> IO (Async b)
-flush :: ServerStack a => ServerConnection a -> IO ()
-send :: ServerStack a => ServerConnection a -> ServerMessage a -> IO ()
-receive :: ServerStack a => ServerConnection a -> Int -> IO (ServerMessage a)
-close :: ServerStack a => ServerConnection a -> IO ()
-instance (Foreign.Storable.Storable (System.Socket.Internal.Socket.SocketAddress f), System.Socket.Internal.Socket.Family f, System.Socket.Internal.Socket.Type t, System.Socket.Internal.Socket.Protocol p, Data.Typeable.Internal.Typeable f, Data.Typeable.Internal.Typeable t, Data.Typeable.Internal.Typeable p) => Network.MQTT.ServerStack.ServerStack (System.Socket.Internal.Socket.Socket f t p)
-instance (Network.MQTT.ServerStack.ServerStack a, Network.MQTT.ServerStack.ServerMessage a ~ Data.ByteString.Internal.ByteString) => Network.MQTT.ServerStack.ServerStack (Network.MQTT.ServerStack.TLS a)
-instance (Network.MQTT.ServerStack.ServerStack a, Network.MQTT.ServerStack.ServerMessage a ~ Data.ByteString.Internal.ByteString) => Network.MQTT.ServerStack.ServerStack (Network.MQTT.ServerStack.WebSocket a)
-instance Network.MQTT.Authentication.Request (Network.MQTT.ServerStack.ServerConnection (System.Socket.Internal.Socket.Socket f t p))
-instance Network.MQTT.Authentication.Request (Network.MQTT.ServerStack.ServerConnection a) => Network.MQTT.Authentication.Request (Network.MQTT.ServerStack.ServerConnection (Network.MQTT.ServerStack.TLS a))
-instance Network.MQTT.Authentication.Request (Network.MQTT.ServerStack.ServerConnection a) => Network.MQTT.Authentication.Request (Network.MQTT.ServerStack.ServerConnection (Network.MQTT.ServerStack.WebSocket a))
-
-
 module Network.MQTT.Message
 newtype ClientIdentifier
 ClientIdentifier :: Text -> ClientIdentifier
@@ -356,13 +255,79 @@ instance GHC.Classes.Ord Network.MQTT.Message.ClientIdentifier
 instance GHC.Classes.Eq Network.MQTT.Message.ClientIdentifier
 
 
-module Network.MQTT.Server
-data MQTT transport
-instance GHC.Show.Show (Network.MQTT.ServerStack.ServerException (Network.MQTT.Server.MQTT transport))
-instance GHC.Classes.Ord (Network.MQTT.ServerStack.ServerException (Network.MQTT.Server.MQTT transport))
-instance GHC.Classes.Eq (Network.MQTT.ServerStack.ServerException (Network.MQTT.Server.MQTT transport))
-instance Data.Typeable.Internal.Typeable transport => GHC.Exception.Exception (Network.MQTT.ServerStack.ServerException (Network.MQTT.Server.MQTT transport))
-instance (Network.MQTT.ServerStack.ServerStack transport, Network.MQTT.ServerStack.ServerMessage transport ~ Data.ByteString.Internal.ByteString) => Network.MQTT.ServerStack.ServerStack (Network.MQTT.Server.MQTT transport)
+module Network.MQTT.Authentication
+
+-- | An <a>Authenticator</a> is able to determine a <a>Principal</a>'s
+--   identity from a <a>Request</a>.
+class (Show (Principal a), Exception (AuthenticationException a)) => Authenticator a where data Principal a data AuthenticationException a where {
+    data family Principal a;
+    data family AuthenticationException a;
+}
+
+-- | Try to determine a <a>Principal</a>'s identity from connection
+--   <a>Request</a>.
+--   
+--   The operation shall return <a>Nothing</a> in case the authentication
+--   mechanism is working, but couldn't associate an identity. It shall
+--   throw and <a>AuthenticationException</a> in case of other problems.
+authenticate :: (Authenticator a, Request r) => a -> r -> IO (Maybe (Principal a))
+
+-- | This class defines how the information gathered from a connection
+--   request looks like. An <a>Authenticator</a> may use whatever
+--   information it finds suitable to authenticate the <a>Principal</a>.
+class Request r where requestSecure = const False requestUsername = const Nothing requestPassword = const Nothing requestHeaders = const [] requestCertificateChain = const Nothing
+
+-- | Is this connection secure in terms of <a>Transport Layer Security</a>?
+requestSecure :: Request r => r -> Bool
+
+-- | The username supplied with the MQTT handshake.
+requestUsername :: Request r => r -> Maybe Text
+
+-- | The password supplied with the MQTT handshake.
+requestPassword :: Request r => r -> Maybe ByteString
+
+-- | The HTTP request headers in case the client connected via
+--   <a>WebSocket</a>.
+requestHeaders :: Request r => r -> [(CI ByteString, ByteString)]
+
+-- | An <a>X.509 certificate</a> chain supplied by the peer. It can be
+--   assumed that the transport layer implementation already verified that
+--   the peer owns the corresponding private key. The validation of the
+--   certificate claims (including certificate chain checking) <i>must</i>
+--   be performed by the <a>Authenticator</a>.
+requestCertificateChain :: Request r => r -> Maybe CertificateChain
+
+
+module Network.MQTT.Authorization
+
+-- | An <a>Authorizer</a> is able to determine a <a>Principal</a>'s
+--   permissions.
+class (Authenticator a, Exception (AuthorizationException a)) => Authorizer a where data AuthorizationException a getPublishPermissions = pure mempty getSubscribePermissions = pure mempty where {
+    data family AuthorizationException a;
+}
+
+-- | Determine the set of <tt>Topic</tt>s a <a>Principal</a> is allowed to
+--   publish on.
+--   
+--   Beware that this operation is called on each publication. The
+--   implementation is advised to cache the result (i.e. in an
+--   <tt>MVar</tt>) and update it from time to time.
+getPublishPermissions :: Authorizer a => Principal a -> IO (RoutingTree ())
+
+-- | Determine the set of <tt>Filter</tt>s a <a>Principal</a> is allowed to
+--   subscribe. The <a>Principal</a> is implicitly allowed to subscribe all
+--   filters that are more specific than those explicitly stated in the
+--   <a>RoutingTree</a>.
+--   
+--   Beware that this operation is called on each subscription. The
+--   implementation is advised to cache the result (i.e. in an
+--   <tt>MVar</tt>) and update it from time to time.
+--   
+--   Also note that <tt>Filter</tt>s already subscribed by the client won't
+--   be unsubscribed if they are no longer in the current permission set.
+--   There is no way specified by MQTT to signal this to the client other
+--   than terminating the session.
+getSubscribePermissions :: Authorizer a => Principal a -> IO (RoutingTree ())
 
 
 module Network.MQTT
@@ -376,6 +341,69 @@ Message :: Topic -> QoS -> Bool -> Bool -> Payload -> Message
 instance GHC.Show.Show Network.MQTT.Message
 instance GHC.Classes.Ord Network.MQTT.Message
 instance GHC.Classes.Eq Network.MQTT.Message
+
+
+module Network.Stack.Server
+data TLS a
+data WebSocket a
+class Typeable a => ServerStack a where type ServerMessage a data Server a data ServerConfig a data ServerException a data ServerConnection a where {
+    type family ServerMessage a;
+    data family Server a;
+    data family ServerConfig a;
+    data family ServerException a;
+    data family ServerConnection a;
+}
+
+-- | Creates a new server from a configuration and passes it to a handler
+--   function.
+--   
+--   The server given to the handler function shall be bound and in
+--   listening state. The handler function is usually a <a>forever</a> loop
+--   that accepts and handles new connections.
+--   
+--   <pre>
+--   withServer config $ \server-&gt;
+--     forever $ withConnection handleConnection
+--   </pre>
+withServer :: ServerStack a => ServerConfig a -> (Server a -> IO b) -> IO b
+
+-- | Waits for and accepts a new connection from a listening server and
+--   passes it to a handler function.
+--   
+--   This operation is blocking until the lowest layer in the stack accepts
+--   a new connection. The handlers of all other layers are executed within
+--   an <a>Async</a> which is returned. This allows the main thread waiting
+--   on the underlying socket to block just as long as necessary. Upper
+--   layer protocol handshakes (TLS etc) will be executed in a new thread.
+--   
+--   <pre>
+--   withServer config $ \server-&gt; forever $
+--     future &lt;- withConnection server handleConnection
+--     putStrLn "The lowest layer accepted a new connection!"
+--     async $ do
+--         result &lt;- wait future
+--         putStrLn "The connection handler returned:"
+--         print result
+--   </pre>
+withConnection :: ServerStack a => Server a -> (ServerConnection a -> IO b) -> IO (Async b)
+flush :: ServerStack a => ServerConnection a -> IO ()
+send :: ServerStack a => ServerConnection a -> ServerMessage a -> IO ()
+receive :: ServerStack a => ServerConnection a -> Int -> IO (ServerMessage a)
+instance (Foreign.Storable.Storable (System.Socket.Internal.Socket.SocketAddress f), System.Socket.Internal.Socket.Family f, System.Socket.Internal.Socket.Type t, System.Socket.Internal.Socket.Protocol p, Data.Typeable.Internal.Typeable f, Data.Typeable.Internal.Typeable t, Data.Typeable.Internal.Typeable p) => Network.Stack.Server.ServerStack (System.Socket.Internal.Socket.Socket f t p)
+instance (Network.Stack.Server.ServerStack a, Network.Stack.Server.ServerMessage a ~ Data.ByteString.Internal.ByteString) => Network.Stack.Server.ServerStack (Network.Stack.Server.TLS a)
+instance (Network.Stack.Server.ServerStack a, Network.Stack.Server.ServerMessage a ~ Data.ByteString.Internal.ByteString) => Network.Stack.Server.ServerStack (Network.Stack.Server.WebSocket a)
+instance Network.MQTT.Authentication.Request (Network.Stack.Server.ServerConnection (System.Socket.Internal.Socket.Socket f t p))
+instance Network.MQTT.Authentication.Request (Network.Stack.Server.ServerConnection a) => Network.MQTT.Authentication.Request (Network.Stack.Server.ServerConnection (Network.Stack.Server.TLS a))
+instance Network.MQTT.Authentication.Request (Network.Stack.Server.ServerConnection a) => Network.MQTT.Authentication.Request (Network.Stack.Server.ServerConnection (Network.Stack.Server.WebSocket a))
+
+
+module Network.MQTT.Server
+data MQTT transport
+instance GHC.Show.Show (Network.Stack.Server.ServerException (Network.MQTT.Server.MQTT transport))
+instance GHC.Classes.Ord (Network.Stack.Server.ServerException (Network.MQTT.Server.MQTT transport))
+instance GHC.Classes.Eq (Network.Stack.Server.ServerException (Network.MQTT.Server.MQTT transport))
+instance Data.Typeable.Internal.Typeable transport => GHC.Exception.Exception (Network.Stack.Server.ServerException (Network.MQTT.Server.MQTT transport))
+instance (Network.Stack.Server.ServerStack transport, Network.Stack.Server.ServerMessage transport ~ Data.ByteString.Internal.ByteString) => Network.Stack.Server.ServerStack (Network.MQTT.Server.MQTT transport)
 
 module Network.Transceiver
 class Transceiver a where type Data a type Exception a isTransceiverException _ _ = True where {

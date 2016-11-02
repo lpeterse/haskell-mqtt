@@ -11,7 +11,9 @@
 -- Maintainer  :  info@lars-petersen.net
 -- Stability   :  experimental
 --------------------------------------------------------------------------------
-module Network.MQTT.ServerStack where
+module Network.Stack.Server
+
+where
 
 import           Control.Concurrent.Async
 import           Control.Concurrent.MVar
@@ -37,7 +39,32 @@ class Typeable a => ServerStack a where
   data ServerConfig a
   data ServerException a
   data ServerConnection a
+  -- | Creates a new server from a configuration and passes it to a handler function.
+  --
+  --   The server given to the handler function shall be bound and in
+  --   listening state. The handler function is usually a
+  --   `Control.Monad.forever` loop that accepts and handles new connections.
+  --
+  --   > withServer config $ \server->
+  --   >   forever $ withConnection handleConnection
   withServer     :: ServerConfig a -> (Server a -> IO b) -> IO b
+  -- | Waits for and accepts a new connection from a listening server and passes
+  --   it to a handler function.
+  --
+  --   This operation is blocking until the lowest layer in the stack accepts
+  --   a new connection. The handlers of all other layers are executed within
+  --   an `Control.Concurrent.Async.Async` which is returned. This allows
+  --   the main thread waiting on the underlying socket to block just as long
+  --   as necessary. Upper layer protocol handshakes (TLS etc) will be executed
+  --   in a new thread.
+  --
+  --   > withServer config $ \server-> forever $
+  --   >   future <- withConnection server handleConnection
+  --   >   putStrLn "The lowest layer accepted a new connection!"
+  --   >   async $ do
+  --   >       result <- wait future
+  --   >       putStrLn "The connection handler returned:"
+  --   >       print result
   withConnection :: Server a -> (ServerConnection a -> IO b) -> IO (Async b)
   flush          :: ServerConnection a -> IO ()
   send           :: ServerConnection a -> ServerMessage a -> IO ()

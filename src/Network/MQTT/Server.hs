@@ -21,7 +21,7 @@ import           Data.IORef
 import qualified Data.Serialize.Get       as SG
 import           Data.Typeable
 import           Network.MQTT.Message
-import qualified Network.MQTT.ServerStack as SS
+import qualified Network.Stack.Server     as SS
 
 instance (Typeable transport) => E.Exception (SS.ServerException (MQTT transport))
 

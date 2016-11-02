@@ -7,7 +7,7 @@ import           Control.Monad
 import qualified Data.ByteString            as BS
 import           Network.MQTT.Message
 import qualified Network.MQTT.Server        as Server
-import qualified Network.MQTT.ServerStack   as SS
+import qualified Network.Stack.Server       as SS
 import qualified System.Socket              as S
 import qualified System.Socket.Family.Inet  as S
 import qualified System.Socket.Protocol.TCP as S
