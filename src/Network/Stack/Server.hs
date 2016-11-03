@@ -1,10 +1,11 @@
-{-# LANGUAGE FlexibleContexts  #-}
-{-# LANGUAGE FlexibleInstances #-}
-{-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE TypeFamilies      #-}
+{-# LANGUAGE FlexibleContexts   #-}
+{-# LANGUAGE FlexibleInstances  #-}
+{-# LANGUAGE OverloadedStrings  #-}
+{-# LANGUAGE StandaloneDeriving #-}
+{-# LANGUAGE TypeFamilies       #-}
 --------------------------------------------------------------------------------
 -- |
--- Module      :  Network.MQTT.ServerStack
+-- Module      :  Network.Stack.Server
 -- Copyright   :  (c) Lars Petersen 2016
 -- License     :  MIT
 --
@@ -15,28 +16,28 @@ module Network.Stack.Server where
 
 import           Control.Concurrent.Async
 import           Control.Concurrent.MVar
-import qualified Control.Exception           as E
+import qualified Control.Exception         as E
 import           Control.Monad
-import qualified Data.ByteString             as BS
-import qualified Data.ByteString.Lazy        as BSL
+import qualified Data.ByteString           as BS
+import qualified Data.ByteString.Lazy      as BSL
 import           Data.Typeable
-import qualified Data.X509                   as X509
+import qualified Data.X509                 as X509
 import           Foreign.Storable
-import qualified Network.TLS                 as TLS
-import qualified Network.WebSockets          as WS
-import qualified Network.WebSockets.Stream   as WS
-import qualified System.Socket               as S
+import qualified Network.TLS               as TLS
+import qualified Network.WebSockets        as WS
+import qualified Network.WebSockets.Stream as WS
+import qualified System.Socket             as S
 
 data TLS a
 data WebSocket a
 
-class (Typeable a, Show (ServerConnectionInfo a)) => ServerStack a where
+class (Typeable a) => ServerStack a where
   type ServerMessage a
   data Server a
   data ServerConfig a
   data ServerException a
   data ServerConnection a
-  type ServerConnectionInfo a
+  data ServerConnectionInfo a
   -- | Creates a new server from a configuration and passes it to a handler function.
   --
   --   The server given to the handler function shall be bound and in
@@ -54,7 +55,7 @@ class (Typeable a, Show (ServerConnectionInfo a)) => ServerStack a where
   --   an `Control.Concurrent.Async.Async` which is returned. This allows
   --   the main thread waiting on the underlying socket to block just as long
   --   as necessary. Upper layer protocol handshakes (TLS etc) will be executed
-  --   in a new thread.
+  --   in the new thread.
   --
   --   > withServer config $ \server-> forever $
   --   >   future <- withConnection server handleConnection
@@ -68,7 +69,11 @@ class (Typeable a, Show (ServerConnectionInfo a)) => ServerStack a where
   send           :: ServerConnection a -> ServerMessage a -> IO ()
   receive        :: ServerConnection a -> Int -> IO (ServerMessage a)
 
-instance (Storable (S.SocketAddress f), Show (S.SocketAddress f), S.Family f, S.Type t, S.Protocol p, Typeable f, Typeable t, Typeable p) => ServerStack (S.Socket f t p) where
+deriving instance Show (S.SocketAddress f) => Show (ServerConnectionInfo (S.Socket f t p))
+deriving instance Show (ServerConnectionInfo a) => Show (ServerConnectionInfo (TLS a))
+deriving instance Show (ServerConnectionInfo a) => Show (ServerConnectionInfo (WebSocket a))
+
+instance (Storable (S.SocketAddress f), S.Family f, S.Type t, S.Protocol p, Typeable f, Typeable t, Typeable p) => ServerStack (S.Socket f t p) where
   type ServerMessage (S.Socket f t p) = BS.ByteString
   data Server (S.Socket f t p) = SocketServer
     { socketServer       :: !(S.Socket f t p)
@@ -80,7 +85,7 @@ instance (Storable (S.SocketAddress f), Show (S.SocketAddress f), S.Family f, S.
     }
   data ServerException (S.Socket f t p) = SocketServerException !S.SocketException
   data ServerConnection (S.Socket f t p) = SocketServerConnection !(S.Socket f t p)
-  type ServerConnectionInfo (S.Socket f t p) = S.SocketAddress f
+  data ServerConnectionInfo (S.Socket f t p) = SocketServerConnectionInfo !(S.SocketAddress f)
   withServer c handle = E.bracket
     (SocketServer <$> S.socket <*> pure c)
     (S.close . socketServer) $ \server-> do
@@ -88,8 +93,8 @@ instance (Storable (S.SocketAddress f), Show (S.SocketAddress f), S.Family f, S.
       S.listen (socketServer server) (socketServerConfigListenQueueSize $ socketServerConfig server)
       handle server
   withConnection server handle =
-    E.bracketOnError (S.accept (socketServer server)) (S.close . fst) $ \(connection, info)->
-      async (handle (SocketServerConnection connection) info `E.finally` S.close connection)
+    E.bracketOnError (S.accept (socketServer server)) (S.close . fst) $ \(connection, addr)->
+      async (handle (SocketServerConnection connection) (SocketServerConnectionInfo addr) `E.finally` S.close connection)
   flush =
     const (pure ())
   send (SocketServerConnection s) = sendAll
@@ -98,12 +103,6 @@ instance (Storable (S.SocketAddress f), Show (S.SocketAddress f), S.Family f, S.
         sent <- S.send s bs S.msgNoSignal
         when (sent < BS.length bs) $ sendAll (BS.drop sent bs)
   receive (SocketServerConnection s) i = S.receive s i S.msgNoSignal
-
-data TlsServerConnectionInfo a
-   = TlsServerConnectionInfo {
-      tlsTransportServerConnectionInfo :: a
-    , tlsCertificateChain              :: Maybe X509.CertificateChain
-    } deriving (Eq, Show)
 
 instance (ServerStack a, ServerMessage a ~ BS.ByteString) => ServerStack (TLS a) where
   type ServerMessage (TLS a) = ServerMessage a
@@ -120,7 +119,10 @@ instance (ServerStack a, ServerMessage a ~ BS.ByteString) => ServerStack (TLS a)
     { tlsTransportConnection        :: ServerConnection a
     , tlsContext                    :: TLS.Context
     }
-  type ServerConnectionInfo (TLS a) = TlsServerConnectionInfo (ServerConnectionInfo a)
+  data ServerConnectionInfo (TLS a) = TlsServerConnectionInfo
+    { tlsTransportServerConnectionInfo :: ServerConnectionInfo a
+    , tlsCertificateChain              :: Maybe X509.CertificateChain
+    }
   withServer config handle =
     withServer (tlsTransportConfig config) $ \server->
       handle (TlsServer server config)
@@ -146,12 +148,6 @@ instance (ServerStack a, ServerMessage a ~ BS.ByteString) => ServerStack (TLS a)
   send conn bs   = TLS.sendData     (tlsContext conn) (BSL.fromStrict bs)
   receive conn _ = TLS.recvData     (tlsContext conn)
 
-data WebSocketServerConnectionInfo a
-  = WebSocketServerConnectionInfo
-    { wsTransportServerConnectionInfo :: a
-    , wsRequestHead                   :: WS.RequestHead
-    } deriving (Show)
-
 instance (ServerStack a, ServerMessage a ~ BS.ByteString) => ServerStack (WebSocket a) where
   type ServerMessage (WebSocket a) = BS.ByteString
   data Server (WebSocket a) = WebSocketServer
@@ -165,7 +161,10 @@ instance (ServerStack a, ServerMessage a ~ BS.ByteString) => ServerStack (WebSoc
     { wsTransportConnection        :: ServerConnection a
     , wsConnection                 :: WS.Connection
     }
-  type ServerConnectionInfo (WebSocket a) = WebSocketServerConnectionInfo (ServerConnectionInfo a)
+  data ServerConnectionInfo (WebSocket a) = WebSocketServerConnectionInfo
+    { wsTransportServerConnectionInfo :: ServerConnectionInfo a
+    , wsRequestHead                   :: WS.RequestHead
+    }
   withServer config handle =
     withServer (wsTransportConfig config) $ \server->
       handle (WebSocketServer server)

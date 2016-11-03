@@ -1,7 +1,7 @@
 {-# LANGUAGE FlexibleContexts    #-}
 {-# LANGUAGE FlexibleInstances   #-}
 {-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE TypeFamilies        #-}
+{-# LANGUAGE TypeFamilies, StandaloneDeriving        #-}
 --------------------------------------------------------------------------------
 -- |
 -- Module      :  Network.MQTT.Server
@@ -40,7 +40,9 @@ instance (SS.ServerStack transport, SS.ServerMessage transport ~ BS.ByteString) 
     { mqttTransportConnection :: SS.ServerConnection transport
     , mqttTransportLeftover   :: IORef BS.ByteString
     }
-  type ServerConnectionInfo (MQTT transport) = SS.ServerConnectionInfo transport
+  data ServerConnectionInfo (MQTT transport) = MqttServerConnectionInfo
+    { mqttTransportServerConnectionInfo :: SS.ServerConnectionInfo transport
+    }
   data ServerException (MQTT transport)
     = ProtocolViolation String
     | ConnectionRefused ConnectionRefusal
@@ -50,7 +52,7 @@ instance (SS.ServerStack transport, SS.ServerMessage transport ~ BS.ByteString) 
       handle (MqttServer server config)
   withConnection server handleConnection =
     SS.withConnection (mqttTransportServer server) $ \connection info->
-      flip handleConnection info =<< MqttServerConnection
+      flip handleConnection (MqttServerConnectionInfo info) =<< MqttServerConnection
         <$> pure connection
         <*> newIORef mempty
   flush connection = SS.flush (mqttTransportConnection connection)
@@ -64,3 +66,5 @@ instance (SS.ServerStack transport, SS.ServerMessage transport ~ BS.ByteString) 
       process (SG.Partial continuation) = continuation <$> fetch >>= process
       process (SG.Fail failure _)       = E.throwIO (ProtocolViolation failure :: SS.ServerException (MQTT transport))
       process (SG.Done msg bs)          = writeIORef (mqttTransportLeftover connection) bs >> pure msg
+
+deriving instance Show (SS.ServerConnectionInfo a) => Show (SS.ServerConnectionInfo (MQTT a))

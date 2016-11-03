@@ -1,8 +1,8 @@
+{-# LANGUAGE FlexibleContexts  #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE TypeFamilies      #-}
 module Main where
 
-import           Control.Concurrent
 import           Control.Concurrent.Async
 import           Control.Monad
 import qualified Data.ByteString            as BS
@@ -18,7 +18,7 @@ main :: IO ()
 main  =
   SS.withServer sockConfig handleServer `race_` SS.withServer wsConfig handleServer
   where
-    handleServer :: (SS.ServerStack a, SS.ServerMessage a ~ BS.ByteString) => SS.Server (Server.MQTT a) -> IO ()
+    handleServer :: (SS.ServerStack a, SS.ServerMessage a ~ BS.ByteString, Show (SS.ServerConnectionInfo a)) => SS.Server (Server.MQTT a) -> IO ()
     handleServer server = forever $ do
         putStrLn "Waiting for connection..."
         SS.withConnection server $ \connection info-> do
