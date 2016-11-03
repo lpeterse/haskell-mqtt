@@ -5,7 +5,6 @@ module Main where
 
 import           Control.Concurrent.Async
 import           Control.Monad
-import qualified Data.ByteString            as BS
 import           Network.MQTT.Message
 import qualified Network.MQTT.Server        as Server
 import qualified Network.Stack.Server       as SS
@@ -18,15 +17,15 @@ main :: IO ()
 main  =
   SS.withServer sockConfig handleServer `race_` SS.withServer wsConfig handleServer
   where
-    handleServer :: (SS.ServerStack a, SS.ServerMessage a ~ BS.ByteString, Show (SS.ServerConnectionInfo a)) => SS.Server (Server.MQTT a) -> IO ()
+    handleServer :: (SS.StreamServerStack a, Show (SS.ServerConnectionInfo a)) => SS.Server (Server.MQTT a) -> IO ()
     handleServer server = forever $ do
         putStrLn "Waiting for connection..."
         SS.withConnection server $ \connection info-> do
           putStrLn "New connection:"
           print info
-          SS.receive connection 4096 >>= print
-          SS.send connection (ConnectAcknowledgement $ Right False)
-          forever (SS.receive connection 4096 >>= print)
+          SS.receiveMessage connection >>= print
+          SS.sendMessage connection (ConnectAcknowledgement $ Right False)
+          forever (SS.receiveMessage connection >>= print)
     sockConfig :: SS.ServerConfig (Server.MQTT (S.Socket S.Inet S.Stream S.TCP))
     sockConfig = Server.MqttServerConfig {
       Server.mqttTransportConfig = SS.SocketServerConfig {
@@ -43,19 +42,3 @@ main  =
         }
       }
     }
-
-
-{-
-data FakeAuthenticator = FakeAuthenticator
-
-instance Exception (AuthenticationException FakeAuthenticator)
-instance Exception (AuthorizationException FakeAuthenticator)
-
-instance Authenticator FakeAuthenticator where
-  data Principal FakeAuthenticator = FakeAuthenticatorPrinciple T.Text deriving (Eq, Ord, Show)
-  data AuthenticationException FakeAuthenticator = FakeAuthenticationException deriving (Eq, Ord, Show, Typeable)
-  authenticate _ request = pure $ FakeAuthenticatorPrinciple <$> requestUsername request
-
-instance Authorizer FakeAuthenticator where
-  data AuthorizationException FakeAuthenticator = FakeAuthorizationException deriving (Eq, Ord, Show, Typeable)
--}

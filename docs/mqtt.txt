@@ -346,8 +346,7 @@ instance GHC.Classes.Eq Network.MQTT.Message
 module Network.Stack.Server
 data TLS a
 data WebSocket a
-class (Typeable a) => ServerStack a where type ServerMessage a data Server a data ServerConfig a data ServerException a data ServerConnection a data ServerConnectionInfo a where {
-    type family ServerMessage a;
+class (Typeable a) => ServerStack a where data Server a data ServerConfig a data ServerException a data ServerConnection a data ServerConnectionInfo a where {
     data family Server a;
     data family ServerConfig a;
     data family ServerException a;
@@ -375,7 +374,8 @@ withServer :: ServerStack a => ServerConfig a -> (Server a -> IO b) -> IO b
 --   a new connection. The handlers of all other layers are executed within
 --   an <a>Async</a> which is returned. This allows the main thread waiting
 --   on the underlying socket to block just as long as necessary. Upper
---   layer protocol handshakes (TLS etc) will be executed in a new thread.
+--   layer protocol handshakes (TLS etc) will be executed in the new
+--   thread.
 --   
 --   <pre>
 --   withServer config $ \server-&gt; forever $
@@ -387,15 +387,25 @@ withServer :: ServerStack a => ServerConfig a -> (Server a -> IO b) -> IO b
 --         print result
 --   </pre>
 withConnection :: ServerStack a => Server a -> (ServerConnection a -> ServerConnectionInfo a -> IO b) -> IO (Async b)
-flush :: ServerStack a => ServerConnection a -> IO ()
-send :: ServerStack a => ServerConnection a -> ServerMessage a -> IO ()
-receive :: ServerStack a => ServerConnection a -> Int -> IO (ServerMessage a)
+class ServerStack a => StreamServerStack a where sendStream server = sendStreamLazy server . fromStrict sendStreamLazy server = mapM_ (sendStream server) . toChunks receiveStream server = toStrict <$> receiveStreamLazy server receiveStreamLazy server = fromStrict <$> receiveStream server
+sendStream :: StreamServerStack a => ServerConnection a -> ByteString -> IO ()
+sendStreamLazy :: StreamServerStack a => ServerConnection a -> ByteString -> IO ()
+receiveStream :: StreamServerStack a => ServerConnection a -> IO ByteString
+receiveStreamLazy :: StreamServerStack a => ServerConnection a -> IO ByteString
+class ServerStack a => MessageServerStack a where type Message a where {
+    type family Message a;
+}
+sendMessage :: MessageServerStack a => ServerConnection a -> Message a -> IO ()
+receiveMessage :: MessageServerStack a => ServerConnection a -> IO (Message a)
 instance GHC.Show.Show (System.Socket.Internal.Socket.SocketAddress f) => GHC.Show.Show (Network.Stack.Server.ServerConnectionInfo (System.Socket.Internal.Socket.Socket f t p))
 instance GHC.Show.Show (Network.Stack.Server.ServerConnectionInfo a) => GHC.Show.Show (Network.Stack.Server.ServerConnectionInfo (Network.Stack.Server.TLS a))
 instance GHC.Show.Show (Network.Stack.Server.ServerConnectionInfo a) => GHC.Show.Show (Network.Stack.Server.ServerConnectionInfo (Network.Stack.Server.WebSocket a))
+instance (Data.Typeable.Internal.Typeable f, Data.Typeable.Internal.Typeable t, Data.Typeable.Internal.Typeable p, Foreign.Storable.Storable (System.Socket.Internal.Socket.SocketAddress f), System.Socket.Internal.Socket.Family f, System.Socket.Internal.Socket.Type t, System.Socket.Internal.Socket.Protocol p) => Network.Stack.Server.StreamServerStack (System.Socket.Internal.Socket.Socket f t p)
+instance Network.Stack.Server.StreamServerStack a => Network.Stack.Server.StreamServerStack (Network.Stack.Server.TLS a)
+instance Network.Stack.Server.StreamServerStack a => Network.Stack.Server.StreamServerStack (Network.Stack.Server.WebSocket a)
 instance (Foreign.Storable.Storable (System.Socket.Internal.Socket.SocketAddress f), System.Socket.Internal.Socket.Family f, System.Socket.Internal.Socket.Type t, System.Socket.Internal.Socket.Protocol p, Data.Typeable.Internal.Typeable f, Data.Typeable.Internal.Typeable t, Data.Typeable.Internal.Typeable p) => Network.Stack.Server.ServerStack (System.Socket.Internal.Socket.Socket f t p)
-instance (Network.Stack.Server.ServerStack a, Network.Stack.Server.ServerMessage a ~ Data.ByteString.Internal.ByteString) => Network.Stack.Server.ServerStack (Network.Stack.Server.TLS a)
-instance (Network.Stack.Server.ServerStack a, Network.Stack.Server.ServerMessage a ~ Data.ByteString.Internal.ByteString) => Network.Stack.Server.ServerStack (Network.Stack.Server.WebSocket a)
+instance Network.Stack.Server.StreamServerStack a => Network.Stack.Server.ServerStack (Network.Stack.Server.TLS a)
+instance Network.Stack.Server.StreamServerStack a => Network.Stack.Server.ServerStack (Network.Stack.Server.WebSocket a)
 
 
 module Network.MQTT.Server
@@ -405,7 +415,8 @@ instance GHC.Classes.Ord (Network.Stack.Server.ServerException (Network.MQTT.Ser
 instance GHC.Classes.Eq (Network.Stack.Server.ServerException (Network.MQTT.Server.MQTT transport))
 instance GHC.Show.Show (Network.Stack.Server.ServerConnectionInfo a) => GHC.Show.Show (Network.Stack.Server.ServerConnectionInfo (Network.MQTT.Server.MQTT a))
 instance Data.Typeable.Internal.Typeable transport => GHC.Exception.Exception (Network.Stack.Server.ServerException (Network.MQTT.Server.MQTT transport))
-instance (Network.Stack.Server.ServerStack transport, Network.Stack.Server.ServerMessage transport ~ Data.ByteString.Internal.ByteString) => Network.Stack.Server.ServerStack (Network.MQTT.Server.MQTT transport)
+instance Network.Stack.Server.StreamServerStack transport => Network.Stack.Server.ServerStack (Network.MQTT.Server.MQTT transport)
+instance Network.Stack.Server.StreamServerStack transport => Network.Stack.Server.MessageServerStack (Network.MQTT.Server.MQTT transport)
 
 module Network.Transceiver
 class Transceiver a where type Data a type Exception a isTransceiverException _ _ = True where {

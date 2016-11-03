@@ -32,7 +32,7 @@ data TLS a
 data WebSocket a
 
 class (Typeable a) => ServerStack a where
-  type ServerMessage a
+  --type ServerMessage a
   data Server a
   data ServerConfig a
   data ServerException a
@@ -65,16 +65,49 @@ class (Typeable a) => ServerStack a where
   --   >       putStrLn "The connection handler returned:"
   --   >       print result
   withConnection :: Server a -> (ServerConnection a -> ServerConnectionInfo a -> IO b) -> IO (Async b)
-  flush          :: ServerConnection a -> IO ()
-  send           :: ServerConnection a -> ServerMessage a -> IO ()
-  receive        :: ServerConnection a -> Int -> IO (ServerMessage a)
+  --flush          :: ServerConnection a -> IO ()
+  --send           :: ServerConnection a -> ServerMessage a -> IO ()
+  --receive        :: ServerConnection a -> Int -> IO (ServerMessage a)
+
+class ServerStack a => StreamServerStack a where
+  sendStream              :: ServerConnection a -> BS.ByteString -> IO ()
+  sendStream        server = sendStreamLazy server . BSL.fromStrict
+  sendStreamLazy          :: ServerConnection a -> BSL.ByteString -> IO ()
+  sendStreamLazy server    = mapM_ (sendStream server) . BSL.toChunks
+  receiveStream           :: ServerConnection a -> IO BS.ByteString
+  receiveStream     server = BSL.toStrict <$> receiveStreamLazy server
+  receiveStreamLazy       :: ServerConnection a -> IO BSL.ByteString
+  receiveStreamLazy server = BSL.fromStrict <$> receiveStream server
+  {-# MINIMAL (sendStream|sendStreamLazy), (receiveStream|receiveStreamLazy) #-}
+
+class ServerStack a => MessageServerStack a where
+  type Message a
+  sendMessage             :: ServerConnection a -> Message a -> IO ()
+  receiveMessage          :: ServerConnection a -> IO (Message a)
+
+instance (Typeable f, Typeable t, Typeable p, Storable (S.SocketAddress f), S.Family f, S.Type t, S.Protocol p) => StreamServerStack (S.Socket f t p) where
+  sendStream (SocketServerConnection s) = sendAll
+    where
+      sendAll bs = do
+        sent <- S.send s bs S.msgNoSignal
+        when (sent < BS.length bs) $ sendAll (BS.drop sent bs)
+  receiveStream (SocketServerConnection s) = S.receive s 4096 S.msgNoSignal
+
+instance (StreamServerStack a) => StreamServerStack (TLS a) where
+  sendStreamLazy    connection = TLS.sendData      (tlsContext   connection)
+  receiveStream     connection = TLS.recvData      (tlsContext   connection)
+
+instance (StreamServerStack a) => StreamServerStack (WebSocket a) where
+  sendStream        connection = WS.sendBinaryData (wsConnection connection)
+  sendStreamLazy    connection = WS.sendBinaryData (wsConnection connection)
+  receiveStreamLazy connection = WS.receiveData    (wsConnection connection)
 
 deriving instance Show (S.SocketAddress f) => Show (ServerConnectionInfo (S.Socket f t p))
 deriving instance Show (ServerConnectionInfo a) => Show (ServerConnectionInfo (TLS a))
 deriving instance Show (ServerConnectionInfo a) => Show (ServerConnectionInfo (WebSocket a))
 
 instance (Storable (S.SocketAddress f), S.Family f, S.Type t, S.Protocol p, Typeable f, Typeable t, Typeable p) => ServerStack (S.Socket f t p) where
-  type ServerMessage (S.Socket f t p) = BS.ByteString
+  --type ServerMessage (S.Socket f t p) = BS.ByteString
   data Server (S.Socket f t p) = SocketServer
     { socketServer       :: !(S.Socket f t p)
     , socketServerConfig :: !(ServerConfig (S.Socket f t p))
@@ -95,17 +128,17 @@ instance (Storable (S.SocketAddress f), S.Family f, S.Type t, S.Protocol p, Type
   withConnection server handle =
     E.bracketOnError (S.accept (socketServer server)) (S.close . fst) $ \(connection, addr)->
       async (handle (SocketServerConnection connection) (SocketServerConnectionInfo addr) `E.finally` S.close connection)
-  flush =
+  {-flush =
     const (pure ())
   send (SocketServerConnection s) = sendAll
     where
       sendAll bs = do
         sent <- S.send s bs S.msgNoSignal
         when (sent < BS.length bs) $ sendAll (BS.drop sent bs)
-  receive (SocketServerConnection s) i = S.receive s i S.msgNoSignal
+  receive (SocketServerConnection s) i = S.receive s i S.msgNoSignal -}
 
-instance (ServerStack a, ServerMessage a ~ BS.ByteString) => ServerStack (TLS a) where
-  type ServerMessage (TLS a) = ServerMessage a
+instance (StreamServerStack a) => ServerStack (TLS a) where
+  --type ServerMessage (TLS a) = BS.ByteString
   data Server (TLS a) = TlsServer
     { tlsTransportServer            :: Server a
     , tlsServerConfig               :: ServerConfig (TLS a)
@@ -129,10 +162,10 @@ instance (ServerStack a, ServerMessage a ~ BS.ByteString) => ServerStack (TLS a)
   withConnection server handle =
     withConnection (tlsTransportServer server) $ \connection info-> do
       let backend = TLS.Backend {
-          TLS.backendFlush = flush connection
+          TLS.backendFlush = pure ()
         , TLS.backendClose = pure () -- backend gets closed automatically
-        , TLS.backendSend  = send connection
-        , TLS.backendRecv  = receive connection
+        , TLS.backendSend  = sendStream connection
+        , TLS.backendRecv  = const (receiveStream connection)
         }
       mvar <- newEmptyMVar
       context <- TLS.contextNew backend (tlsServerParams $ tlsServerConfig server)
@@ -144,12 +177,12 @@ instance (ServerStack a, ServerMessage a ~ BS.ByteString) => ServerStack (TLS a)
         (TlsServerConnectionInfo info certificateChain)
       TLS.bye context
       pure x
-  flush conn     = TLS.contextFlush (tlsContext conn)
+  {-flush conn     = TLS.contextFlush (tlsContext conn)
   send conn bs   = TLS.sendData     (tlsContext conn) (BSL.fromStrict bs)
-  receive conn _ = TLS.recvData     (tlsContext conn)
+  receive conn _ = TLS.recvData     (tlsContext conn) -}
 
-instance (ServerStack a, ServerMessage a ~ BS.ByteString) => ServerStack (WebSocket a) where
-  type ServerMessage (WebSocket a) = BS.ByteString
+instance (StreamServerStack a) => ServerStack (WebSocket a) where
+  --type ServerMessage (WebSocket a) = BS.ByteString
   data Server (WebSocket a) = WebSocketServer
     { wsTransportServer            :: Server a
     }
@@ -170,9 +203,9 @@ instance (ServerStack a, ServerMessage a ~ BS.ByteString) => ServerStack (WebSoc
       handle (WebSocketServer server)
   withConnection server handle =
     withConnection (wsTransportServer server) $ \connection info-> do
-      let readSocket = (\bs-> if BS.null bs then Nothing else Just bs) <$> receive connection 4096
+      let readSocket = (\bs-> if BS.null bs then Nothing else Just bs) <$> receiveStream connection
       let writeSocket Nothing   = undefined
-          writeSocket (Just bs) = send connection (BSL.toStrict bs)
+          writeSocket (Just bs) = sendStream connection (BSL.toStrict bs)
       stream <- WS.makeStream readSocket writeSocket
       pendingConnection <- WS.makePendingConnectionFromStream stream (WS.ConnectionOptions $ pure ())
       acceptedConnection <- WS.acceptRequest pendingConnection
@@ -181,9 +214,9 @@ instance (ServerStack a, ServerMessage a ~ BS.ByteString) => ServerStack (WebSoc
         (WebSocketServerConnectionInfo info $ WS.pendingRequest pendingConnection)
       WS.sendClose acceptedConnection ("Thank you for flying Haskell." :: BS.ByteString)
       pure x
-  flush conn     = flush (wsTransportConnection conn)
+  {-flush conn     = flush (wsTransportConnection conn)
   send conn      = WS.sendBinaryData (wsConnection conn)
-  receive conn _ = WS.receiveData (wsConnection conn)
+  receive conn _ = WS.receiveData (wsConnection conn) -}
 
 {-
 instance Request (ServerConnection (S.Socket f t p)) where

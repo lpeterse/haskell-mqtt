@@ -16,7 +16,6 @@ module Network.MQTT.Server where
 import qualified Control.Exception as E
 import qualified Data.ByteString          as BS
 import qualified Data.ByteString.Builder  as BS
-import qualified Data.ByteString.Lazy     as BSL
 import           Data.IORef
 import qualified Data.Serialize.Get       as SG
 import           Data.Typeable
@@ -27,8 +26,7 @@ instance (Typeable transport) => E.Exception (SS.ServerException (MQTT transport
 
 data MQTT transport
 
-instance (SS.ServerStack transport, SS.ServerMessage transport ~ BS.ByteString) => SS.ServerStack (MQTT transport) where
-  type ServerMessage (MQTT transport) = RawMessage
+instance (SS.StreamServerStack transport) => SS.ServerStack (MQTT transport) where
   data Server (MQTT transport) = MqttServer
     { mqttTransportServer     :: SS.Server transport
     , mqttConfig              :: SS.ServerConfig (MQTT transport)
@@ -55,14 +53,16 @@ instance (SS.ServerStack transport, SS.ServerMessage transport ~ BS.ByteString) 
       flip handleConnection (MqttServerConnectionInfo info) =<< MqttServerConnection
         <$> pure connection
         <*> newIORef mempty
-  flush connection = SS.flush (mqttTransportConnection connection)
-  send connection =
-    SS.send (mqttTransportConnection connection) . BSL.toStrict . BS.toLazyByteString . bRawMessage
-  receive connection i =
+
+instance (SS.StreamServerStack transport) => SS.MessageServerStack (MQTT transport) where
+  type Message (MQTT transport) = RawMessage
+  sendMessage connection =
+    SS.sendStreamLazy (mqttTransportConnection connection) . BS.toLazyByteString . bRawMessage
+  receiveMessage connection =
     parse <$> readIORef (mqttTransportLeftover connection) >>= process
     where
       parse = SG.runGetPartial pRawMessage
-      fetch = SS.receive (mqttTransportConnection connection) i
+      fetch = SS.receiveStream (mqttTransportConnection connection)
       process (SG.Partial continuation) = continuation <$> fetch >>= process
       process (SG.Fail failure _)       = E.throwIO (ProtocolViolation failure :: SS.ServerException (MQTT transport))
       process (SG.Done msg bs)          = writeIORef (mqttTransportLeftover connection) bs >> pure msg
