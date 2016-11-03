@@ -2,6 +2,7 @@
 {-# LANGUAGE TypeFamilies      #-}
 module Main where
 
+import           Control.Concurrent
 import           Control.Concurrent.Async
 import           Control.Monad
 import qualified Data.ByteString            as BS
@@ -20,11 +21,12 @@ main  =
     handleServer :: (SS.ServerStack a, SS.ServerMessage a ~ BS.ByteString) => SS.Server (Server.MQTT a) -> IO ()
     handleServer server = forever $ do
         putStrLn "Waiting for connection..."
-        SS.withConnection server $ \connection-> do
-          putStrLn "New connection!"
+        SS.withConnection server $ \connection info-> do
+          putStrLn "New connection:"
+          print info
           SS.receive connection 4096 >>= print
           SS.send connection (ConnectAcknowledgement $ Right False)
-          forever $ SS.receive connection 4096 >>= print
+          forever (SS.receive connection 4096 >>= print)
     sockConfig :: SS.ServerConfig (Server.MQTT (S.Socket S.Inet S.Stream S.TCP))
     sockConfig = Server.MqttServerConfig {
       Server.mqttTransportConfig = SS.SocketServerConfig {

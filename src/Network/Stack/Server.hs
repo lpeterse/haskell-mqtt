@@ -11,9 +11,7 @@
 -- Maintainer  :  info@lars-petersen.net
 -- Stability   :  experimental
 --------------------------------------------------------------------------------
-module Network.Stack.Server
-
-where
+module Network.Stack.Server where
 
 import           Control.Concurrent.Async
 import           Control.Concurrent.MVar
@@ -24,7 +22,6 @@ import qualified Data.ByteString.Lazy        as BSL
 import           Data.Typeable
 import qualified Data.X509                   as X509
 import           Foreign.Storable
-import           Network.MQTT.Authentication
 import qualified Network.TLS                 as TLS
 import qualified Network.WebSockets          as WS
 import qualified Network.WebSockets.Stream   as WS
@@ -33,12 +30,13 @@ import qualified System.Socket               as S
 data TLS a
 data WebSocket a
 
-class Typeable a => ServerStack a where
+class (Typeable a, Show (ServerConnectionInfo a)) => ServerStack a where
   type ServerMessage a
   data Server a
   data ServerConfig a
   data ServerException a
   data ServerConnection a
+  type ServerConnectionInfo a
   -- | Creates a new server from a configuration and passes it to a handler function.
   --
   --   The server given to the handler function shall be bound and in
@@ -65,12 +63,12 @@ class Typeable a => ServerStack a where
   --   >       result <- wait future
   --   >       putStrLn "The connection handler returned:"
   --   >       print result
-  withConnection :: Server a -> (ServerConnection a -> IO b) -> IO (Async b)
+  withConnection :: Server a -> (ServerConnection a -> ServerConnectionInfo a -> IO b) -> IO (Async b)
   flush          :: ServerConnection a -> IO ()
   send           :: ServerConnection a -> ServerMessage a -> IO ()
   receive        :: ServerConnection a -> Int -> IO (ServerMessage a)
 
-instance (Storable (S.SocketAddress f), S.Family f, S.Type t, S.Protocol p, Typeable f, Typeable t, Typeable p) => ServerStack (S.Socket f t p) where
+instance (Storable (S.SocketAddress f), Show (S.SocketAddress f), S.Family f, S.Type t, S.Protocol p, Typeable f, Typeable t, Typeable p) => ServerStack (S.Socket f t p) where
   type ServerMessage (S.Socket f t p) = BS.ByteString
   data Server (S.Socket f t p) = SocketServer
     { socketServer       :: !(S.Socket f t p)
@@ -82,6 +80,7 @@ instance (Storable (S.SocketAddress f), S.Family f, S.Type t, S.Protocol p, Type
     }
   data ServerException (S.Socket f t p) = SocketServerException !S.SocketException
   data ServerConnection (S.Socket f t p) = SocketServerConnection !(S.Socket f t p)
+  type ServerConnectionInfo (S.Socket f t p) = S.SocketAddress f
   withServer c handle = E.bracket
     (SocketServer <$> S.socket <*> pure c)
     (S.close . socketServer) $ \server-> do
@@ -89,8 +88,8 @@ instance (Storable (S.SocketAddress f), S.Family f, S.Type t, S.Protocol p, Type
       S.listen (socketServer server) (socketServerConfigListenQueueSize $ socketServerConfig server)
       handle server
   withConnection server handle =
-    E.bracketOnError (fst <$> S.accept (socketServer server)) S.close $ \connection->
-      async (handle (SocketServerConnection connection) `E.finally` S.close connection)
+    E.bracketOnError (S.accept (socketServer server)) (S.close . fst) $ \(connection, info)->
+      async (handle (SocketServerConnection connection) info `E.finally` S.close connection)
   flush =
     const (pure ())
   send (SocketServerConnection s) = sendAll
@@ -99,6 +98,12 @@ instance (Storable (S.SocketAddress f), S.Family f, S.Type t, S.Protocol p, Type
         sent <- S.send s bs S.msgNoSignal
         when (sent < BS.length bs) $ sendAll (BS.drop sent bs)
   receive (SocketServerConnection s) i = S.receive s i S.msgNoSignal
+
+data TlsServerConnectionInfo a
+   = TlsServerConnectionInfo {
+      tlsTransportServerConnectionInfo :: a
+    , tlsCertificateChain              :: Maybe X509.CertificateChain
+    } deriving (Eq, Show)
 
 instance (ServerStack a, ServerMessage a ~ BS.ByteString) => ServerStack (TLS a) where
   type ServerMessage (TLS a) = ServerMessage a
@@ -114,13 +119,13 @@ instance (ServerStack a, ServerMessage a ~ BS.ByteString) => ServerStack (TLS a)
   data ServerConnection (TLS a) = TlsServerConnection
     { tlsTransportConnection        :: ServerConnection a
     , tlsContext                    :: TLS.Context
-    , tlsCertificateChain           :: Maybe X509.CertificateChain
     }
+  type ServerConnectionInfo (TLS a) = TlsServerConnectionInfo (ServerConnectionInfo a)
   withServer config handle =
     withServer (tlsTransportConfig config) $ \server->
       handle (TlsServer server config)
   withConnection server handle =
-    withConnection (tlsTransportServer server) $ \connection-> do
+    withConnection (tlsTransportServer server) $ \connection info-> do
       let backend = TLS.Backend {
           TLS.backendFlush = flush connection
         , TLS.backendClose = pure () -- backend gets closed automatically
@@ -132,12 +137,20 @@ instance (ServerStack a, ServerMessage a ~ BS.ByteString) => ServerStack (TLS a)
       TLS.contextHookSetCertificateRecv context (putMVar mvar)
       TLS.handshake context
       certificateChain <- tryTakeMVar mvar
-      x <- handle (TlsServerConnection connection context certificateChain)
+      x <- handle
+        (TlsServerConnection connection context)
+        (TlsServerConnectionInfo info certificateChain)
       TLS.bye context
       pure x
   flush conn     = TLS.contextFlush (tlsContext conn)
   send conn bs   = TLS.sendData     (tlsContext conn) (BSL.fromStrict bs)
   receive conn _ = TLS.recvData     (tlsContext conn)
+
+data WebSocketServerConnectionInfo a
+  = WebSocketServerConnectionInfo
+    { wsTransportServerConnectionInfo :: a
+    , wsRequestHead                   :: WS.RequestHead
+    } deriving (Show)
 
 instance (ServerStack a, ServerMessage a ~ BS.ByteString) => ServerStack (WebSocket a) where
   type ServerMessage (WebSocket a) = BS.ByteString
@@ -150,27 +163,30 @@ instance (ServerStack a, ServerMessage a ~ BS.ByteString) => ServerStack (WebSoc
   data ServerException (WebSocket a) = WebSocketServerException
   data ServerConnection (WebSocket a) = WebSocketServerConnection
     { wsTransportConnection        :: ServerConnection a
-    , wsPendingConnection          :: WS.PendingConnection
     , wsConnection                 :: WS.Connection
     }
+  type ServerConnectionInfo (WebSocket a) = WebSocketServerConnectionInfo (ServerConnectionInfo a)
   withServer config handle =
     withServer (wsTransportConfig config) $ \server->
       handle (WebSocketServer server)
   withConnection server handle =
-    withConnection (wsTransportServer server) $ \connection-> do
+    withConnection (wsTransportServer server) $ \connection info-> do
       let readSocket = (\bs-> if BS.null bs then Nothing else Just bs) <$> receive connection 4096
       let writeSocket Nothing   = undefined
           writeSocket (Just bs) = send connection (BSL.toStrict bs)
       stream <- WS.makeStream readSocket writeSocket
       pendingConnection <- WS.makePendingConnectionFromStream stream (WS.ConnectionOptions $ pure ())
       acceptedConnection <- WS.acceptRequest pendingConnection
-      x <- handle $ WebSocketServerConnection connection pendingConnection acceptedConnection
+      x <- handle
+        (WebSocketServerConnection connection acceptedConnection)
+        (WebSocketServerConnectionInfo info $ WS.pendingRequest pendingConnection)
       WS.sendClose acceptedConnection ("Thank you for flying Haskell." :: BS.ByteString)
       pure x
   flush conn     = flush (wsTransportConnection conn)
   send conn      = WS.sendBinaryData (wsConnection conn)
   receive conn _ = WS.receiveData (wsConnection conn)
 
+{-
 instance Request (ServerConnection (S.Socket f t p)) where
 
 instance (Request (ServerConnection a)) => Request (ServerConnection (TLS a)) where
@@ -182,3 +198,4 @@ instance (Request (ServerConnection a)) => Request (ServerConnection (WebSocket 
   requestSecure conn        = requestSecure (wsTransportConnection conn)
   requestCertificateChain a = requestCertificateChain (wsTransportConnection a)
   requestHeaders conn       = WS.requestHeaders $ WS.pendingRequest (wsPendingConnection conn)
+-}

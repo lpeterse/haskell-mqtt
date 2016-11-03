@@ -40,6 +40,7 @@ instance (SS.ServerStack transport, SS.ServerMessage transport ~ BS.ByteString) 
     { mqttTransportConnection :: SS.ServerConnection transport
     , mqttTransportLeftover   :: IORef BS.ByteString
     }
+  type ServerConnectionInfo (MQTT transport) = SS.ServerConnectionInfo transport
   data ServerException (MQTT transport)
     = ProtocolViolation String
     | ConnectionRefused ConnectionRefusal
@@ -48,8 +49,8 @@ instance (SS.ServerStack transport, SS.ServerMessage transport ~ BS.ByteString) 
     SS.withServer (mqttTransportConfig config) $ \server->
       handle (MqttServer server config)
   withConnection server handleConnection =
-    SS.withConnection (mqttTransportServer server) $ \connection->
-      handleConnection =<< MqttServerConnection
+    SS.withConnection (mqttTransportServer server) $ \connection info->
+      flip handleConnection info =<< MqttServerConnection
         <$> pure connection
         <*> newIORef mempty
   flush connection = SS.flush (mqttTransportConnection connection)
