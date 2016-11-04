@@ -22,7 +22,7 @@ import           Foreign.Ptr
 import           Network.MQTT.Message
 import           Network.Transceiver
 
-bufferedOutput :: (StreamConnection s, Data s ~ BS.ByteString) => s -> IO RawMessage -> IO (Maybe RawMessage) -> (BS.ByteString -> IO ()) -> IO ()
+bufferedOutput :: (StreamConnection s, Data s ~ BS.ByteString) => s -> IO UpstreamMessage -> IO (Maybe UpstreamMessage) -> (BS.ByteString -> IO ()) -> IO ()
 bufferedOutput transmitter getMessage getMaybeMessage sendByteString =
   bracket ( mallocBytes bufferSize ) free waitForMessage
   where
@@ -32,7 +32,7 @@ bufferedOutput transmitter getMessage getMaybeMessage sendByteString =
     waitForMessage buffer =
       getMessage >>= sendMessage buffer 0
     pollForMessage :: Ptr Word8 -> Int -> IO ()
-    pollForMessage buffer pos = do
+    pollForMessage buffer pos =
       -- The following `yield` is essential for the subsequent call to return a message.
       -- It gives other threads waiting to put into the MVar the chance to do so.
       -- We rather wait 20ms before flushing the buffer rather than flushing a
@@ -45,7 +45,7 @@ bufferedOutput transmitter getMessage getMaybeMessage sendByteString =
             Nothing  -> flushBuffer buffer pos >> waitForMessage buffer
             Just msg -> sendMessage buffer pos msg
         Just msg -> sendMessage buffer pos msg
-    sendMessage :: Ptr Word8 -> Int -> RawMessage -> IO ()
+    sendMessage :: Ptr Word8 -> Int -> UpstreamMessage -> IO ()
     sendMessage buffer pos msg = do
       -- print msg
       pos' <- runBuilder >>= \(written, next)-> finishWriter (pos + written) next
@@ -54,7 +54,7 @@ bufferedOutput transmitter getMessage getMaybeMessage sendByteString =
         _          -> pollForMessage buffer pos'
       where
         runBuilder =
-          BS.runBuilder (bRawMessage msg) (plusPtr buffer pos) (bufferSize - pos)
+          BS.runBuilder (buildUpstreamMessage msg) (plusPtr buffer pos) (bufferSize - pos)
         finishWriter pos BS.Done =
           pure pos
         finishWriter pos (BS.More _ writer) = do

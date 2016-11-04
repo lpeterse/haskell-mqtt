@@ -2,7 +2,6 @@
 module Network.Transceiver where
 
 import Control.Monad
-import qualified Control.Exception as E
 
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Lazy as BSL

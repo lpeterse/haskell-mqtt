@@ -13,6 +13,8 @@ module Network.MQTT.Topic
   , TopicFilter ()
   , TopicFilterLevel ()
   , topicLevels
+  , topicLength
+  , topicBuilder
   , topicFilterLevels
   , parseTopic
   , parseTopicFilter
@@ -21,16 +23,18 @@ module Network.MQTT.Topic
   , singleLevelWildcard
   ) where
 
+import Data.Monoid ((<>))
 import           Control.Applicative
-import           Control.Monad                  (void)
-import qualified Data.Attoparsec.ByteString     as A
-import qualified Data.ByteString.Short          as BS
+import           Control.Monad              (void)
+import qualified Data.Attoparsec.ByteString as A
+import qualified Data.ByteString.Builder    as BS
+import qualified Data.ByteString.Short      as BS
 import           Data.List
-import           Data.List.NonEmpty             (NonEmpty (..))
+import           Data.List.NonEmpty         (NonEmpty (..))
 import           Data.String
-import qualified Data.Text                      as T
-import qualified Data.Text.Encoding             as T
-import qualified Data.Text.Encoding.Error       as T
+import qualified Data.Text                  as T
+import qualified Data.Text.Encoding         as T
+import qualified Data.Text.Encoding.Error   as T
 import           Data.Word
 
 -- | According to the MQTT specification a topic
@@ -88,6 +92,21 @@ parseTopic = (<|> fail "invalid topic") $ Topic <$> do
     pLevel      = TopicFilterLevel . BS.toShort <$> A.takeWhile
                   (\w8-> w8 /= slash && w8 /= zero && w8 /= hash && w8 /= plus)
 
+topicBuilder :: Topic -> BS.Builder
+topicBuilder (Topic (TopicFilterLevel x:|xs)) =
+  foldl'
+    (\acc (TopicFilterLevel l)-> acc <> slashBuilder <> BS.shortByteString l)
+    (BS.shortByteString x) xs
+{-# INLINE topicBuilder #-}
+
+topicLength :: Topic -> Int
+topicLength (Topic (TopicFilterLevel x:|xs)) =
+   BS.length x + len' xs 0
+   where
+    len' []                      acc = acc
+    len' (TopicFilterLevel z:zs) acc = len' zs $! acc + 1 + BS.length z
+{-# INLINE topicLength #-}
+
 parseTopicFilter :: A.Parser TopicFilter
 parseTopicFilter = (<|> fail "invalid filter") $ TopicFilter <$> do
   void A.peekWord8'
@@ -120,3 +139,6 @@ zero  = 0x00
 plus  = 0x2b
 hash  = 0x23
 slash = 0x2f
+
+slashBuilder :: BS.Builder
+slashBuilder  = BS.word8 slash

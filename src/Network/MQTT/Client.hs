@@ -11,7 +11,8 @@
 -- Maintainer  :  info@lars-petersen.net
 -- Stability   :  experimental
 --------------------------------------------------------------------------------
-module Network.MQTT.Client
+module Network.MQTT.Client where
+{-
   ( Client ()
   , ClientConfiguration (..)
   -- * Events
@@ -31,28 +32,20 @@ module Network.MQTT.Client
 import           Control.Concurrent
 import           Control.Concurrent.Async
 import           Control.Concurrent.Broadcast
-import           Control.Concurrent.MVar
 import           Control.Exception
 import           Control.Monad
-import qualified Data.ByteString               as BS
-import qualified Data.ByteString.Builder       as BS
-import qualified Data.ByteString.Builder.Extra as BS
-import qualified Data.ByteString.Lazy          as LBS
-import qualified Data.ByteString.Unsafe        as BS
-import           Data.Int
-import qualified Data.IntMap                   as IM
-import qualified Data.Map                      as M
-import qualified Data.Serialize.Get            as SG
-import qualified Data.Text                     as T
-import qualified Data.Text.Encoding            as T
+import qualified Data.ByteString              as BS
+import qualified Data.ByteString.Builder      as BS
+import qualified Data.IntMap                  as IM
+import qualified Data.Serialize.Get           as SG
+import qualified Data.Text                    as T
+import qualified Data.Text.Encoding           as T
 import           Data.Typeable
 import           Data.Word
-import           Foreign.Marshal.Alloc
-import           Foreign.Ptr
 import           Network.MQTT
 import           Network.MQTT.IO
 import           Network.MQTT.Message
-import qualified Network.Transceiver           as T
+import qualified Network.Transceiver          as T
 import           Network.URI
 import           System.Random
 
@@ -60,7 +53,7 @@ data ClientConfiguration t
    = ClientConfiguration
      { -- | @mqtt://user:password\@server.example:1234@
        clientURI                      :: URI
-     , clientWill                     :: Maybe Will
+     , clientWill                     :: Maybe Message
      , clientKeepAlive                :: KeepAlive
      , clientIdentifierPrefix         :: String
      , clientMaxUnacknowlegedMessages :: Word16
@@ -110,7 +103,7 @@ data Client t
      , clientEventBroadcast          :: Broadcast ClientEvent
      , clientConfiguration           :: MVar (ClientConfiguration t)
      , clientRecentActivity          :: MVar Bool
-     , clientOutput                  :: MVar (Either RawMessage (PacketIdentifier -> (RawMessage, OutboundState)))
+     , clientOutput                  :: MVar (Either UpstreamMessage (PacketIdentifier -> (UpstreamMessage, OutboundState)))
      , clientInboundState            :: MVar (IM.IntMap InboundState)
      , clientOutboundState           :: MVar ([Int], IM.IntMap OutboundState)
      , clientThreads                 :: MVar (Async ())
@@ -135,11 +128,11 @@ newClient configuration = Client
 type ClientSessionPresent = Bool
 
 data OutboundState
-   = NotAcknowledgedPublish     RawMessage (MVar ())
-   | NotReceivedPublish         RawMessage (MVar ())
+   = NotAcknowledgedPublish     UpstreamMessage (MVar ())
+   | NotReceivedPublish         UpstreamMessage (MVar ())
    | NotCompletePublish         (MVar ())
-   | NotAcknowledgedSubscribe   RawMessage (MVar [Maybe QoS])
-   | NotAcknowledgedUnsubscribe RawMessage (MVar ())
+   | NotAcknowledgedSubscribe   UpstreamMessage (MVar [Maybe QualityOfService])
+   | NotAcknowledgedUnsubscribe UpstreamMessage (MVar ())
 
 newtype InboundState = NotReleasedPublish Message
 
@@ -185,7 +178,7 @@ start c = modifyMVar_ (clientThreads c) $ \p->
         sendConnect :: IO ()
         sendConnect = do
           conf <- readMVar (clientConfiguration c)
-          T.sendChunks connection $ BS.toLazyByteString $ bRawMessage Connect
+          T.sendChunks connection $ BS.toLazyByteString $ buildUpstreamMessage Connect
             { connectClientIdentifier = clientIdentifier c
             , connectCleanSession     = False
             , connectKeepAlive        = clientKeepAlive conf
@@ -196,7 +189,7 @@ start c = modifyMVar_ (clientThreads c) $ \p->
         receiveConnectAcknowledgement :: IO BS.ByteString
         receiveConnectAcknowledgement = do
           bs <- T.receiveChunk connection
-          case SG.runGetPartial pRawMessage bs of
+          case SG.runGetPartial parseDownstreamMessage bs of
             SG.Done message bs' -> f message >> pure bs'
             SG.Fail e bs'       -> throwIO $ ProtocolViolation e
             SG.Partial _        -> throwIO $ ProtocolViolation "Expected CONNACK, got end of input."
@@ -235,24 +228,24 @@ start c = modifyMVar_ (clientThreads c) $ \p->
             handleOutput :: IO ()
             handleOutput = bufferedOutput connection getMessage getMaybeMessage (T.sendChunk connection)
               where
-                getMessage :: IO RawMessage
+                getMessage :: IO UpstreamMessage
                 getMessage = do
                   msg <- f =<< takeMVar (clientOutput c)
                   void $ swapMVar (clientRecentActivity c) True
                   pure msg
 
-                getMaybeMessage :: IO (Maybe RawMessage)
+                getMaybeMessage :: IO (Maybe UpstreamMessage)
                 getMaybeMessage = do
                   memsg <- tryTakeMVar (clientOutput c)
                   case memsg of
                     Nothing   -> pure Nothing
                     Just emsg -> Just <$> f emsg
 
-                f :: Either RawMessage (PacketIdentifier -> (RawMessage, OutboundState)) -> IO RawMessage
+                f :: Either UpstreamMessage (PacketIdentifier -> (UpstreamMessage, OutboundState)) -> IO UpstreamMessage
                 f (Left msg)   = pure msg
                 f (Right imsg) = assignPacketIdentifier imsg
 
-                assignPacketIdentifier :: (PacketIdentifier -> (RawMessage, OutboundState)) -> IO RawMessage
+                assignPacketIdentifier :: (PacketIdentifier -> (UpstreamMessage, OutboundState)) -> IO UpstreamMessage
                 assignPacketIdentifier x =
                   modifyMVar (clientOutboundState c) assign >>= \mm-> case mm of
                     Just m  -> pure m
@@ -273,7 +266,7 @@ start c = modifyMVar_ (clientThreads c) $ \p->
               where
                 handleInput' bs' = do
                   -- print $ "handle input" ++ show (BS.unpack bs')
-                  g (SG.runGetPartial pRawMessage bs')
+                  g (SG.runGetPartial parseDownstreamMessage bs')
                 g (SG.Done message bs') = do
                   -- print message
                   f message >> handleInput' bs'
@@ -295,7 +288,7 @@ start c = modifyMVar_ (clientThreads c) $ \p->
                     , retained = publishRetain msg
                     , duplicate = False
                     }
-                  PublishQoS1 dup i -> do
+                  {-PublishQoS1 dup i -> do
                     broadcast (clientEventBroadcast c) $ Received Message
                       { topic    = publishTopic msg
                       , payload  = publishBody msg
@@ -336,7 +329,7 @@ start c = modifyMVar_ (clientThreads c) $ \p->
                         pure (IM.delete i im)
                       Nothing -> -- Duplicate, don't publish again.
                         pure im
-                  putMVar (clientOutput c) (Left $ PublishComplete (PacketIdentifier i))
+                  putMVar (clientOutput c) (Left $ PublishComplete (PacketIdentifier i)) -}
                 f (PublishComplete (PacketIdentifier i)) = do
                   modifyMVar_ (clientOutboundState c) $ \p@(is,im)->
                     case IM.lookup i im of
@@ -449,3 +442,4 @@ data ClientException
    deriving (Eq, Ord, Show, Typeable)
 
 instance Exception ClientException where
+-}

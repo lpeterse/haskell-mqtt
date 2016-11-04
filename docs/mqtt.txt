@@ -23,6 +23,8 @@ data Topic
 data TopicFilter
 data TopicFilterLevel
 topicLevels :: Topic -> NonEmpty TopicFilterLevel
+topicLength :: Topic -> Int
+topicBuilder :: Topic -> Builder
 topicFilterLevels :: TopicFilter -> NonEmpty TopicFilterLevel
 parseTopic :: Parser Topic
 parseTopicFilter :: Parser TopicFilter
@@ -41,6 +43,86 @@ instance GHC.Show.Show Network.MQTT.Topic.TopicFilterLevel
 instance Data.String.IsString Network.MQTT.Topic.Topic
 instance Data.String.IsString Network.MQTT.Topic.TopicFilter
 instance Data.String.IsString Network.MQTT.Topic.TopicFilterLevel
+
+
+module Network.MQTT.Message
+type ClientIdentifier = ByteString
+type SessionPresent = Bool
+type CleanSession = Bool
+type Retain = Bool
+type KeepAlive = Word16
+type Username = Text
+type Password = ByteString
+newtype PacketIdentifier
+PacketIdentifier :: Int -> PacketIdentifier
+data QualityOfService
+Qos0 :: QualityOfService
+Qos1 :: QualityOfService
+Qos2 :: QualityOfService
+data ConnectionRefusal
+UnacceptableProtocolVersion :: ConnectionRefusal
+IdentifierRejected :: ConnectionRefusal
+ServerUnavailable :: ConnectionRefusal
+BadUsernameOrPassword :: ConnectionRefusal
+NotAuthorized :: ConnectionRefusal
+data Message
+Message :: !Topic -> !ByteString -> !QualityOfService -> !Retain -> !Duplicate -> Message
+[msgTopic] :: Message -> !Topic
+[msgBody] :: Message -> !ByteString
+[msgQos] :: Message -> !QualityOfService
+[msgRetain] :: Message -> !Retain
+[msgDuplicate] :: Message -> !Duplicate
+data UpstreamMessage
+Connect :: !ClientIdentifier -> !CleanSession -> !KeepAlive -> !(Maybe Message) -> !(Maybe (Username, Maybe Password)) -> UpstreamMessage
+[connectClientIdentifier] :: UpstreamMessage -> !ClientIdentifier
+[connectCleanSession] :: UpstreamMessage -> !CleanSession
+[connectKeepAlive] :: UpstreamMessage -> !KeepAlive
+[connectWill] :: UpstreamMessage -> !(Maybe Message)
+[connectCredentials] :: UpstreamMessage -> !(Maybe (Username, Maybe Password))
+Subscribe :: PacketIdentifier -> [(TopicFilter, QualityOfService)] -> UpstreamMessage
+Unsubscribe :: PacketIdentifier -> [TopicFilter] -> UpstreamMessage
+PingRequest :: UpstreamMessage
+Disconnect :: UpstreamMessage
+buildUpstreamMessage :: UpstreamMessage -> Builder
+parseUpstreamMessage :: Get UpstreamMessage
+data DownstreamMessage
+ConnectAcknowledgement :: !(Either ConnectionRefusal SessionPresent) -> DownstreamMessage
+PingResponse :: DownstreamMessage
+Publish :: !Message -> DownstreamMessage
+Publish' :: {-# UNPACK #-} !PacketIdentifier -> !Message -> DownstreamMessage
+PublishAcknowledgement :: {-# UNPACK #-} !PacketIdentifier -> DownstreamMessage
+PublishReceived :: {-# UNPACK #-} !PacketIdentifier -> DownstreamMessage
+PublishRelease :: {-# UNPACK #-} !PacketIdentifier -> DownstreamMessage
+PublishComplete :: {-# UNPACK #-} !PacketIdentifier -> DownstreamMessage
+SubscribeAcknowledgement :: {-# UNPACK #-} !PacketIdentifier -> [Maybe QualityOfService] -> DownstreamMessage
+UnsubscribeAcknowledgement :: {-# UNPACK #-} !PacketIdentifier -> DownstreamMessage
+buildDownstreamMessage :: DownstreamMessage -> Builder
+parseDownstreamMessage :: Get DownstreamMessage
+pRemainingLength :: Get Int
+bRemainingLength :: Int -> Builder
+pUtf8String :: Get Text
+bUtf8String :: Text -> Builder
+instance GHC.Show.Show Network.MQTT.Message.DownstreamMessage
+instance GHC.Classes.Eq Network.MQTT.Message.DownstreamMessage
+instance GHC.Show.Show Network.MQTT.Message.UpstreamMessage
+instance GHC.Classes.Eq Network.MQTT.Message.UpstreamMessage
+instance GHC.Show.Show Network.MQTT.Message.Message
+instance GHC.Classes.Ord Network.MQTT.Message.Message
+instance GHC.Classes.Eq Network.MQTT.Message.Message
+instance GHC.Enum.Bounded Network.MQTT.Message.ConnectionRefusal
+instance GHC.Enum.Enum Network.MQTT.Message.ConnectionRefusal
+instance GHC.Show.Show Network.MQTT.Message.ConnectionRefusal
+instance GHC.Classes.Ord Network.MQTT.Message.ConnectionRefusal
+instance GHC.Classes.Eq Network.MQTT.Message.ConnectionRefusal
+instance GHC.Show.Show Network.MQTT.Message.QualityOfService
+instance GHC.Classes.Ord Network.MQTT.Message.QualityOfService
+instance GHC.Classes.Eq Network.MQTT.Message.QualityOfService
+instance GHC.Show.Show Network.MQTT.Message.PacketIdentifier
+instance GHC.Classes.Ord Network.MQTT.Message.PacketIdentifier
+instance GHC.Classes.Eq Network.MQTT.Message.PacketIdentifier
+
+
+module Network.MQTT.Client
 
 
 module Network.MQTT.RoutingTree
@@ -229,118 +311,7 @@ getPublishPermissions :: Authorizer a => Principal a -> IO (RoutingTree ())
 getSubscribePermissions :: Authorizer a => Principal a -> IO (RoutingTree ())
 
 
-module Network.MQTT.Message
-newtype ClientIdentifier
-ClientIdentifier :: Text -> ClientIdentifier
-type SessionPresent = Bool
-type CleanSession = Bool
-type Retain = Bool
-type KeepAlive = Word16
-type Username = Text
-type Password = ByteString
-type TopicFilter = Text
-newtype Topic
-Topic :: ByteString -> Topic
-type Payload = ByteString
-newtype PacketIdentifier
-PacketIdentifier :: Int -> PacketIdentifier
-data QoS
-QoS0 :: QoS
-QoS1 :: QoS
-QoS2 :: QoS
-data QualityOfService
-AtLeastOnce :: QualityOfService
-ExactlyOnce :: QualityOfService
-data ConnectionRefusal
-UnacceptableProtocolVersion :: ConnectionRefusal
-IdentifierRejected :: ConnectionRefusal
-ServerUnavailable :: ConnectionRefusal
-BadUsernameOrPassword :: ConnectionRefusal
-NotAuthorized :: ConnectionRefusal
-data PublishQoS
-PublishQoS0 :: PublishQoS
-PublishQoS1 :: !Duplicate -> !PacketIdentifier -> PublishQoS
-PublishQoS2 :: !PacketIdentifier -> PublishQoS
-data Will
-Will :: Text -> ByteString -> Maybe QualityOfService -> Bool -> Will
-[willTopic] :: Will -> Text
-[willMessage] :: Will -> ByteString
-[willQoS] :: Will -> Maybe QualityOfService
-[willRetain] :: Will -> Bool
-data RawMessage
-Connect :: !ClientIdentifier -> !CleanSession -> !KeepAlive -> !(Maybe Will) -> !(Maybe (Username, Maybe Password)) -> RawMessage
-[connectClientIdentifier] :: RawMessage -> !ClientIdentifier
-[connectCleanSession] :: RawMessage -> !CleanSession
-[connectKeepAlive] :: RawMessage -> !KeepAlive
-[connectWill] :: RawMessage -> !(Maybe Will)
-[connectCredentials] :: RawMessage -> !(Maybe (Username, Maybe Password))
-ConnectAcknowledgement :: (Either ConnectionRefusal SessionPresent) -> RawMessage
-Publish :: !Bool -> !Bool -> !Topic -> !PublishQoS -> !ByteString -> RawMessage
-[publishDuplicate] :: RawMessage -> !Bool
-[publishRetain] :: RawMessage -> !Bool
-[publishTopic] :: RawMessage -> !Topic
-[publishQoS] :: RawMessage -> !PublishQoS
-[publishBody] :: RawMessage -> !ByteString
-PublishAcknowledgement :: PacketIdentifier -> RawMessage
-PublishReceived :: PacketIdentifier -> RawMessage
-PublishRelease :: PacketIdentifier -> RawMessage
-PublishComplete :: PacketIdentifier -> RawMessage
-Subscribe :: PacketIdentifier -> [(TopicFilter, QoS)] -> RawMessage
-SubscribeAcknowledgement :: PacketIdentifier -> [Maybe QoS] -> RawMessage
-Unsubscribe :: PacketIdentifier -> [TopicFilter] -> RawMessage
-UnsubscribeAcknowledgement :: PacketIdentifier -> RawMessage
-PingRequest :: RawMessage
-PingResponse :: RawMessage
-Disconnect :: RawMessage
-bRawMessage :: RawMessage -> Builder
-pRawMessage :: Get RawMessage
-pRemainingLength :: Get Int
-bRemainingLength :: Int -> Builder
-pUtf8String :: Get Text
-bUtf8String :: Text -> Builder
-instance GHC.Show.Show Network.MQTT.Message.RawMessage
-instance GHC.Classes.Eq Network.MQTT.Message.RawMessage
-instance GHC.Show.Show Network.MQTT.Message.PublishQoS
-instance GHC.Classes.Ord Network.MQTT.Message.PublishQoS
-instance GHC.Classes.Eq Network.MQTT.Message.PublishQoS
-instance GHC.Show.Show Network.MQTT.Message.Will
-instance GHC.Classes.Eq Network.MQTT.Message.Will
-instance GHC.Enum.Bounded Network.MQTT.Message.ConnectionRefusal
-instance GHC.Enum.Enum Network.MQTT.Message.ConnectionRefusal
-instance GHC.Show.Show Network.MQTT.Message.ConnectionRefusal
-instance GHC.Classes.Ord Network.MQTT.Message.ConnectionRefusal
-instance GHC.Classes.Eq Network.MQTT.Message.ConnectionRefusal
-instance GHC.Show.Show Network.MQTT.Message.QoS
-instance GHC.Classes.Ord Network.MQTT.Message.QoS
-instance GHC.Classes.Eq Network.MQTT.Message.QoS
-instance GHC.Enum.Enum Network.MQTT.Message.QualityOfService
-instance GHC.Show.Show Network.MQTT.Message.QualityOfService
-instance GHC.Classes.Ord Network.MQTT.Message.QualityOfService
-instance GHC.Classes.Eq Network.MQTT.Message.QualityOfService
-instance GHC.Show.Show Network.MQTT.Message.PacketIdentifier
-instance GHC.Classes.Ord Network.MQTT.Message.PacketIdentifier
-instance GHC.Classes.Eq Network.MQTT.Message.PacketIdentifier
-instance Data.String.IsString Network.MQTT.Message.Topic
-instance GHC.Show.Show Network.MQTT.Message.Topic
-instance GHC.Classes.Ord Network.MQTT.Message.Topic
-instance GHC.Classes.Eq Network.MQTT.Message.Topic
-instance Data.String.IsString Network.MQTT.Message.ClientIdentifier
-instance GHC.Show.Show Network.MQTT.Message.ClientIdentifier
-instance GHC.Classes.Ord Network.MQTT.Message.ClientIdentifier
-instance GHC.Classes.Eq Network.MQTT.Message.ClientIdentifier
-
-
 module Network.MQTT
-data Message
-Message :: Topic -> QoS -> Bool -> Bool -> Payload -> Message
-[topic] :: Message -> Topic
-[qos] :: Message -> QoS
-[retained] :: Message -> Bool
-[duplicate] :: Message -> Bool
-[payload] :: Message -> Payload
-instance GHC.Show.Show Network.MQTT.Message
-instance GHC.Classes.Ord Network.MQTT.Message
-instance GHC.Classes.Eq Network.MQTT.Message
 
 
 module Network.Stack.Server
@@ -392,11 +363,13 @@ sendStream :: StreamServerStack a => ServerConnection a -> ByteString -> IO ()
 sendStreamLazy :: StreamServerStack a => ServerConnection a -> ByteString -> IO ()
 receiveStream :: StreamServerStack a => ServerConnection a -> IO ByteString
 receiveStreamLazy :: StreamServerStack a => ServerConnection a -> IO ByteString
-class ServerStack a => MessageServerStack a where type Message a where {
-    type family Message a;
+class ServerStack a => MessageServerStack a where type SendMessage a type ReceiveMessage a where {
+    type family SendMessage a;
+    type family ReceiveMessage a;
 }
-sendMessage :: MessageServerStack a => ServerConnection a -> Message a -> IO ()
-receiveMessage :: MessageServerStack a => ServerConnection a -> IO (Message a)
+sendMessage :: MessageServerStack a => ServerConnection a -> SendMessage a -> IO ()
+receiveMessage :: MessageServerStack a => ServerConnection a -> IO (ReceiveMessage a)
+consumeMessages :: MessageServerStack a => ServerConnection a -> (ReceiveMessage a -> IO Bool) -> IO ()
 instance GHC.Show.Show (System.Socket.Internal.Socket.SocketAddress f) => GHC.Show.Show (Network.Stack.Server.ServerConnectionInfo (System.Socket.Internal.Socket.Socket f t p))
 instance GHC.Show.Show (Network.Stack.Server.ServerConnectionInfo a) => GHC.Show.Show (Network.Stack.Server.ServerConnectionInfo (Network.Stack.Server.TLS a))
 instance GHC.Show.Show (Network.Stack.Server.ServerConnectionInfo a) => GHC.Show.Show (Network.Stack.Server.ServerConnectionInfo (Network.Stack.Server.WebSocket a))
@@ -493,7 +466,7 @@ instance (Network.Transceiver.Acceptable t, Network.Transceiver.Data (Network.Tr
 
 
 module Network.MQTT.IO
-bufferedOutput :: (StreamConnection s, Data s ~ ByteString) => s -> IO RawMessage -> IO (Maybe RawMessage) -> (ByteString -> IO ()) -> IO ()
+bufferedOutput :: (StreamConnection s, Data s ~ ByteString) => s -> IO UpstreamMessage -> IO (Maybe UpstreamMessage) -> (ByteString -> IO ()) -> IO ()
 
 module Control.Concurrent.Broadcast
 data Broadcast a
@@ -505,77 +478,3 @@ listen :: Broadcast a -> IO (BroadcastListener a)
 accept :: BroadcastListener a -> IO a
 instance GHC.Show.Show Control.Concurrent.Broadcast.BroadcastTerminatedException
 instance GHC.Exception.Exception Control.Concurrent.Broadcast.BroadcastTerminatedException
-
-
-module Network.MQTT.Client
-data Client t
-data ClientConfiguration t
-ClientConfiguration :: URI -> Maybe Will -> KeepAlive -> String -> Word16 -> IO t -> ClientConfiguration t
-
--- | <pre>
---   mqtt://user:password@server.example:1234
---   </pre>
-[clientURI] :: ClientConfiguration t -> URI
-[clientWill] :: ClientConfiguration t -> Maybe Will
-[clientKeepAlive] :: ClientConfiguration t -> KeepAlive
-[clientIdentifierPrefix] :: ClientConfiguration t -> String
-[clientMaxUnacknowlegedMessages] :: ClientConfiguration t -> Word16
-[clientNewTransceiver] :: ClientConfiguration t -> IO t
-data ClientEvent
-Started :: ClientEvent
-Connecting :: ClientEvent
-Connected :: ClientEvent
-Ping :: ClientEvent
-Pong :: ClientEvent
-Received :: Message -> ClientEvent
-Disconnected :: ClientException -> ClientEvent
-Stopped :: ClientEvent
-listenEvents :: Client s -> IO (BroadcastListener ClientEvent)
-acceptEvent :: BroadcastListener ClientEvent -> IO ClientEvent
-data ClientException
-ProtocolViolation :: String -> ClientException
-ConnectionRefused :: ConnectionRefusal -> ClientException
-ClientLostSession :: ClientException
-ServerLostSession :: ClientException
-ClientClosedConnection :: ClientException
-ServerClosedConnection :: ClientException
-newClient :: ClientConfiguration t -> IO (Client t)
-
--- | Starts the <a>Client</a> if it is not already running.
---   
---   <ul>
---   <li>The <a>Started</a> event will be added to the event stream.</li>
---   <li>The <a>Connecting</a> event will be added to the event
---   stream.</li>
---   <li>A new <tt>Connectable</tt> will be created.</li>
---   <li>A connection will be tried to establish (includes <tt>connect</tt>
---   as well as the MQTT handshake).</li>
---   <li>The <a>Connected</a> event will be added to the event stream.</li>
---   <li>Messages will be processed until a <a>Disconnect</a> occurs.</li>
---   </ul>
---   
---   At every step after the <a>Connecting</a> event, a <a>Disconnect</a>
---   may occur. The client will then try to reconnect automatically.
-start :: (Connectable s, Address s ~ a, StreamConnection s, Closable s, Data s ~ ByteString) => Client s -> IO ()
-
--- | Stops the <a>Client</a> if it is not already stopped.
---   
---   <ul>
---   <li>A graceful DISCONNECT packet will be sent to the server and the
---   connection will be <tt>close</tt>d.</li>
---   <li>All internal client threads will be terminated.</li>
---   <li>The <a>Stopped</a> event will be added to the event stream.</li>
---   </ul>
-stop :: Closable s => Client s -> IO ()
-publish :: Client s -> Topic -> QoS -> Retain -> Payload -> IO ()
-subscribe :: Client s -> [(TopicFilter, QoS)] -> IO [Maybe QoS]
-unsubscribe :: Client s -> [TopicFilter] -> IO ()
-instance GHC.Show.Show Network.MQTT.Client.ClientEvent
-instance GHC.Classes.Ord Network.MQTT.Client.ClientEvent
-instance GHC.Classes.Eq Network.MQTT.Client.ClientEvent
-instance GHC.Show.Show Network.MQTT.Client.ClientException
-instance GHC.Classes.Ord Network.MQTT.Client.ClientException
-instance GHC.Classes.Eq Network.MQTT.Client.ClientException
-instance GHC.Show.Show Network.MQTT.Client.ClientConfigurationException
-instance GHC.Exception.Exception Network.MQTT.Client.ClientConfigurationException
-instance GHC.Exception.Exception Network.MQTT.Client.ClientException

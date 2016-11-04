@@ -56,14 +56,15 @@ instance (SS.StreamServerStack transport) => SS.ServerStack (MQTT transport) whe
         <*> newMVar mempty
 
 instance (SS.StreamServerStack transport) => SS.MessageServerStack (MQTT transport) where
-  type Message (MQTT transport) = RawMessage
+  type SendMessage (MQTT transport) = DownstreamMessage
+  type ReceiveMessage (MQTT transport) = UpstreamMessage
   sendMessage connection =
-    SS.sendStreamLazy (mqttTransportConnection connection) . BS.toLazyByteString . bRawMessage
+    SS.sendStreamLazy (mqttTransportConnection connection) . BS.toLazyByteString . buildDownstreamMessage
   receiveMessage connection =
     modifyMVar (mqttTransportLeftover connection) (execute . decode)
     where
       fetch  = SS.receiveStream (mqttTransportConnection connection)
-      decode = SG.runGetPartial pRawMessage
+      decode = SG.runGetPartial parseUpstreamMessage
       execute (SG.Partial continuation) = execute =<< continuation <$> fetch
       execute (SG.Fail failure _)       = E.throwIO (ProtocolViolation failure :: SS.ServerException (MQTT transport))
       execute (SG.Done msg leftover')   = pure (leftover', msg)
@@ -71,7 +72,7 @@ instance (SS.StreamServerStack transport) => SS.MessageServerStack (MQTT transpo
     modifyMVar_ (mqttTransportLeftover connection) (execute . decode)
     where
       fetch  = SS.receiveStream (mqttTransportConnection connection)
-      decode = SG.runGetPartial pRawMessage
+      decode = SG.runGetPartial parseUpstreamMessage
       execute (SG.Partial continuation) = execute =<< continuation <$> fetch
       execute (SG.Fail failure _)       = E.throwIO (ProtocolViolation failure :: SS.ServerException (MQTT transport))
       execute (SG.Done msg leftover')   = do

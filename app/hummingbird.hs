@@ -19,13 +19,20 @@ main  =
   where
     handleServer :: (SS.StreamServerStack a, Show (SS.ServerConnectionInfo a)) => SS.Server (Server.MQTT a) -> IO ()
     handleServer server = forever $ do
-        putStrLn "Waiting for connection..."
-        SS.withConnection server $ \connection info-> do
-          putStrLn "New connection:"
-          print info
-          SS.receiveMessage connection >>= print
-          SS.sendMessage connection (ConnectAcknowledgement $ Right False)
-          forever (SS.receiveMessage connection >>= print)
+      putStrLn "Waiting for connection..."
+      SS.withConnection server $ \connection info-> do
+        putStrLn "New connection:"
+        print info
+        SS.consumeMessages connection $ \msg-> print msg >> case msg of
+          Connect {} -> do
+            SS.sendMessage connection (ConnectAcknowledgement $ Right False)
+            pure False
+          PingRequest -> do
+            SS.sendMessage connection PingResponse
+            pure False
+          Disconnect ->
+            pure True
+          _ -> pure False
     sockConfig :: SS.ServerConfig (Server.MQTT (S.Socket S.Inet S.Stream S.TCP))
     sockConfig = Server.MqttServerConfig {
       Server.mqttTransportConfig = SS.SocketServerConfig {

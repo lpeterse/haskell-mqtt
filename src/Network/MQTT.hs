@@ -9,14 +9,3 @@
 --------------------------------------------------------------------------------
 {-# LANGUAGE TypeFamilies #-}
 module Network.MQTT where
-
-import           Network.MQTT.Message
-
-data Message = Message
-     { topic     :: Topic
-     , qos       :: QoS
-     , retained  :: Bool
-     , duplicate :: Bool
-     , payload   :: Payload
-     }
-   deriving (Eq, Ord, Show)

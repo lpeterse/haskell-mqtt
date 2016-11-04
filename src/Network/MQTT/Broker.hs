@@ -21,7 +21,7 @@ import           Network.MQTT.Topic
 type SessionKey = Int
 type Message = ()
 
-data Broker authenticator  = Broker  {
+data Broker authenticator  = Broker {
     brokerAuthenticator :: authenticator
   , brokerState         :: MVar (BrokerState authenticator)
   }
