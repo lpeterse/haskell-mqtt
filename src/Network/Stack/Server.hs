@@ -82,8 +82,9 @@ class ServerStack a => StreamServerStack a where
 
 class ServerStack a => MessageServerStack a where
   type Message a
-  sendMessage             :: ServerConnection a -> Message a -> IO ()
-  receiveMessage          :: ServerConnection a -> IO (Message a)
+  sendMessage      :: ServerConnection a -> Message a -> IO ()
+  receiveMessage   :: ServerConnection a -> IO (Message a)
+  consumeMessages  :: ServerConnection a -> (Message a -> IO Bool) -> IO ()
 
 instance (Typeable f, Typeable t, Typeable p, Storable (S.SocketAddress f), S.Family f, S.Type t, S.Protocol p) => StreamServerStack (S.Socket f t p) where
   sendStream (SocketServerConnection s) = sendAll

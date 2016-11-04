@@ -10,12 +10,7 @@
 {-# LANGUAGE TypeFamilies #-}
 module Network.MQTT where
 
-import Control.Exception
-
-import Data.Typeable
-import qualified Data.ByteString as BS
-
-import Network.MQTT.Message
+import           Network.MQTT.Message
 
 data Message = Message
      { topic     :: Topic
