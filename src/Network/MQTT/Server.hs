@@ -20,7 +20,6 @@ import qualified Data.ByteString         as BS
 import qualified Data.ByteString.Builder as BS
 import qualified Data.Serialize.Get      as SG
 import           Data.Typeable
-import           Network.MQTT
 import           Network.MQTT.Message
 import qualified Network.Stack.Server    as SS
 
@@ -61,26 +60,24 @@ instance (SS.StreamServerStack transport) => SS.MessageServerStack (MQTT transpo
   sendMessage connection =
     SS.sendStreamLazy (mqttTransportConnection connection) . BS.toLazyByteString . bRawMessage
   receiveMessage connection =
-    modifyMVar (mqttTransportLeftover connection) $ \leftover->
-      process (parse leftover)
+    modifyMVar (mqttTransportLeftover connection) (execute . decode)
     where
-      parse = SG.runGetPartial pRawMessage
-      fetch = SS.receiveStream (mqttTransportConnection connection)
-      process (SG.Partial continuation) = continuation <$> fetch >>= process
-      process (SG.Fail failure _)       = E.throwIO (ProtocolViolation failure :: SS.ServerException (MQTT transport))
-      process (SG.Done msg leftover')   = pure (leftover', msg)
-  consumeMessages connection consumer =
-    modifyMVar_ (mqttTransportLeftover connection) $ \leftover->
-        process (parse leftover)
+      fetch  = SS.receiveStream (mqttTransportConnection connection)
+      decode = SG.runGetPartial pRawMessage
+      execute (SG.Partial continuation) = execute =<< continuation <$> fetch
+      execute (SG.Fail failure _)       = E.throwIO (ProtocolViolation failure :: SS.ServerException (MQTT transport))
+      execute (SG.Done msg leftover')   = pure (leftover', msg)
+  consumeMessages connection consume =
+    modifyMVar_ (mqttTransportLeftover connection) (execute . decode)
     where
-      parse = SG.runGetPartial pRawMessage
-      fetch = SS.receiveStream (mqttTransportConnection connection)
-      process (SG.Partial continuation) = continuation <$> fetch >>= process
-      process (SG.Fail failure _)       = E.throwIO (ProtocolViolation failure :: SS.ServerException (MQTT transport))
-      process (SG.Done msg leftover')   = do
-        done <- consumer msg
+      fetch  = SS.receiveStream (mqttTransportConnection connection)
+      decode = SG.runGetPartial pRawMessage
+      execute (SG.Partial continuation) = execute =<< continuation <$> fetch
+      execute (SG.Fail failure _)       = E.throwIO (ProtocolViolation failure :: SS.ServerException (MQTT transport))
+      execute (SG.Done msg leftover')   = do
+        done <- consume msg
         if done
           then pure leftover'
-          else process (parse leftover')
+          else execute (decode leftover')
 
 deriving instance Show (SS.ServerConnectionInfo a) => Show (SS.ServerConnectionInfo (MQTT a))

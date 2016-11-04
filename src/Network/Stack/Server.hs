@@ -108,7 +108,6 @@ deriving instance Show (ServerConnectionInfo a) => Show (ServerConnectionInfo (T
 deriving instance Show (ServerConnectionInfo a) => Show (ServerConnectionInfo (WebSocket a))
 
 instance (Storable (S.SocketAddress f), S.Family f, S.Type t, S.Protocol p, Typeable f, Typeable t, Typeable p) => ServerStack (S.Socket f t p) where
-  --type ServerMessage (S.Socket f t p) = BS.ByteString
   data Server (S.Socket f t p) = SocketServer
     { socketServer       :: !(S.Socket f t p)
     , socketServerConfig :: !(ServerConfig (S.Socket f t p))
@@ -129,14 +128,6 @@ instance (Storable (S.SocketAddress f), S.Family f, S.Type t, S.Protocol p, Type
   withConnection server handle =
     E.bracketOnError (S.accept (socketServer server)) (S.close . fst) $ \(connection, addr)->
       async (handle (SocketServerConnection connection) (SocketServerConnectionInfo addr) `E.finally` S.close connection)
-  {-flush =
-    const (pure ())
-  send (SocketServerConnection s) = sendAll
-    where
-      sendAll bs = do
-        sent <- S.send s bs S.msgNoSignal
-        when (sent < BS.length bs) $ sendAll (BS.drop sent bs)
-  receive (SocketServerConnection s) i = S.receive s i S.msgNoSignal -}
 
 instance (StreamServerStack a) => ServerStack (TLS a) where
   --type ServerMessage (TLS a) = BS.ByteString
@@ -178,9 +169,6 @@ instance (StreamServerStack a) => ServerStack (TLS a) where
         (TlsServerConnectionInfo info certificateChain)
       TLS.bye context
       pure x
-  {-flush conn     = TLS.contextFlush (tlsContext conn)
-  send conn bs   = TLS.sendData     (tlsContext conn) (BSL.fromStrict bs)
-  receive conn _ = TLS.recvData     (tlsContext conn) -}
 
 instance (StreamServerStack a) => ServerStack (WebSocket a) where
   --type ServerMessage (WebSocket a) = BS.ByteString
@@ -215,20 +203,3 @@ instance (StreamServerStack a) => ServerStack (WebSocket a) where
         (WebSocketServerConnectionInfo info $ WS.pendingRequest pendingConnection)
       WS.sendClose acceptedConnection ("Thank you for flying Haskell." :: BS.ByteString)
       pure x
-  {-flush conn     = flush (wsTransportConnection conn)
-  send conn      = WS.sendBinaryData (wsConnection conn)
-  receive conn _ = WS.receiveData (wsConnection conn) -}
-
-{-
-instance Request (ServerConnection (S.Socket f t p)) where
-
-instance (Request (ServerConnection a)) => Request (ServerConnection (TLS a)) where
-  requestSecure             = const True
-  requestCertificateChain   = tlsCertificateChain
-  requestHeaders a          = requestHeaders (tlsTransportConnection a)
-
-instance (Request (ServerConnection a)) => Request (ServerConnection (WebSocket a)) where
-  requestSecure conn        = requestSecure (wsTransportConnection conn)
-  requestCertificateChain a = requestCertificateChain (wsTransportConnection a)
-  requestHeaders conn       = WS.requestHeaders $ WS.pendingRequest (wsPendingConnection conn)
--}
