@@ -10,15 +10,15 @@
 --------------------------------------------------------------------------------
 module Network.MQTT.Topic
   ( Topic ()
-  , TopicFilter ()
-  , TopicFilterLevel ()
   , topicLevels
   , topicLength
+  , topicParser
   , topicBuilder
-  , topicFilterLevels
-  , parseTopic
-  , parseTopicFilter
-  , parseTopicFilterLevel
+  , Filter ()
+  , filterLevels
+  , filterParser
+  , Level ()
+  , levelParser
   , multiLevelWildcard
   , singleLevelWildcard
   ) where
@@ -41,47 +41,47 @@ import           Data.Word
 --
 --  * may not be empty
 --  * may not contain @+@, @#@ or @\\NUL@ characters
-newtype Topic            = Topic (NonEmpty TopicFilterLevel)       deriving (Eq, Ord)
-newtype TopicFilter      = TopicFilter (NonEmpty TopicFilterLevel) deriving (Eq, Ord)
-newtype TopicFilterLevel = TopicFilterLevel BS.ShortByteString     deriving (Eq, Ord)
+newtype Topic  = Topic  (NonEmpty Level)  deriving (Eq, Ord)
+newtype Filter = Filter (NonEmpty Level)  deriving (Eq, Ord)
+newtype Level  = Level BS.ShortByteString deriving (Eq, Ord)
 
 instance Show Topic where
-  show (Topic xs) = show (TopicFilter xs)
+  show (Topic xs) = show (Filter xs)
 
-instance Show TopicFilter where
-  show (TopicFilter (x:|xs)) = concat ["\"", intercalate "/" $ f x : map f xs, "\""]
+instance Show Filter where
+  show (Filter (x:|xs)) = concat ["\"", intercalate "/" $ f x : map f xs, "\""]
     where
-      f (TopicFilterLevel l) = T.unpack $ T.decodeUtf8With T.lenientDecode $ BS.fromShort l
+      f (Level l) = T.unpack $ T.decodeUtf8With T.lenientDecode $ BS.fromShort l
 
-instance Show TopicFilterLevel where
-  show (TopicFilterLevel x) =
+instance Show Level where
+  show (Level x) =
     concat ["\"", T.unpack $ T.decodeUtf8With T.lenientDecode $ BS.fromShort x, "\""]
 
 instance IsString Topic where
-  fromString s = case A.parseOnly parseTopic (T.encodeUtf8 $ T.pack s) of
+  fromString s = case A.parseOnly topicParser (T.encodeUtf8 $ T.pack s) of
     Left e  -> error e
     Right t -> t
 
-instance IsString TopicFilter where
-  fromString s = case A.parseOnly parseTopicFilter (T.encodeUtf8 $ T.pack s) of
+instance IsString Filter where
+  fromString s = case A.parseOnly filterParser (T.encodeUtf8 $ T.pack s) of
     Left e  -> error e
     Right t -> t
 
-instance IsString TopicFilterLevel where
-  fromString s = case A.parseOnly parseTopicFilterLevel (T.encodeUtf8 $ T.pack s) of
+instance IsString Level where
+  fromString s = case A.parseOnly levelParser (T.encodeUtf8 $ T.pack s) of
     Left e  -> error e
     Right t -> t
 
-topicLevels :: Topic -> NonEmpty TopicFilterLevel
+topicLevels :: Topic -> NonEmpty Level
 topicLevels (Topic x) = x
 {-# INLINE topicLevels #-}
 
-topicFilterLevels :: TopicFilter -> NonEmpty TopicFilterLevel
-topicFilterLevels (TopicFilter x) = x
-{-# INLINE topicFilterLevels #-}
+filterLevels :: Filter -> NonEmpty Level
+filterLevels (Filter x) = x
+{-# INLINE filterLevels #-}
 
-parseTopic :: A.Parser Topic
-parseTopic = (<|> fail "invalid topic") $ Topic <$> do
+topicParser :: A.Parser Topic
+topicParser = (<|> fail "invalid topic") $ Topic <$> do
   void A.peekWord8'
   level  <- pLevel
   levels <- A.many' (pSlash >> pLevel)
@@ -89,32 +89,32 @@ parseTopic = (<|> fail "invalid topic") $ Topic <$> do
   pure (level :| levels)
   where
     pSlash      = void (A.word8 slash)
-    pLevel      = TopicFilterLevel . BS.toShort <$> A.takeWhile
+    pLevel      = Level . BS.toShort <$> A.takeWhile
                   (\w8-> w8 /= slash && w8 /= zero && w8 /= hash && w8 /= plus)
 
 topicBuilder :: Topic -> BS.Builder
-topicBuilder (Topic (TopicFilterLevel x:|xs)) =
+topicBuilder (Topic (Level x:|xs)) =
   foldl'
-    (\acc (TopicFilterLevel l)-> acc <> slashBuilder <> BS.shortByteString l)
+    (\acc (Level l)-> acc <> slashBuilder <> BS.shortByteString l)
     (BS.shortByteString x) xs
 {-# INLINE topicBuilder #-}
 
 topicLength :: Topic -> Int
-topicLength (Topic (TopicFilterLevel x:|xs)) =
+topicLength (Topic (Level x:|xs)) =
    BS.length x + len' xs 0
    where
     len' []                      acc = acc
-    len' (TopicFilterLevel z:zs) acc = len' zs $! acc + 1 + BS.length z
+    len' (Level z:zs) acc = len' zs $! acc + 1 + BS.length z
 {-# INLINE topicLength #-}
 
-parseTopicFilter :: A.Parser TopicFilter
-parseTopicFilter = (<|> fail "invalid filter") $ TopicFilter <$> do
+filterParser :: A.Parser Filter
+filterParser = (<|> fail "invalid filter") $ Filter <$> do
   void A.peekWord8'
   (x:xs) <- pLevels
   pure (x:|xs)
   where
     pSlash = void (A.word8 slash)
-    pLevel = TopicFilterLevel . BS.toShort <$> A.takeWhile
+    pLevel = Level . BS.toShort <$> A.takeWhile
       (\w8-> w8 /= slash && w8 /= zero && w8 /= hash && w8 /= plus)
     pLevels
        =  (void (A.word8 hash) >> A.endOfInput >> pure [multiLevelWildcard])
@@ -122,17 +122,17 @@ parseTopicFilter = (<|> fail "invalid filter") $ TopicFilter <$> do
                        (pSlash >> (:) <$> pure singleLevelWildcard <*> pLevels)))
       <|> (pLevel >>= \x-> (x:) <$> ((A.endOfInput >> pure []) <|> (pSlash >> pLevels)))
 
-parseTopicFilterLevel :: A.Parser TopicFilterLevel
-parseTopicFilterLevel = do
+levelParser :: A.Parser Level
+levelParser = do
   x <- A.takeWhile (\w8-> w8 /= slash && w8 /= zero)
   A.endOfInput
-  pure (TopicFilterLevel $ BS.toShort x)
+  pure (Level $ BS.toShort x)
 
-multiLevelWildcard :: TopicFilterLevel
-multiLevelWildcard  = TopicFilterLevel $ BS.pack $ pure hash
+multiLevelWildcard :: Level
+multiLevelWildcard  = Level $ BS.pack $ pure hash
 
-singleLevelWildcard :: TopicFilterLevel
-singleLevelWildcard  = TopicFilterLevel $ BS.pack $ pure plus
+singleLevelWildcard :: Level
+singleLevelWildcard  = Level $ BS.pack $ pure plus
 
 zero, plus, hash, slash :: Word8
 zero  = 0x00

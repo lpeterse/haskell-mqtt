@@ -62,7 +62,7 @@ import           Prelude               hiding (map, null)
 --   (i.e. an empty set) the `RoutingTreeValue` is a class defining the data
 --   family `RoutingTreeNode`. This is a performance and size optimization to
 --   avoid unnecessary boxing and case distinction.
-newtype RoutingTree a = RoutingTree (M.Map TopicFilterLevel (RoutingTreeNode a))
+newtype RoutingTree a = RoutingTree (M.Map Level (RoutingTreeNode a))
 
 class RoutingTreeValue a where
   data RoutingTreeNode a
@@ -82,8 +82,8 @@ empty  = RoutingTree mempty
 null  :: RoutingTree a -> Bool
 null (RoutingTree m) = M.null m
 
-singleton :: RoutingTreeValue a => TopicFilter -> a -> RoutingTree a
-singleton tf = singleton' (topicFilterLevels tf)
+singleton :: RoutingTreeValue a => Filter -> a -> RoutingTree a
+singleton tf = singleton' (filterLevels tf)
   where
     singleton' (x:|xs) a
       | nodeNull a  = empty
@@ -91,11 +91,11 @@ singleton tf = singleton' (topicFilterLevels tf)
           []     -> nodeFromTreeAndValue empty a
           (y:ys) -> nodeFromTree (singleton' (y:|ys) a)
 
-insert :: RoutingTreeValue a => TopicFilter -> a -> RoutingTree a -> RoutingTree a
+insert :: RoutingTreeValue a => Filter -> a -> RoutingTree a -> RoutingTree a
 insert  = insertWith const
 
-insertWith :: RoutingTreeValue a => (a -> a -> a) -> TopicFilter -> a -> RoutingTree a -> RoutingTree a
-insertWith f tf a = insertWith' (topicFilterLevels tf)
+insertWith :: RoutingTreeValue a => (a -> a -> a) -> Filter -> a -> RoutingTree a -> RoutingTree a
+insertWith f tf a = insertWith' (filterLevels tf)
   where
     insertWith' (x:|xs) (RoutingTree m)
       | nodeNull a  = RoutingTree m
@@ -107,8 +107,8 @@ insertWith f tf a = insertWith' (topicFilterLevels tf)
             Just n  -> nodeFromTreeAndValue (nodeTree n) $ fromMaybe a $ f a <$> nodeValue n
           (y:ys) -> nodeFromTree $ insertWith' (y:|ys) $ fromMaybe empty $ nodeTree <$> mn
 
-adjust :: RoutingTreeValue a => (a -> a) -> TopicFilter -> RoutingTree a -> RoutingTree a
-adjust f tf = adjust' (topicFilterLevels tf)
+adjust :: RoutingTreeValue a => (a -> a) -> Filter -> RoutingTree a -> RoutingTree a
+adjust f tf = adjust' (filterLevels tf)
   where
     adjust' (x:|xs) (RoutingTree m) = RoutingTree $ M.update g x m
       where
@@ -126,8 +126,8 @@ adjust f tf = adjust' (topicFilterLevels tf)
               Just v  -> Just $ nodeFromTreeAndValue t' v
               Nothing -> if M.null m' then Nothing else Just (nodeFromTree t')
 
-delete :: RoutingTreeValue a => TopicFilter -> RoutingTree a -> RoutingTree a
-delete tf = delete' (topicFilterLevels tf)
+delete :: RoutingTreeValue a => Filter -> RoutingTree a -> RoutingTree a
+delete tf = delete' (filterLevels tf)
   where
     delete' (x:|xs) (RoutingTree m) = RoutingTree $ M.update g x m
       where
@@ -225,7 +225,7 @@ matchTopic tf = matchTopic' (topicLevels tf)
         matchPlus = fromMaybe False
                   $ matchTopic' (y:|zs) . nodeTree <$> M.lookup singleLevelWildcard m
 
--- | Match a `TopicFilter` against a `RoutingTree`.
+-- | Match a `Filter` against a `RoutingTree`.
 --
 --   The function returns true iff the tree contains a path that is
 --   /less or equally specific/ than the filter and the terminal node contains
@@ -243,10 +243,10 @@ matchTopic tf = matchTopic' (topicLevels tf)
 --   > match (singleton "a") "b"     = False
 --   > match (singleton "a") "+"     = False
 --   > match (singleton "a") "#"     = False
-matchFilter :: RoutingTreeValue a => TopicFilter -> RoutingTree a -> Bool
-matchFilter tf = matchTopicFilter' (topicFilterLevels tf)
+matchFilter :: RoutingTreeValue a => Filter -> RoutingTree a -> Bool
+matchFilter tf = matchFilter' (filterLevels tf)
   where
-    matchTopicFilter' (x:|[]) (RoutingTree m)
+    matchFilter' (x:|[]) (RoutingTree m)
       | x == multiLevelWildcard  = matchMultiLevelWildcard
       | x == singleLevelWildcard = matchMultiLevelWildcard || matchSingleLevelWildcard
       | otherwise                = matchMultiLevelWildcard || matchSingleLevelWildcard || matchExact
@@ -256,14 +256,14 @@ matchFilter tf = matchTopicFilter' (topicFilterLevels tf)
         matchExact               = case M.lookup x m of
           Nothing -> False
           Just n' -> isJust (nodeValue n') || let RoutingTree m' = nodeTree n' in M.member multiLevelWildcard m'
-    matchTopicFilter' (x:|y:zs) (RoutingTree m)
+    matchFilter' (x:|y:zs) (RoutingTree m)
       | x == multiLevelWildcard  = matchMultiLevelWildcard
       | x == singleLevelWildcard = matchMultiLevelWildcard || matchSingleLevelWildcard
       | otherwise                = matchMultiLevelWildcard || matchSingleLevelWildcard || matchExact
       where
         matchMultiLevelWildcard  = M.member multiLevelWildcard  m
-        matchSingleLevelWildcard = fromMaybe False $ matchTopicFilter' (y:|zs) . nodeTree <$> M.lookup singleLevelWildcard m
-        matchExact               = fromMaybe False $ matchTopicFilter' (y:|zs) . nodeTree <$> M.lookup x m
+        matchSingleLevelWildcard = fromMaybe False $ matchFilter' (y:|zs) . nodeTree <$> M.lookup singleLevelWildcard m
+        matchExact               = fromMaybe False $ matchFilter' (y:|zs) . nodeTree <$> M.lookup x m
 
 --------------------------------------------------------------------------------
 -- Specialised nodeTree implemenations using data families

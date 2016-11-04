@@ -21,7 +21,7 @@ main  = do
   print (R.null r)
 
 randomTree :: Int -> Int -> IO (RoutingTree IS.IntSet)
-randomTree 0     branching = RoutingTree <$> pure mempty
+randomTree 0     _         = RoutingTree <$> pure mempty
 randomTree depth branching = RoutingTree <$> foldM (\m e->
   flip (M.insert e) m <$> (nodeFromTreeAndValue
   <$> randomTree (depth - 1) branching
@@ -38,6 +38,6 @@ randomTree depth branching = RoutingTree <$> foldM (\m e->
             then pure accum
             else f (succ i) $! IS.insert i accum
 
-randomTreeElements  :: [TopicFilterLevel]
+randomTreeElements  :: [Level]
 randomTreeElements =
   fmap (NL.head . topicLevels) ["a","b","c","d","e","f","g","h","i","j","k","l","m" :: Topic]

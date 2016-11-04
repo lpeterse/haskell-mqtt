@@ -27,8 +27,8 @@ module Network.MQTT.Message
   , DownstreamMessage (..)
   , buildDownstreamMessage
   , parseDownstreamMessage
-  , pRemainingLength
-  , bRemainingLength
+  , lengthParser
+  , lengthBuilder
   , pUtf8String
   , bUtf8String ) where
 
@@ -88,8 +88,8 @@ data UpstreamMessage
      , connectWill             :: !(Maybe Message)
      , connectCredentials      :: !(Maybe (Username, Maybe Password))
      }
-   | Subscribe                    PacketIdentifier [(TopicFilter, QualityOfService)]
-   | Unsubscribe                  PacketIdentifier [TopicFilter]
+   | Subscribe                    PacketIdentifier [(Filter, QualityOfService)]
+   | Unsubscribe                  PacketIdentifier [Filter]
    | PingRequest
    | Disconnect
    deriving (Eq, Show)
@@ -135,7 +135,7 @@ pTopic :: SG.Get Topic
 pTopic = do
   topicLen   <- fromIntegral <$> SG.getWord16be
   topicBytes <- SG.getByteString topicLen
-  case A.parseOnly parseTopic topicBytes of
+  case A.parseOnly topicParser topicBytes of
     Right t -> pure t
     Left  _ -> fail "pPublish: Failed parsing topic."
 {-# INLINE pTopic #-}
@@ -145,7 +145,7 @@ pConnect = do
   h <- SG.getWord8
   when (h .&. 0x0f /= 0) $
     fail "pConnect: The header flags are reserved and MUST be set to 0."
-  void pRemainingLength -- the remaining length is redundant in this packet type
+  void lengthParser -- the remaining length is redundant in this packet type
   y <- SG.getWord64be -- get the next 8 bytes all at once and not byte per byte
   when (y .&. 0xffffffffffffff00 /= 0x00044d5154540400) $
     fail "pConnect: Unexpected protocol initialization."
@@ -191,10 +191,10 @@ pPublish = do
   hflags <- SG.getWord8
   let dup = hflags .&. 0x08 /= 0 -- duplicate flag
   let ret = hflags .&. 0x01 /= 0 -- retain flag
-  len        <- pRemainingLength
+  len        <- lengthParser
   topicLen   <- fromIntegral <$> SG.getWord16be
   topicBytes <- SG.getByteString topicLen
-  topic      <- case A.parseOnly parseTopic topicBytes of
+  topic      <- case A.parseOnly topicParser topicBytes of
     Right t -> pure t
     Left  _ -> fail "pPublish: Failed parsing topic."
   let qosBits = hflags .&. 0x06
@@ -232,7 +232,7 @@ pPublishComplete = do
 pSubscribe :: SG.Get UpstreamMessage
 pSubscribe = do
   _    <- SG.getWord8
-  rlen <- pRemainingLength
+  rlen <- lengthParser
   pid  <- PacketIdentifier . fromIntegral <$> SG.getWord16be
   Subscribe pid <$> getTopics (rlen - 2) []
   where
@@ -251,7 +251,7 @@ pSubscribe = do
 pSubscribeAcknowledgement :: SG.Get DownstreamMessage
 pSubscribeAcknowledgement = do
   _    <- SG.getWord8
-  rlen <- pRemainingLength
+  rlen <- lengthParser
   pid  <- PacketIdentifier . fromIntegral <$> SG.getWord16be
   SubscribeAcknowledgement pid <$> (map f . BS.unpack <$> SG.getBytes (rlen - 2))
   where
@@ -263,7 +263,7 @@ pSubscribeAcknowledgement = do
 pUnsubscribe :: SG.Get UpstreamMessage
 pUnsubscribe = do
   header <- SG.getWord8
-  rlen   <- pRemainingLength
+  rlen   <- lengthParser
   pid    <- SG.getWord16be
   Unsubscribe (PacketIdentifier $ fromIntegral pid) <$> f (rlen - 2) []
   where
@@ -297,7 +297,7 @@ pDisconnect = do
 buildUpstreamMessage :: UpstreamMessage -> BS.Builder
 buildUpstreamMessage (Connect cid cleanSession keepAlive will credentials) =
   BS.word8 0x10
-  <> bRemainingLength len
+  <> lengthBuilder len
   <> BS.word64BE ( 0x00044d5154540400 .|. willFlag .|. credFlag .|. sessFlag )
   <> BS.word16BE keepAlive
   <> BS.byteString cid
@@ -342,7 +342,7 @@ buildUpstreamMessage (Connect cid cleanSession keepAlive will credentials) =
         in (x1 <> x2 <> x3 <> x4, 4 + ulen + plen, 0xc0)
 {-
 buildUpstreamMessage (Subscribe (PacketIdentifier p) tf)  =
-  BS.word8 0x82 <> bRemainingLength len <> BS.word16BE (fromIntegral p) <> mconcat ( map f tf )
+  BS.word8 0x82 <> lengthBuilder len <> BS.word16BE (fromIntegral p) <> mconcat ( map f tf )
   where
     f (t, q) = (bUtf8String t <>) $ BS.word8 $ case q of
       Qos0 -> 0x00
@@ -350,7 +350,7 @@ buildUpstreamMessage (Subscribe (PacketIdentifier p) tf)  =
       Qos2 -> 0x02
     len  = 2 + length tf * 3 + sum ( map (BS.length . T.encodeUtf8 . fst) tf )
 buildUpstreamMessage (Unsubscribe (PacketIdentifier p) tfs) =
-  BS.word8 0xa2 <> bRemainingLength len
+  BS.word8 0xa2 <> lengthBuilder len
     <> BS.word16BE (fromIntegral p) <> mconcat ( map bUtf8String tfs )
   where
     bfs = map T.encodeUtf8 tfs
@@ -380,7 +380,7 @@ buildDownstreamMessage (Publish d r t qos b) =
           <> BS.byteString t
           <> BS.byteString b
         else BS.word8 ( if r then 0x31 else 0x30 )
-          <> bRemainingLength len
+          <> lengthBuilder len
           <> BS.word16BE ( fromIntegral $ BS.length t )
           <> BS.byteString t
           <> BS.byteString b
@@ -390,7 +390,7 @@ buildDownstreamMessage (Publish d r t qos b) =
         .|. ( if dup then 0x08 else 0 )
         .|. ( if r then 0x01 else 0 )
         .|. 0x02 )
-      <> bRemainingLength len
+      <> lengthBuilder len
       <> BS.word16BE ( fromIntegral $ BS.length t )
       <> BS.byteString t
       <> BS.word16BE (fromIntegral pid)
@@ -399,7 +399,7 @@ buildDownstreamMessage (Publish d r t qos b) =
       let tLen = topicLength t;
           len = 4 + tLen + BS.length b
       in BS.word8 ( 0x30 .|. ( if r then 0x01 else 0x00 ) .|. 0x04 )
-      <> bRemainingLength len
+      <> lengthBuilder len
       <> BS.word16BE (fromIntegral tLen)
       <> topicBuilder t
       <> BS.word16BE (fromIntegral pid)
@@ -414,7 +414,7 @@ buildDownstreamMessage (PublishRelease (PacketIdentifier p)) =
 buildDownstreamMessage (PublishComplete (PacketIdentifier p)) =
   BS.word32BE $ fromIntegral $ 0x70020000 .|. p
 buildDownstreamMessage (SubscribeAcknowledgement (PacketIdentifier p) rcs) =
-  BS.word8 0x90 <> bRemainingLength (2 + length rcs)
+  BS.word8 0x90 <> lengthBuilder (2 + length rcs)
     <> BS.word16BE (fromIntegral p) <> mconcat ( map ( BS.word8 . f ) rcs )
   where
     f Nothing     = 0x80
@@ -448,34 +448,28 @@ bUtf8String txt =
     bs  = T.encodeUtf8 txt
     len = BS.length bs
 
-pRemainingLength:: SG.Get Int
-pRemainingLength = do
-  b0 <- SG.getWord8
+lengthParser:: SG.Get Int
+lengthParser = do
+  b0 <- fromIntegral <$> SG.getWord8
   if b0 < 128
-    then return $ fromIntegral b0
+    then pure b0
      else do
-       b1 <- SG.getWord8
+       b1 <- fromIntegral <$> SG.getWord8
        if b1 < 128
-        then return $ fromIntegral b1 * 128 +
-                      fromIntegral (b0 .&. 127)
+        then pure $ b1 * 128 + (b0 .&. 127)
         else do
-          b2 <- SG.getWord8
+          b2 <- fromIntegral <$> SG.getWord8
           if b2 < 128
-            then return $ fromIntegral b2 * 128 * 128 +
-                          fromIntegral (b1 .&. 127) * 128 +
-                          fromIntegral (b0 .&. 127)
+            then pure $ b2 * 128 * 128 + (b1 .&. 127) * 128 + (b0 .&. 127)
             else do
-              b3 <- SG.getWord8
+              b3 <- fromIntegral <$> SG.getWord8
               if b3 < 128
-                then return $ fromIntegral b3 * 128 * 128 * 128 +
-                              fromIntegral (b2 .&. 127) * 128 * 128 +
-                              fromIntegral (b1 .&. 127) * 128 +
-                              fromIntegral (b0 .&. 127)
-                else fail "pRemainingLength: invalid input"
-{-# INLINE pRemainingLength #-}
+                then pure $ b3 * 128 * 128 * 128 + (b2 .&. 127) * 128 * 128 + (b1 .&. 127) * 128 + (b0 .&. 127)
+                else fail "lengthParser: invalid input"
+{-# INLINE lengthParser #-}
 
-bRemainingLength :: Int -> BS.Builder
-bRemainingLength i
+lengthBuilder :: Int -> BS.Builder
+lengthBuilder i
   | i < 0x80                = BS.word8    ( fromIntegral i )
   | i < 0x80*0x80           = BS.word16LE $ fromIntegral $ 0x0080 -- continuation bit
                                          .|.              ( i .&. 0x7f      )
@@ -493,4 +487,4 @@ bRemainingLength i
                                          .|. unsafeShiftL ( i .&. 0x1fc000  )  2
                                          .|. unsafeShiftL ( i .&. 0x0ff00000)  3
   | otherwise               = error "sRemainingLength: invalid input"
-{-# INLINE bRemainingLength #-}
+{-# INLINE lengthBuilder #-}
