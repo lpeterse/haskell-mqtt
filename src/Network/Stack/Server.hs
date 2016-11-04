@@ -81,11 +81,11 @@ class ServerStack a => StreamServerStack a where
   {-# MINIMAL (sendStream|sendStreamLazy), (receiveStream|receiveStreamLazy) #-}
 
 class ServerStack a => MessageServerStack a where
-  type SendMessage a
-  type ReceiveMessage a
-  sendMessage      :: ServerConnection a -> SendMessage a -> IO ()
-  receiveMessage   :: ServerConnection a -> IO (ReceiveMessage a)
-  consumeMessages  :: ServerConnection a -> (ReceiveMessage a -> IO Bool) -> IO ()
+  type ClientMessage a
+  type ServerMessage a
+  sendMessage      :: ServerConnection a -> ServerMessage a -> IO ()
+  receiveMessage   :: ServerConnection a -> IO (ClientMessage a)
+  consumeMessages  :: ServerConnection a -> (ClientMessage a -> IO Bool) -> IO ()
 
 instance (Typeable f, Typeable t, Typeable p, Storable (S.SocketAddress f), S.Family f, S.Type t, S.Protocol p) => StreamServerStack (S.Socket f t p) where
   sendStream (SocketServerConnection s) = sendAll

@@ -21,16 +21,17 @@ module Network.MQTT.Message
   , QualityOfService (..)
   , ConnectionRefusal (..)
   , Message (..)
-  , UpstreamMessage (..)
-  , buildUpstreamMessage
-  , parseUpstreamMessage
-  , DownstreamMessage (..)
-  , buildDownstreamMessage
-  , parseDownstreamMessage
+  , ClientMessage (..)
+  , buildClientMessage
+  , parseClientMessage
+  , ServerMessage (..)
+  , buildServerMessage
+  , parseServerMessage
   , lengthParser
   , lengthBuilder
-  , pUtf8String
-  , bUtf8String ) where
+  , utf8Parser
+  , utf8Builder
+  ) where
 
 import           Control.Monad
 import qualified Data.Attoparsec.ByteString as A
@@ -52,7 +53,7 @@ type Duplicate        = Bool
 type KeepAlive        = Word16
 type Username         = T.Text
 type Password         = BS.ByteString
-type ClientIdentifier = BS.ByteString
+type ClientIdentifier = T.Text
 
 newtype PacketIdentifier = PacketIdentifier Int
   deriving (Eq, Ord, Show)
@@ -80,7 +81,7 @@ data Message
    , msgDuplicate :: !Duplicate
    } deriving (Eq, Ord, Show)
 
-data UpstreamMessage
+data ClientMessage
    = Connect
      { connectClientIdentifier :: !ClientIdentifier
      , connectCleanSession     :: !CleanSession
@@ -94,7 +95,7 @@ data UpstreamMessage
    | Disconnect
    deriving (Eq, Show)
 
-data DownstreamMessage
+data ServerMessage
    = ConnectAcknowledgement !(Either ConnectionRefusal SessionPresent)
    | PingResponse
    | Publish                                                      !Message
@@ -107,18 +108,18 @@ data DownstreamMessage
    | UnsubscribeAcknowledgement  {-# UNPACK #-} !PacketIdentifier
    deriving (Eq, Show)
 
-parseUpstreamMessage :: SG.Get UpstreamMessage
-parseUpstreamMessage =
+parseClientMessage :: SG.Get ClientMessage
+parseClientMessage =
   SG.lookAhead SG.getWord8 >>= \h-> case h .&. 0xf0 of
     0x10 -> pConnect
     0x80 -> undefined --pSubscribe
     0xa0 -> undefined --pUnsubscribe
     0xc0 -> pPingRequest
     0xe0 -> pDisconnect
-    _    -> fail "parseUpstreamMessage: Invalid message type."
+    _    -> fail "parseClientMessage: Invalid message type."
 
-parseDownstreamMessage :: SG.Get DownstreamMessage
-parseDownstreamMessage =
+parseServerMessage :: SG.Get ServerMessage
+parseServerMessage =
   SG.lookAhead SG.getWord8 >>= \h-> case h .&. 0xf0 of
     0x20 -> pConnectAcknowledgement
     0x30 -> pPublish
@@ -129,7 +130,7 @@ parseDownstreamMessage =
     0x90 -> undefined -- pSubscribeAcknowledgement
     0xb0 -> pUnsubscribeAcknowledgement
     0xd0 -> pPingResponse
-    _    -> fail "pDownstreamMessage: Packet type not implemented."
+    _    -> fail "pServerMessage: Packet type not implemented."
 
 pTopic :: SG.Get Topic
 pTopic = do
@@ -140,7 +141,7 @@ pTopic = do
     Left  _ -> fail "pPublish: Failed parsing topic."
 {-# INLINE pTopic #-}
 
-pConnect :: SG.Get UpstreamMessage
+pConnect :: SG.Get ClientMessage
 pConnect = do
   h <- SG.getWord8
   when (h .&. 0x0f /= 0) $
@@ -151,8 +152,7 @@ pConnect = do
     fail "pConnect: Unexpected protocol initialization."
   let cleanSession = y .&. 0x02 /= 0
   keepAlive <- SG.getWord16be
-  cidLen    <- SG.getWord16be
-  cid       <- SG.getByteString (fromIntegral cidLen)
+  cid       <- utf8Parser
   will      <- if y .&. 0x04 == 0
     then pure Nothing
     else Just <$> do
@@ -168,13 +168,13 @@ pConnect = do
   cred  <- if y .&. 0x80 == 0
     then pure Nothing
     else Just <$> ( (,)
-      <$> pUtf8String
+      <$> utf8Parser
       <*> if y .&. 0x40 == 0
             then pure Nothing
             else Just <$> (SG.getWord16be >>= SG.getByteString . fromIntegral) )
   pure ( Connect cid cleanSession keepAlive will cred )
 
-pConnectAcknowledgement :: SG.Get DownstreamMessage
+pConnectAcknowledgement :: SG.Get ServerMessage
 pConnectAcknowledgement = do
   x <- SG.getWord32be
   ConnectAcknowledgement <$> case x .&. 0xff of
@@ -186,7 +186,7 @@ pConnectAcknowledgement = do
     5 -> pure $ Left NotAuthorized
     _ -> fail "pConnectAcknowledgement: Invalid (reserved) return code."
 
-pPublish :: SG.Get DownstreamMessage
+pPublish :: SG.Get ServerMessage
 pPublish = do
   hflags <- SG.getWord8
   let dup = hflags .&. 0x08 /= 0 -- duplicate flag
@@ -208,28 +208,28 @@ pPublish = do
       body <- SG.getLazyByteString $ fromIntegral ( len - topicLen - 4 )
       pure (Publish' pid $ Message topic body qos dup ret)
 
-pPublishAcknowledgement :: SG.Get DownstreamMessage
+pPublishAcknowledgement :: SG.Get ServerMessage
 pPublishAcknowledgement = do
     w32 <- SG.getWord32be
     pure $ PublishAcknowledgement $ PacketIdentifier $ fromIntegral $ w32 .&. 0xffff
 
-pPublishReceived :: SG.Get DownstreamMessage
+pPublishReceived :: SG.Get ServerMessage
 pPublishReceived = do
     w32 <- SG.getWord32be
     pure $ PublishReceived $ PacketIdentifier $ fromIntegral $ w32 .&. 0xffff
 
-pPublishRelease :: SG.Get DownstreamMessage
+pPublishRelease :: SG.Get ServerMessage
 pPublishRelease = do
     w32 <- SG.getWord32be
     pure $ PublishRelease $ PacketIdentifier $ fromIntegral $ w32 .&. 0xffff
 
-pPublishComplete :: SG.Get DownstreamMessage
+pPublishComplete :: SG.Get ServerMessage
 pPublishComplete = do
     w32 <- SG.getWord32be
     pure $ PublishComplete $ PacketIdentifier $ fromIntegral $ w32 .&. 0xffff
 
 {-
-pSubscribe :: SG.Get UpstreamMessage
+pSubscribe :: SG.Get ClientMessage
 pSubscribe = do
   _    <- SG.getWord8
   rlen <- lengthParser
@@ -248,7 +248,7 @@ pSubscribe = do
         0x02 -> pure QoS2
         _    -> fail $ "pSubscribe: Violation of [MQTT-3.8.3-4]."
 
-pSubscribeAcknowledgement :: SG.Get DownstreamMessage
+pSubscribeAcknowledgement :: SG.Get ServerMessage
 pSubscribeAcknowledgement = do
   _    <- SG.getWord8
   rlen <- lengthParser
@@ -260,7 +260,7 @@ pSubscribeAcknowledgement = do
     f 0x02 = Just QoS2
     f    _ = Nothing
 
-pUnsubscribe :: SG.Get UpstreamMessage
+pUnsubscribe :: SG.Get ClientMessage
 pUnsubscribe = do
   header <- SG.getWord8
   rlen   <- lengthParser
@@ -274,38 +274,38 @@ pUnsubscribe = do
       f (r - 2 - len) (T.decodeUtf8 t:ts)
       -}
 
-pUnsubscribeAcknowledgement :: SG.Get DownstreamMessage
+pUnsubscribeAcknowledgement :: SG.Get ServerMessage
 pUnsubscribeAcknowledgement = do
   x <- fromIntegral <$> SG.getWord32be
   pure $ UnsubscribeAcknowledgement $ PacketIdentifier (x .&. 0xffff)
 
-pPingRequest :: SG.Get UpstreamMessage
+pPingRequest :: SG.Get ClientMessage
 pPingRequest = do
   _ <- SG.getWord16be
   pure PingRequest
 
-pPingResponse :: SG.Get DownstreamMessage
+pPingResponse :: SG.Get ServerMessage
 pPingResponse = do
   _ <- SG.getWord16be
   pure PingResponse
 
-pDisconnect :: SG.Get UpstreamMessage
+pDisconnect :: SG.Get ClientMessage
 pDisconnect = do
   _ <- SG.getWord16be
   pure Disconnect
 
-buildUpstreamMessage :: UpstreamMessage -> BS.Builder
-buildUpstreamMessage (Connect cid cleanSession keepAlive will credentials) =
+buildClientMessage :: ClientMessage -> BS.Builder
+buildClientMessage (Connect cid cleanSession keepAlive will credentials) =
   BS.word8 0x10
-  <> lengthBuilder len
+  <> lengthBuilder ( 10 + cidLen + willLen + credLen )
   <> BS.word64BE ( 0x00044d5154540400 .|. willFlag .|. credFlag .|. sessFlag )
   <> BS.word16BE keepAlive
-  <> BS.byteString cid
-  <> willBuilder <> credBuilder
+  <> cidBuilder
+  <> willBuilder
+  <> credBuilder
   where
-    len = 12 + cidLen + willLen + credLen + BS.length cid
-    cidLen = BS.length cid
     sessFlag = if cleanSession then 0x02 else 0x00
+    (cidBuilder, cidLen) = utf8Builder cid
     (willBuilder, willLen, willFlag) = case will of
       Nothing ->
         (mempty, 0, 0x00)
@@ -341,7 +341,7 @@ buildUpstreamMessage (Connect cid cleanSession keepAlive will credentials) =
             x4   = BS.byteString p
         in (x1 <> x2 <> x3 <> x4, 4 + ulen + plen, 0xc0)
 {-
-buildUpstreamMessage (Subscribe (PacketIdentifier p) tf)  =
+buildClientMessage (Subscribe (PacketIdentifier p) tf)  =
   BS.word8 0x82 <> lengthBuilder len <> BS.word16BE (fromIntegral p) <> mconcat ( map f tf )
   where
     f (t, q) = (bUtf8String t <>) $ BS.word8 $ case q of
@@ -349,26 +349,26 @@ buildUpstreamMessage (Subscribe (PacketIdentifier p) tf)  =
       Qos1 -> 0x01
       Qos2 -> 0x02
     len  = 2 + length tf * 3 + sum ( map (BS.length . T.encodeUtf8 . fst) tf )
-buildUpstreamMessage (Unsubscribe (PacketIdentifier p) tfs) =
+buildClientMessage (Unsubscribe (PacketIdentifier p) tfs) =
   BS.word8 0xa2 <> lengthBuilder len
     <> BS.word16BE (fromIntegral p) <> mconcat ( map bUtf8String tfs )
   where
     bfs = map T.encodeUtf8 tfs
     len = 2 + sum ( map ( ( + 2 ) . BS.length ) bfs )
 -}
-buildUpstreamMessage PingRequest =
+buildClientMessage PingRequest =
   BS.word16BE 0xc000
-buildUpstreamMessage Disconnect =
+buildClientMessage Disconnect =
   BS.word16BE 0xe000
 
-buildDownstreamMessage :: DownstreamMessage -> BS.Builder
-buildDownstreamMessage (ConnectAcknowledgement crs) =
+buildServerMessage :: ServerMessage -> BS.Builder
+buildServerMessage (ConnectAcknowledgement crs) =
   BS.word32BE $ 0x20020000 .|. case crs of
     Left cr -> fromIntegral $ fromEnum cr + 1
     Right s -> if s then 0x0100 else 0
 
 {-
-buildDownstreamMessage (Publish d r t qos b) =
+buildServerMessage (Publish d r t qos b) =
   case qos of
     PublishQoS0 ->
       let len = 2 + BS.length t + BS.length b
@@ -405,15 +405,15 @@ buildDownstreamMessage (Publish d r t qos b) =
       <> BS.word16BE (fromIntegral pid)
       <> BS.byteString b
 -}
-buildDownstreamMessage (PublishAcknowledgement (PacketIdentifier p)) =
+buildServerMessage (PublishAcknowledgement (PacketIdentifier p)) =
   BS.word32BE $ fromIntegral $ 0x40020000 .|. p
-buildDownstreamMessage (PublishReceived (PacketIdentifier p)) =
+buildServerMessage (PublishReceived (PacketIdentifier p)) =
   BS.word32BE $ fromIntegral $ 0x50020000 .|. p
-buildDownstreamMessage (PublishRelease (PacketIdentifier p)) =
+buildServerMessage (PublishRelease (PacketIdentifier p)) =
   BS.word32BE $ fromIntegral $ 0x62020000 .|. p
-buildDownstreamMessage (PublishComplete (PacketIdentifier p)) =
+buildServerMessage (PublishComplete (PacketIdentifier p)) =
   BS.word32BE $ fromIntegral $ 0x70020000 .|. p
-buildDownstreamMessage (SubscribeAcknowledgement (PacketIdentifier p) rcs) =
+buildServerMessage (SubscribeAcknowledgement (PacketIdentifier p) rcs) =
   BS.word8 0x90 <> lengthBuilder (2 + length rcs)
     <> BS.word16BE (fromIntegral p) <> mconcat ( map ( BS.word8 . f ) rcs )
   where
@@ -422,28 +422,28 @@ buildDownstreamMessage (SubscribeAcknowledgement (PacketIdentifier p) rcs) =
     f (Just Qos1) = 0x01
     f (Just Qos2) = 0x02
 
-buildDownstreamMessage (UnsubscribeAcknowledgement (PacketIdentifier p)) =
+buildServerMessage (UnsubscribeAcknowledgement (PacketIdentifier p)) =
   BS.word16BE 0xb002 <> BS.word16BE (fromIntegral p)
-buildDownstreamMessage PingResponse =
+buildServerMessage PingResponse =
   BS.word16BE 0xd000
 
 --------------------------------------------------------------------------------
 -- Utils
 --------------------------------------------------------------------------------
 
-pUtf8String :: SG.Get T.Text
-pUtf8String = do
+utf8Parser :: SG.Get T.Text
+utf8Parser = do
   str <- SG.getWord16be >>= SG.getByteString . fromIntegral
-  when (BS.elem 0x00 str) (fail "pUtf8String: Violation of [MQTT-1.5.3-2].")
+  when (BS.elem 0x00 str) (fail "utf8Parser: Violation of [MQTT-1.5.3-2].")
   case T.decodeUtf8' str of
     Right txt -> return txt
-    _         -> fail "pUtf8String: Violation of [MQTT-1.5.3]."
+    _         -> fail "utf8Parser: Violation of [MQTT-1.5.3]."
 
-bUtf8String :: T.Text -> BS.Builder
-bUtf8String txt =
+utf8Builder :: T.Text -> (BS.Builder, Int)
+utf8Builder txt =
   if len > 0xffff
-    then error "bUtf8String: Encoded size must be <= 0xffff."
-    else BS.word16BE (fromIntegral len) <> BS.byteString bs
+    then error "utf8Builder: Encoded size must be <= 0xffff."
+    else (BS.word16BE (fromIntegral len) <> BS.byteString bs, len + 2)
   where
     bs  = T.encodeUtf8 txt
     len = BS.length bs

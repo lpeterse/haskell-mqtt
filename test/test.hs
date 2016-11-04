@@ -1,24 +1,19 @@
 {-# LANGUAGE OverloadedStrings #-}
 module Main where
 
-import Control.Exception ( try, SomeException )
-
-import Data.Monoid
-import qualified Data.Text as T
-import qualified Data.ByteString as BS
+import           Control.Exception       (SomeException, try)
+import qualified Data.ByteString         as BS
 import qualified Data.ByteString.Builder as BS
-import qualified Data.ByteString.Lazy as LBS
-import qualified Data.Serialize.Get as SG
-
-import Network.MQTT.Message
-
-import Prelude hiding (head)
-
-import Test.Tasty
-import Test.Tasty.HUnit
-import Test.Tasty.QuickCheck as QC
-
+import qualified Data.ByteString.Lazy    as LBS
+import           Data.Monoid
+import qualified Data.Serialize.Get      as SG
+import qualified Data.Text               as T
+import           Network.MQTT.Message
+import           Prelude                 hiding (head)
 import qualified RoutingTreeTest
+import           Test.Tasty
+import           Test.Tasty.HUnit
+import           Test.Tasty.QuickCheck   as QC
 import qualified TopicTest
 
 main :: IO ()
