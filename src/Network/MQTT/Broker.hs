@@ -10,7 +10,7 @@
 --------------------------------------------------------------------------------
 module Network.MQTT.Broker where
 
-import Data.Maybe
+import           Data.Maybe
 import           Control.Concurrent.MVar
 import           Control.Concurrent.BoundedChan
 import           Control.Exception
@@ -21,42 +21,27 @@ import qualified Data.IntSet                    as IS
 import           Network.MQTT.Message
 import qualified Network.MQTT.RoutingTree       as R
 import           Network.MQTT.Topic
+import qualified Network.MQTT.Session as Session
 import           System.Random
-
-type SessionKey = Int
 
 data Broker authenticator  = Broker {
     brokerAuthenticator :: authenticator
   , brokerState         :: MVar (BrokerState authenticator)
   }
 
-data Session = Session {
-    sessionState          :: MVar SessionState
-  }
-
 data BrokerState authenticator
   =  BrokerState
-    { brokerMaxSessionKey :: !SessionKey
-    , brokerSubscriptions :: !(R.RoutingTree IS.IntSet)
-    , brokerSessions      :: !(IM.IntMap Session)
-    }
-
-data SessionState
-  =  SessionState
-    { sessionKey           :: !SessionKey
-    , sessionTermination   :: !(MVar ())
-    , sessionSubscriptions :: !(R.RoutingTree (Identity QualityOfService))
-    , sessionQueue0        :: !(BoundedChan Message)
-    , sessionQueue1        :: !(BoundedChan Message)
-    , sessionQueue2        :: !(BoundedChan Message)
+    { brokerMaxSessionIdentifier :: !Session.Identifier
+    , brokerSubscriptions        :: !(R.RoutingTree IS.IntSet)
+    , brokerSessions             :: !(IM.IntMap Session.Session)
     }
 
 new :: authenticator -> IO (Broker authenticator)
 new authenticator = do
   st <-newMVar BrokerState
-    { brokerMaxSessionKey = 0
-    , brokerSubscriptions = mempty
-    , brokerSessions      = mempty
+    { brokerMaxSessionIdentifier = 0
+    , brokerSubscriptions        = mempty
+    , brokerSessions             = mempty
     }
   pure Broker {
       brokerAuthenticator = authenticator
@@ -81,7 +66,7 @@ data SessionRequest
      , sessionClean                   :: CleanSession
      }
 
-withSession :: Broker auth -> SessionRequest -> IO () -> IO () -> (Session -> SessionPresent -> IO ()) -> IO ()
+withSession :: Broker auth -> SessionRequest -> IO () -> IO () -> (Session.Session -> SessionPresent -> IO ()) -> IO ()
 withSession broker request sessionRejectHandler sessionErrorHandler sessionHandler
   | sessionRequestClientIdentifier request /= "mqtt-default" = sessionRejectHandler
   | otherwise = do
@@ -93,42 +78,42 @@ withSession broker request sessionRejectHandler sessionErrorHandler sessionHandl
           ( when (sessionClean request) . closeSession broker )
           ( \session-> sessionHandler session False )
 
-createSession :: Broker auth -> SessionConfig -> IO Session
+createSession :: Broker auth -> SessionConfig -> IO Session.Session
 createSession (Broker authenticator broker) config =
   modifyMVar broker $ \brokerState-> do
-    term   <- newEmptyMVar
+    subscriptions <- newMVar R.empty
     queue0 <- newBoundedChan (sessionConfigQueue0MaxSize config)
     queue1 <- newBoundedChan (sessionConfigQueue1MaxSize config)
     queue2 <- newBoundedChan (sessionConfigQueue2MaxSize config)
-    let newSessionKey    = brokerMaxSessionKey brokerState + 1
-    newSession <- Session <$> newMVar SessionState
-     { sessionKey              = newSessionKey
-     , sessionTermination      = term
-     , sessionSubscriptions    = R.empty
-     , sessionQueue0           = queue0
-     , sessionQueue1           = queue1
-     , sessionQueue2           = queue2
-     }
-    let newBrokerState = brokerState
-         { brokerMaxSessionKey     = newSessionKey
-         , brokerSessions          = IM.insert newSessionKey newSession (brokerSessions brokerState)
+    let newSessionIdentifier = brokerMaxSessionIdentifier brokerState + 1
+        newSession = Session.Session
+         { Session.sessionIdentifier       = newSessionIdentifier
+         , Session.sessionSubscriptions    = subscriptions
+         , Session.sessionQueue0           = queue0
+         , Session.sessionQueue1           = queue1
+         , Session.sessionQueue2           = queue2
+         }
+        newBrokerState = brokerState
+         { brokerMaxSessionIdentifier = newSessionIdentifier
+         , brokerSessions             = IM.insert newSessionIdentifier newSession (brokerSessions brokerState)
          }
     pure (newBrokerState, newSession)
 
-closeSession :: Broker auth -> Session -> IO ()
-closeSession (Broker _ broker) (Session session) =
-  withMVar session $ \sessionState->
-    modifyMVar_ broker $ \brokerState->
-      --tryPutMVar (sessionTermination sst) ()
+closeSession :: Broker auth -> Session.Session -> IO ()
+closeSession (Broker _ broker) session =
+  modifyMVar_ broker $ \brokerState->
+    withMVar (Session.sessionSubscriptions session) $ \subscriptions->
       pure $ brokerState
         { brokerSubscriptions =
             R.differenceWith IS.difference
               ( brokerSubscriptions brokerState)
-              ( R.map ( const $ IS.singleton $ sessionKey sessionState )
-                      ( sessionSubscriptions sessionState ) )
+              ( R.map
+                  ( const $ IS.singleton $ Session.sessionIdentifier session )
+                  subscriptions
+              )
         , brokerSessions =
             IM.delete
-              ( sessionKey sessionState )
+              ( Session.sessionIdentifier session )
               ( brokerSessions brokerState)
         }
 
@@ -140,14 +125,9 @@ publishDownstream (Broker _auth broker) msg = do
     case IM.lookup (key :: Int) (brokerSessions brokerState) of
       Nothing      ->
         putStrLn "WARNING: dead session reference"
-      Just session -> publishDownstreamSession session msg
+      Just session -> Session.publish session msg
 
-publishDownstreamSession :: Session -> Message -> IO ()
-publishDownstreamSession (Session msession) msg = do
-  chan<- sessionQueue0 <$> readMVar msession
-  writeChan chan msg
-
-publishUpstream :: Broker auth -> Session -> Message -> IO ()
+publishUpstream :: Broker auth -> Session.Session -> Message -> IO ()
 publishUpstream broker session msg =
   publishDownstream broker msg
 

@@ -25,6 +25,7 @@ import qualified Data.ByteString.Builder  as BS
 import qualified Data.Serialize.Get       as SG
 import           Data.Typeable
 import qualified Network.MQTT.Broker      as Broker
+import qualified Network.MQTT.Session     as Session
 import           Network.MQTT.Message
 import qualified Network.Stack.Server     as SS
 
@@ -140,7 +141,7 @@ handleConnection broker conn _connInfo =
       where
         regularInterval = fromIntegral interval * 500000
         alertInterval   = fromIntegral interval * 1000000
-    handleInput :: RecentActivity -> Broker.Session -> IO ()
+    handleInput :: RecentActivity -> Session.Session -> IO ()
     handleInput recentActivity session = SS.consumeMessages conn $ \packet-> do
       writeIORef recentActivity True
       case packet of

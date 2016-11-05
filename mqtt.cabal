@@ -27,7 +27,8 @@ library
                        Network.MQTT.Broker,
                        Network.MQTT.Topic,
                        Network.MQTT.RoutingTree,
-                       Network.MQTT.Server
+                       Network.MQTT.Server,
+                       Network.MQTT.Session
   build-depends:       async,
                        attoparsec,
                        base >=4.8 && <5,
