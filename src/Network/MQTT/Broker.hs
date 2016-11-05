@@ -12,43 +12,39 @@ module Network.MQTT.Broker where
 
 import           Control.Concurrent
 import           Control.Concurrent.BoundedChan
+import           Control.Exception
+import           Control.Monad
 import           Data.Functor.Identity
 import qualified Data.IntMap                    as IM
 import qualified Data.IntSet                    as IS
+import           Network.MQTT.Message
 import qualified Network.MQTT.RoutingTree       as R
 import           Network.MQTT.Topic
+import           System.Random
 
 type SessionKey = Int
-type Message = ()
 
 data Broker authenticator  = Broker {
     brokerAuthenticator :: authenticator
   , brokerState         :: MVar (BrokerState authenticator)
   }
 
-data Session authenticator = Session {
-    sessionBroker :: Broker authenticator
-  , sessionState  :: MVar SessionState
+data Session = Session {
+    sessionState          :: MVar SessionState
   }
-
-data QosLevel
-   = Qos0
-   | Qos1
-   | Qos2
-   deriving (Eq, Ord, Show)
 
 data BrokerState authenticator
   =  BrokerState
     { brokerMaxSessionKey :: !SessionKey
     , brokerSubscriptions :: !(R.RoutingTree IS.IntSet)
-    , brokerSessions      :: !(IM.IntMap (Session authenticator))
+    , brokerSessions      :: !(IM.IntMap Session)
     }
 
 data SessionState
   =  SessionState
     { sessionKey           :: !SessionKey
     , sessionTermination   :: !(MVar ())
-    , sessionSubscriptions :: !(R.RoutingTree (Identity QosLevel))
+    , sessionSubscriptions :: !(R.RoutingTree (Identity QualityOfService))
     , sessionQueue0        :: !(BoundedChan (Topic, Message))
     , sessionQueue1        :: !(BoundedChan (Topic, Message))
     , sessionQueue2        :: !(BoundedChan (Topic, Message))
@@ -73,10 +69,31 @@ data SessionConfig
      , sessionConfigQueue2MaxSize :: Int
      }
 
-{-
+defaultSessionConfig :: SessionConfig
+defaultSessionConfig = SessionConfig 100 100 100
 
-createSession :: Broker -> SessionConfig -> IO Session
-createSession (Broker broker) config =
+data SessionRequest
+   = SessionRequest
+     { sessionRequestClientIdentifier :: !ClientIdentifier
+     , sessionRequestCredentials      :: !(Maybe (Username, Maybe Password))
+     , sessionRequestConnectionInfo   :: ()
+     , sessionClean                   :: CleanSession
+     }
+
+withSession :: Broker auth -> SessionRequest -> IO () -> IO () -> (Session -> SessionPresent -> IO ()) -> IO ()
+withSession broker request sessionRejectHandler sessionErrorHandler sessionHandler
+  | sessionRequestClientIdentifier request /= "mqtt-default" = sessionRejectHandler
+  | otherwise = do
+      r <- randomIO :: IO Double
+      if r < 0.5
+        then sessionErrorHandler
+        else bracket
+          ( createSession broker defaultSessionConfig )
+          ( when (sessionClean request) . closeSession broker )
+          ( \session-> sessionHandler session False )
+
+createSession :: Broker auth -> SessionConfig -> IO Session
+createSession (Broker authenticator broker) config =
   modifyMVar broker $ \brokerState-> do
     term   <- newEmptyMVar
     queue0 <- newBoundedChan (sessionConfigQueue0MaxSize config)
@@ -84,24 +101,23 @@ createSession (Broker broker) config =
     queue2 <- newBoundedChan (sessionConfigQueue2MaxSize config)
     let newSessionKey    = brokerMaxSessionKey brokerState + 1
     newSession <- Session <$> newMVar SessionState
-         { sessionBroker           = Broker broker
-         , sessionKey              = newSessionKey
-         , sessionTermination      = term
-         , sessionSubscriptions    = R.empty
-         , sessionQueue0           = queue0
-         , sessionQueue1           = queue1
-         , sessionQueue2           = queue2
-         }
+     { sessionKey              = newSessionKey
+     , sessionTermination      = term
+     , sessionSubscriptions    = R.empty
+     , sessionQueue0           = queue0
+     , sessionQueue1           = queue1
+     , sessionQueue2           = queue2
+     }
     let newBrokerState = brokerState
-         { brokerMaxSessionKey  = newSessionKey
-         , brokerSessions       = IM.insert newSessionKey newSession (brokerSessions brokerState)
+         { brokerMaxSessionKey     = newSessionKey
+         , brokerSessions          = IM.insert newSessionKey newSession (brokerSessions brokerState)
          }
     pure (newBrokerState, newSession)
 
-closeSession :: Session -> IO ()
-closeSession (Session session) =
+closeSession :: Broker auth -> Session -> IO ()
+closeSession (Broker _ broker) (Session session) =
   withMVar session $ \sessionState->
-    modifyMVar_ (unBroker $ sessionBroker sessionState) $ \brokerState->
+    modifyMVar_ broker $ \brokerState->
       --tryPutMVar (sessionTermination sst) ()
       pure $ brokerState
         { brokerSubscriptions =
@@ -115,6 +131,7 @@ closeSession (Session session) =
               ( brokerSessions brokerState)
         }
 
+{-
 subscribeSession :: Session -> [(TopicFilter, QosLevel)] -> IO ()
 subscribeSession (Session session) filters =
   modifyMVar_ session $ \sessionState->

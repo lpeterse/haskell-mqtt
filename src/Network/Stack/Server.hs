@@ -181,8 +181,8 @@ instance (StreamServerStack a) => ServerStack (WebSocket a) where
     }
   data ServerException (WebSocket a) = WebSocketServerException
   data ServerConnection (WebSocket a) = WebSocketServerConnection
-    { wsTransportConnection        :: ServerConnection a
-    , wsConnection                 :: WS.Connection
+    { wsTransportConnection           :: ServerConnection a
+    , wsConnection                    :: WS.Connection
     }
   data ServerConnectionInfo (WebSocket a) = WebSocketServerConnectionInfo
     { wsTransportServerConnectionInfo :: ServerConnectionInfo a
