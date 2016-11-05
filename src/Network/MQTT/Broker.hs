@@ -10,7 +10,8 @@
 --------------------------------------------------------------------------------
 module Network.MQTT.Broker where
 
-import           Control.Concurrent
+import Data.Maybe
+import           Control.Concurrent.MVar
 import           Control.Concurrent.BoundedChan
 import           Control.Exception
 import           Control.Monad
@@ -45,9 +46,9 @@ data SessionState
     { sessionKey           :: !SessionKey
     , sessionTermination   :: !(MVar ())
     , sessionSubscriptions :: !(R.RoutingTree (Identity QualityOfService))
-    , sessionQueue0        :: !(BoundedChan (Topic, Message))
-    , sessionQueue1        :: !(BoundedChan (Topic, Message))
-    , sessionQueue2        :: !(BoundedChan (Topic, Message))
+    , sessionQueue0        :: !(BoundedChan Message)
+    , sessionQueue1        :: !(BoundedChan Message)
+    , sessionQueue2        :: !(BoundedChan Message)
     }
 
 new :: authenticator -> IO (Broker authenticator)
@@ -131,6 +132,25 @@ closeSession (Broker _ broker) (Session session) =
               ( brokerSessions brokerState)
         }
 
+publishDownstream :: Broker auth -> Message -> IO ()
+publishDownstream (Broker _auth broker) msg = do
+  let topic = msgTopic msg
+  brokerState <- readMVar broker
+  forM_ (IS.elems $ fromMaybe IS.empty $ R.lookupWith IS.union topic $ brokerSubscriptions brokerState) $ \key->
+    case IM.lookup (key :: Int) (brokerSessions brokerState) of
+      Nothing      ->
+        putStrLn "WARNING: dead session reference"
+      Just session -> publishDownstreamSession session msg
+
+publishDownstreamSession :: Session -> Message -> IO ()
+publishDownstreamSession (Session msession) msg = do
+  chan<- sessionQueue0 <$> readMVar msession
+  writeChan chan msg
+
+publishUpstream :: Broker auth -> Session -> Message -> IO ()
+publishUpstream broker session msg =
+  publishDownstream broker msg
+
 {-
 subscribeSession :: Session -> [(TopicFilter, QosLevel)] -> IO ()
 subscribeSession (Session session) filters =
@@ -178,13 +198,7 @@ deliverSession session topic message = do
       unless success (closeSession session)
     _ -> pure ()
 
-publishBroker :: Broker -> Topic -> Message -> IO ()
-publishBroker (Broker broker) topic message = do
-  brokerState <- readMVar broker
-  forM_ (IS.elems $ fromMaybe IS.empty $ R.lookupWith IS.union topic $ brokerSubscriptions brokerState) $ \key->
-    case IM.lookup (key :: Int) (brokerSessions brokerState) of
-      Nothing      -> pure ()
-      Just session -> deliverSession session topic message
+
 -}
 {-
 type  SessionKey = Int

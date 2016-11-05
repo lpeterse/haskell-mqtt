@@ -141,11 +141,14 @@ handleConnection broker conn _connInfo =
         regularInterval = fromIntegral interval * 500000
         alertInterval   = fromIntegral interval * 1000000
     handleInput :: RecentActivity -> Broker.Session -> IO ()
-    handleInput recentActivity session = SS.consumeMessages conn $ \msg-> do
+    handleInput recentActivity session = SS.consumeMessages conn $ \packet-> do
       writeIORef recentActivity True
-      case msg of
+      case packet of
         ClientConnect {} ->
           E.throwIO (ProtocolViolation "Unexpected CONN packet." :: SS.ServerException (MQTT transport))
+        ClientPublish msg -> do
+          Broker.publishUpstream broker session msg
+          pure False
         ClientSubscribe {} ->
           pure False
         ClientUnsubscribe {} ->

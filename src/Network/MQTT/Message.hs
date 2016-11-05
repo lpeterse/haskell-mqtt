@@ -89,8 +89,10 @@ data ClientMessage
      , connectWill             :: !(Maybe Message)
      , connectCredentials      :: !(Maybe (Username, Maybe Password))
      }
-   | ClientSubscribe                    PacketIdentifier [(TF.Filter, QualityOfService)]
-   | ClientUnsubscribe                  PacketIdentifier [TF.Filter]
+   | ClientPublish                                                !Message
+   | ClientPublish'              {-# UNPACK #-} !PacketIdentifier !Message
+   | ClientSubscribe             {-# UNPACK #-} !PacketIdentifier ![(TF.Filter, QualityOfService)]
+   | ClientUnsubscribe           {-# UNPACK #-} !PacketIdentifier ![TF.Filter]
    | ClientPingRequest
    | ClientDisconnect
    deriving (Eq, Show)
@@ -104,7 +106,7 @@ data ServerMessage
    | PublishReceived             {-# UNPACK #-} !PacketIdentifier
    | PublishRelease              {-# UNPACK #-} !PacketIdentifier
    | PublishComplete             {-# UNPACK #-} !PacketIdentifier
-   | SubscribeAcknowledgement    {-# UNPACK #-} !PacketIdentifier [Maybe QualityOfService]
+   | SubscribeAcknowledgement    {-# UNPACK #-} !PacketIdentifier ![Maybe QualityOfService]
    | UnsubscribeAcknowledgement  {-# UNPACK #-} !PacketIdentifier
    deriving (Eq, Show)
 
@@ -112,6 +114,7 @@ parseClientMessage :: SG.Get ClientMessage
 parseClientMessage =
   SG.lookAhead SG.getWord8 >>= \h-> case h .&. 0xf0 of
     0x10 -> pConnect
+    0x30 -> clientPublishParser
     0x80 -> undefined --pSubscribe
     0xa0 -> undefined --pUnsubscribe
     0xc0 -> pPingRequest
@@ -131,8 +134,6 @@ parseServerMessage =
     0xb0 -> pUnsubscribeAcknowledgement
     0xd0 -> pPingResponse
     _    -> fail "pServerMessage: Packet type not implemented."
-
-
 
 pConnect :: SG.Get ClientMessage
 pConnect = do
@@ -196,6 +197,24 @@ pPublish = do
       pid  <- PacketIdentifier . fromIntegral <$> SG.getWord16be
       body <- SG.getLazyByteString $ fromIntegral ( len - topicLen - 2 )
       pure (Publish' pid $ Message topic body qos dup ret)
+
+clientPublishParser :: SG.Get ClientMessage
+clientPublishParser = do
+  hflags <- SG.getWord8
+  let dup = hflags .&. 0x08 /= 0 -- duplicate flag
+  let ret = hflags .&. 0x01 /= 0 -- retain flag
+  len <- lengthParser
+  (topic, topicLen)  <- topicParser
+  let qosBits = hflags .&. 0x06
+  if  qosBits == 0x00
+    then do
+      body <- SG.getLazyByteString $ fromIntegral ( len - topicLen )
+      pure (ClientPublish $ Message topic body Qos0 dup ret)
+    else do
+      let qos = if qosBits == 0x02 then Qos1 else Qos2
+      pid  <- PacketIdentifier . fromIntegral <$> SG.getWord16be
+      body <- SG.getLazyByteString $ fromIntegral ( len - topicLen - 2 )
+      pure (ClientPublish' pid $ Message topic body qos dup ret)
 
 pPublishAcknowledgement :: SG.Get ServerMessage
 pPublishAcknowledgement = do
