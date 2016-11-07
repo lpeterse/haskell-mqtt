@@ -10,18 +10,17 @@
 --------------------------------------------------------------------------------
 module Network.MQTT.Broker where
 
-import           Data.Maybe
 import           Control.Concurrent.MVar
-import           Control.Concurrent.BoundedChan
 import           Control.Exception
 import           Control.Monad
 import           Data.Functor.Identity
-import qualified Data.IntMap                    as IM
-import qualified Data.IntSet                    as IS
+import qualified Data.IntMap              as IM
+import qualified Data.IntSet              as IS
+import           Data.Maybe
 import           Network.MQTT.Message
-import qualified Network.MQTT.RoutingTree       as R
+import qualified Network.MQTT.RoutingTree as R
+import qualified Network.MQTT.Session     as Session
 import           Network.MQTT.Topic
-import qualified Network.MQTT.Session as Session
 import           System.Random
 
 data Broker authenticator  = Broker {
@@ -79,19 +78,18 @@ withSession broker request sessionRejectHandler sessionErrorHandler sessionHandl
           ( \session-> sessionHandler session False )
 
 createSession :: Broker auth -> SessionConfig -> IO Session.Session
-createSession (Broker authenticator broker) config =
+createSession (Broker _ broker) config =
   modifyMVar broker $ \brokerState-> do
     subscriptions <- newMVar R.empty
-    queue0 <- newBoundedChan (sessionConfigQueue0MaxSize config)
-    queue1 <- newBoundedChan (sessionConfigQueue1MaxSize config)
-    queue2 <- newBoundedChan (sessionConfigQueue2MaxSize config)
+    queue <- newMVar (Session.emptyServerQueue 1000)
+    queuePending <- newEmptyMVar
     let newSessionIdentifier = brokerMaxSessionIdentifier brokerState + 1
         newSession = Session.Session
          { Session.sessionIdentifier       = newSessionIdentifier
          , Session.sessionSubscriptions    = subscriptions
-         , Session.sessionQueue0           = queue0
-         , Session.sessionQueue1           = queue1
-         , Session.sessionQueue2           = queue2
+         , Session.sessionQueue            = queue
+         , Session.sessionQueuePending     = queuePending
+         , Session.sessionQueueLimitQos0   = 256
          }
         newBrokerState = brokerState
          { brokerMaxSessionIdentifier = newSessionIdentifier
@@ -125,11 +123,25 @@ publishDownstream (Broker _auth broker) msg = do
     case IM.lookup (key :: Int) (brokerSessions brokerState) of
       Nothing      ->
         putStrLn "WARNING: dead session reference"
-      Just session -> Session.publish session msg
+      Just session -> Session.enqueueMessage session msg
 
 publishUpstream :: Broker auth -> Session.Session -> Message -> IO ()
 publishUpstream broker session msg =
   publishDownstream broker msg
+
+-- TODO: refactor
+subscribe :: Broker auth -> Session.Session -> PacketIdentifier -> [(Filter, QualityOfService)] -> IO ()
+subscribe (Broker _ broker) session pid filters = do
+  modifyMVarMasked_ broker $ \bst-> do
+    modifyMVarMasked_ (Session.sessionSubscriptions session) $ \subs->
+      pure $ foldr (\(f,q)-> R.insertWith max f (Identity q)) subs filters
+    pure $ bst
+             { brokerSubscriptions = foldr
+                (\(x,_)-> R.insertWith IS.union x (IS.singleton $ Session.sessionIdentifier session))
+                (brokerSubscriptions bst) filters
+             }
+  Session.enqueueSubscribeAcknowledged session pid (fmap (Just . snd) filters)
+
 
 {-
 subscribeSession :: Session -> [(TopicFilter, QosLevel)] -> IO ()

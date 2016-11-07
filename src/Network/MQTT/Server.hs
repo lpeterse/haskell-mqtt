@@ -150,7 +150,8 @@ handleConnection broker conn _connInfo =
         ClientPublish msg -> do
           Broker.publishUpstream broker session msg
           pure False
-        ClientSubscribe {} ->
+        ClientSubscribe pid filters -> do
+          Broker.subscribe broker session pid filters
           pure False
         ClientUnsubscribe {} ->
           pure False
@@ -159,4 +160,6 @@ handleConnection broker conn _connInfo =
           pure False
         ClientDisconnect ->
           pure True
-    handleOutput session = threadDelay 100000000
+    handleOutput session = forever $
+      -- The `dequeue` operation is blocking until messages get available.
+      mapM_ (SS.sendMessage conn) =<< Session.dequeue session

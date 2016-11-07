@@ -41,7 +41,6 @@ library
                        cereal,
                        tls,
                        network-uri,
-                       BoundedChan,
                        case-insensitive,
                        x509,
                        random,
