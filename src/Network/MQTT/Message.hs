@@ -104,8 +104,8 @@ data ServerMessage
    | PublishReceived             {-# UNPACK #-} !PacketIdentifier
    | PublishRelease              {-# UNPACK #-} !PacketIdentifier
    | PublishComplete             {-# UNPACK #-} !PacketIdentifier
-   | SubscribeAcknowledgement    {-# UNPACK #-} !PacketIdentifier ![Maybe QualityOfService]
-   | UnsubscribeAcknowledgement  {-# UNPACK #-} !PacketIdentifier
+   | SubscribeAcknowledged    {-# UNPACK #-} !PacketIdentifier ![Maybe QualityOfService]
+   | UnsubscribeAcknowledged  {-# UNPACK #-} !PacketIdentifier
    deriving (Eq, Show)
 
 parseClientMessage :: SG.Get ClientMessage
@@ -114,23 +114,23 @@ parseClientMessage =
     0x10 -> clientConnectParser
     0x30 -> clientPublishParser
     0x80 -> clientSubscribeParser
-    0xa0 -> undefined --clientUnsubscribeParser
-    0xc0 -> pPingRequest
-    0xe0 -> pDisconnect
+    0xa0 -> clientUnsubscribeParser
+    0xc0 -> clientPingRequestParser
+    0xe0 -> clientDisconnectParser
     _    -> fail "parseClientMessage: Invalid message type."
 
 parseServerMessage :: SG.Get ServerMessage
 parseServerMessage =
   SG.lookAhead SG.getWord8 >>= \h-> case h .&. 0xf0 of
-    0x20 -> clientConnectParserAcknowledgement
-    0x30 -> pPublish
-    0x40 -> pPublishAcknowledgement
-    0x50 -> pPublishReceived
-    0x60 -> pPublishRelease
-    0x70 -> pPublishComplete
-    0x90 -> undefined -- clientSubscribeParserAcknowledgement
-    0xb0 -> clientUnsubscribeParserAcknowledgement
-    0xd0 -> pPingResponse
+    0x20 -> serverConnectAcknowledgedParser
+    0x30 -> serverPublishParser
+    0x40 -> serverPublishAcknowledgedParser
+    0x50 -> serverPublishReceivedParser
+    0x60 -> serverPublishReleasedParser
+    0x70 -> serverPublishCompletedParser
+    0x90 -> serverSubscribeAcknowledgedParser
+    0xb0 -> serverUnsubscribeAcknowledgedParser
+    0xd0 -> serverPingResponseParser
     _    -> fail "pServerMessage: Packet type not implemented."
 
 clientConnectParser :: SG.Get ClientMessage
@@ -166,8 +166,8 @@ clientConnectParser = do
             else Just <$> (SG.getWord16be >>= SG.getByteString . fromIntegral) )
   pure ( ClientConnect cid cleanSession keepAlive will cred )
 
-clientConnectParserAcknowledgement :: SG.Get ServerMessage
-clientConnectParserAcknowledgement = do
+serverConnectAcknowledgedParser :: SG.Get ServerMessage
+serverConnectAcknowledgedParser = do
   x <- SG.getWord32be
   ConnectAck <$> case x .&. 0xff of
     0 -> pure $ Right (x .&. 0x0100 /= 0)
@@ -176,10 +176,10 @@ clientConnectParserAcknowledgement = do
     3 -> pure $ Left ServerUnavailable
     4 -> pure $ Left BadUsernameOrPassword
     5 -> pure $ Left NotAuthorized
-    _ -> fail "clientConnectParserAcknowledgement: Invalid (reserved) return code."
+    _ -> fail "serverConnectAcknowledgedParser: Invalid (reserved) return code."
 
-pPublish :: SG.Get ServerMessage
-pPublish = do
+serverPublishParser :: SG.Get ServerMessage
+serverPublishParser = do
   hflags <- SG.getWord8
   let dup = hflags .&. 0x08 /= 0 -- duplicate flag
   let ret = hflags .&. 0x01 /= 0 -- retain flag
@@ -214,23 +214,23 @@ clientPublishParser = do
       body <- SG.getLazyByteString $ fromIntegral ( len - topicLen - 2 )
       pure (ClientPublish' pid $ Message topic body qos dup ret)
 
-pPublishAcknowledgement :: SG.Get ServerMessage
-pPublishAcknowledgement = do
+serverPublishAcknowledgedParser :: SG.Get ServerMessage
+serverPublishAcknowledgedParser = do
     w32 <- SG.getWord32be
     pure $ PublishAcknowledged $ fromIntegral $ w32 .&. 0xffff
 
-pPublishReceived :: SG.Get ServerMessage
-pPublishReceived = do
+serverPublishReceivedParser :: SG.Get ServerMessage
+serverPublishReceivedParser = do
     w32 <- SG.getWord32be
     pure $ PublishReceived $ fromIntegral $ w32 .&. 0xffff
 
-pPublishRelease :: SG.Get ServerMessage
-pPublishRelease = do
+serverPublishReleasedParser :: SG.Get ServerMessage
+serverPublishReleasedParser = do
     w32 <- SG.getWord32be
     pure $ PublishRelease $ fromIntegral $ w32 .&. 0xffff
 
-pPublishComplete :: SG.Get ServerMessage
-pPublishComplete = do
+serverPublishCompletedParser :: SG.Get ServerMessage
+serverPublishCompletedParser = do
     w32 <- SG.getWord32be
     pure $ PublishComplete $ fromIntegral $ w32 .&. 0xffff
 
@@ -241,61 +241,60 @@ clientSubscribeParser = do
   pid  <- fromIntegral <$> SG.getWord16be
   ClientSubscribe pid <$> parseFilters (rlen - 2) []
   where
-    parseFilters 0 ts = pure (reverse ts) -- FIXME: potential DoS
-    parseFilters r ts = do
-      (filtr,len) <- filterParser
-      qos <- getQoS
-      parseFilters ( r - 1 - len ) ( ( filtr, qos ) : ts )
+    parseFilters r accum
+      | r <= 0    = pure (reverse accum)
+      | otherwise = do
+          (filtr,len) <- filterParser
+          qos <- getQoS
+          parseFilters ( r - 1 - len ) ( ( filtr, qos ) : accum )
     getQoS = SG.getWord8 >>= \w-> case w of
         0x00 -> pure Qos0
         0x01 -> pure Qos1
         0x02 -> pure Qos2
-        _    -> fail $ "clientSubscribeParser: Violation of [MQTT-3.8.3-4]."
-
-        {-
-clientSubscribeParserAcknowledgement :: SG.Get ServerMessage
-clientSubscribeParserAcknowledgement = do
-  _    <- SG.getWord8
-  rlen <- lengthParser
-  pid  <- PacketIdentifier . fromIntegral <$> SG.getWord16be
-  SubscribeAcknowledgement pid <$> (map f . BS.unpack <$> SG.getBytes (rlen - 2))
-  where
-    f 0x00 = Just QoS0
-    f 0x01 = Just QoS1
-    f 0x02 = Just QoS2
-    f    _ = Nothing
+        _    -> fail "clientSubscribeParser: Violation of [MQTT-3.8.3-4]."
 
 clientUnsubscribeParser :: SG.Get ClientMessage
 clientUnsubscribeParser = do
-  header <- SG.getWord8
-  rlen   <- lengthParser
-  pid    <- SG.getWord16be
-  Unsubscribe (PacketIdentifier $ fromIntegral pid) <$> f (rlen - 2) []
+  _    <- SG.getWord8
+  rlen <- lengthParser
+  pid  <- fromIntegral <$> SG.getWord16be
+  ClientUnsubscribe pid <$> parseFilters (rlen - 2) []
   where
-    f 0 ts = pure (reverse ts)
-    f r ts = do
-      len <- fromIntegral <$> SG.getWord16be
-      t   <- SG.getByteString len
-      f (r - 2 - len) (T.decodeUtf8 t:ts)
-      -}
+    parseFilters r accum
+      | r <= 0    = pure (reverse accum)
+      | otherwise = do
+          (filtr,len) <- filterParser
+          parseFilters ( r - len ) ( filtr : accum )
 
-clientUnsubscribeParserAcknowledgement :: SG.Get ServerMessage
-clientUnsubscribeParserAcknowledgement = do
+serverSubscribeAcknowledgedParser :: SG.Get ServerMessage
+serverSubscribeAcknowledgedParser = do
+  _    <- SG.getWord8
+  rlen <- lengthParser
+  pid  <- fromIntegral <$> SG.getWord16be
+  SubscribeAcknowledged pid <$> (map f . BS.unpack <$> SG.getBytes (rlen - 2))
+  where
+    f 0x00 = Just Qos0
+    f 0x01 = Just Qos1
+    f 0x02 = Just Qos2
+    f    _ = Nothing
+
+serverUnsubscribeAcknowledgedParser :: SG.Get ServerMessage
+serverUnsubscribeAcknowledgedParser = do
   pid <- fromIntegral <$> SG.getWord32be
-  pure $ UnsubscribeAcknowledgement $ pid .&. 0xffff
+  pure $ UnsubscribeAcknowledged $ pid .&. 0xffff
 
-pPingRequest :: SG.Get ClientMessage
-pPingRequest = do
+clientPingRequestParser :: SG.Get ClientMessage
+clientPingRequestParser = do
   _ <- SG.getWord16be
   pure ClientPingRequest
 
-pPingResponse :: SG.Get ServerMessage
-pPingResponse = do
+serverPingResponseParser :: SG.Get ServerMessage
+serverPingResponseParser = do
   _ <- SG.getWord16be
   pure PingResponse
 
-pDisconnect :: SG.Get ClientMessage
-pDisconnect = do
+clientDisconnectParser :: SG.Get ClientMessage
+clientDisconnectParser = do
   _ <- SG.getWord16be
   pure ClientDisconnect
 
@@ -419,7 +418,7 @@ buildServerMessage (PublishRelease p) =
   BS.word32BE $ fromIntegral $ 0x62020000 .|. p
 buildServerMessage (PublishComplete p) =
   BS.word32BE $ fromIntegral $ 0x70020000 .|. p
-buildServerMessage (SubscribeAcknowledgement p rcs) =
+buildServerMessage (SubscribeAcknowledged p rcs) =
   BS.word8 0x90 <> lengthBuilder (2 + length rcs)
     <> BS.word16BE (fromIntegral p) <> mconcat ( map ( BS.word8 . f ) rcs )
   where
@@ -428,7 +427,7 @@ buildServerMessage (SubscribeAcknowledgement p rcs) =
     f (Just Qos1) = 0x01
     f (Just Qos2) = 0x02
 
-buildServerMessage (UnsubscribeAcknowledgement p) =
+buildServerMessage (UnsubscribeAcknowledged p) =
   BS.word16BE 0xb002 <> BS.word16BE (fromIntegral p)
 buildServerMessage PingResponse =
   BS.word16BE 0xd000

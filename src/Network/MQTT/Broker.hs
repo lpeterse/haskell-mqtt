@@ -1,4 +1,4 @@
-{-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE OverloadedStrings, TupleSections #-}
 --------------------------------------------------------------------------------
 -- |
 -- Module      :  Network.MQTT.Broker
@@ -10,6 +10,7 @@
 --------------------------------------------------------------------------------
 module Network.MQTT.Broker where
 
+import           Control.Arrow            as Arrow
 import           Control.Concurrent.MVar
 import           Control.Exception
 import           Control.Monad
@@ -103,12 +104,10 @@ closeSession (Broker _ broker) session =
     withMVar (Session.sessionSubscriptions session) $ \subscriptions->
       pure $ brokerState
         { brokerSubscriptions =
-            R.differenceWith IS.difference
-              ( brokerSubscriptions brokerState)
-              ( R.map
-                  ( const $ IS.singleton $ Session.sessionIdentifier session )
-                  subscriptions
-              )
+            -- Remove the session identifier from each set that the session subscription
+            -- tree has a corresponding value for (which is ignored).
+            R.differenceWith (\b _-> Just (IS.delete (Session.sessionIdentifier session) b))
+              ( brokerSubscriptions brokerState) subscriptions
         , brokerSessions =
             IM.delete
               ( Session.sessionIdentifier session )
@@ -133,181 +132,33 @@ publishUpstream' :: Broker auth -> Message -> IO ()
 publishUpstream' broker msg =
   publishDownstream broker msg
 
--- TODO: refactor
 subscribe :: Broker auth -> Session.Session -> PacketIdentifier -> [(Filter, QualityOfService)] -> IO ()
-subscribe (Broker _ broker) session pid filters = do
-  modifyMVarMasked_ broker $ \bst-> do
-    modifyMVarMasked_ (Session.sessionSubscriptions session) $ \subs->
-      pure $ foldr (\(f,q)-> R.insertWith max f (Identity q)) subs filters
-    pure $ bst
-             { brokerSubscriptions = foldr
-                (\(x,_)-> R.insertWith IS.union x (IS.singleton $ Session.sessionIdentifier session))
-                (brokerSubscriptions bst) filters
-             }
-  Session.enqueueSubscribeAcknowledged session pid (fmap (Just . snd) filters)
-
-
-{-
-subscribeSession :: Session -> [(TopicFilter, QosLevel)] -> IO ()
-subscribeSession (Session session) filters =
-  modifyMVar_ session $ \sessionState->
-    modifyMVar (unBroker $ sessionBroker sessionState) $ \brokerState-> do
-      let newSessionState = sessionState
-           { sessionSubscriptions = foldr
-              (\(f,q)-> R.insertWith max f (Identity q))
-              (sessionSubscriptions sessionState) filters
-           }
-      let newBrokerState = brokerState
-           { brokerSubscriptions = foldr
-              (\(x,_)-> R.insertWith IS.union x (IS.singleton $ sessionKey sessionState))
-              (brokerSubscriptions brokerState) filters
-           }
-      pure (newBrokerState, newSessionState)
-
-unsubscribeSession :: Session -> [TopicFilter] -> IO ()
-unsubscribeSession (Session session) filters =
-  modifyMVar_ session $ \sessionState->
-    modifyMVar (unBroker $ sessionBroker sessionState) $ \brokerState-> do
-      let newSessionState = sessionState
-           { sessionSubscriptions = foldr R.delete (sessionSubscriptions sessionState) filters
-           }
-      let newBrokerState = brokerState
-           { brokerSubscriptions = foldr
-              (R.adjust (IS.delete $ sessionKey sessionState))
-              (brokerSubscriptions brokerState) filters
-           }
-      pure (newBrokerState, newSessionState)
-
--- FIXME: What about downgrading message qos?
-deliverSession :: Session -> Topic -> Message -> IO ()
-deliverSession session topic message = do
-  sst <- readMVar (unSession session)
-  case R.lookupWith max topic (sessionSubscriptions sst) of
-    Just (Identity Qos0) -> do
-      success <- tryWriteChan (sessionQueue0 sst) (topic, message)
-      unless success (closeSession session)
-    Just (Identity Qos1) -> do
-      success <- tryWriteChan (sessionQueue1 sst) (topic, message)
-      unless success (closeSession session)
-    Just (Identity Qos2) -> do
-      success <- tryWriteChan (sessionQueue2 sst) (topic, message)
-      unless success (closeSession session)
-    _ -> pure ()
-
-
--}
-{-
-type  SessionKey = Int
-
-data  MqttBrokerSessions
-   =  MqttBrokerSessions
-      { maxSession    :: SessionKey
-      , subscriptions :: SubscriptionTree
-      , session       :: IM.IntMap MqttBrokerSession
-      }
-
-
-data  MqttBrokerSession
-    = MqttBrokerSession
-      { sessionBroker                  :: MqttBroker
-      , sessionConnection              :: MVar (Async ())
-      , sessionOutputBuffer            :: MVar RawMessage
-      , sessionBestEffortQueue         :: BC.BoundedChan Message
-      , sessionGuaranteedDeliveryQueue :: BC.BoundedChan Message
-      , sessionInboundPacketState      :: MVar (IM.IntMap InboundPacketState)
-      , sessionOutboundPacketState     :: MVar (IM.IntMap OutboundPacketState)
-      , sessionSubscriptions           :: IS.Set TopicTopicFilter
-      }
-
-data  Identity
-data  InboundPacketState
-
-data  OutboundPacketState
-   =  NotAcknowledgedPublishQoS1 Message
-   |  NotReceivedPublishQoS2     Message
-   |  NotCompletePublishQoS2     Message
-
-data MConnection
-   = MConnection
-     { msend    :: Message -> IO ()
-     , mreceive :: IO Message
-     , mclose   :: IO ()
-     }
-
-publish :: MqttBrokerSession -> Message -> IO ()
-publish session message = case qos message of
-  -- For QoS0 messages, the queue will simply overflow and messages will get
-  -- lost. This is the desired behaviour and allowed by contract.
-  QoS0 ->
-    void $ BC.writeChan (sessionBestEffortQueue session) message
-  -- For QoS1 and QoS2 messages, an overflow will kill the connection and
-  -- delete the session. We cannot otherwise signal the client that we are
-  -- unable to further serve the contract.
-  _ -> do
-    success <- BC.tryWriteChan (sessionGuaranteedDeliveryQueue session) message
-    unless success undefined -- sessionTerminate session
-
-dispatchConnection :: MqttBroker -> Connection -> IO ()
-dispatchConnection broker connection =
-  withConnect $ \clientIdentifier cleanSession keepAlive mwill muser j-> do
-    -- Client sent a valid CONNECT packet. Next, authenticate the client.
-    midentity <- brokerAuthenticate broker muser
-    case midentity of
-      -- Client authentication failed. Send CONNACK with `NotAuthorized`.
-      Nothing -> send $ ConnectAcknowledgement $ Left NotAuthorized
-      -- Cient authenticaion successfull.
-      Just identity -> do
-        -- Retrieve session; create new one if necessary.
-        (session, sessionPresent) <- getSession broker clientIdentifier
-        -- Now knowing the session state, we can send the success CONNACK.
-        send $ ConnectAcknowledgement $ Right sessionPresent
-        -- Replace (and shutdown) existing connections.
-        modifyMVar_ (sessionConnection session) $ \previousConnection-> do
-          cancel previousConnection
-          async $ maintainConnection session `finally` close connection
+subscribe (Broker _ broker) session pid filters =
+  -- Force the `qosTree` in order to lock the broker as little as possible.
+  -- The `sidTree` is left lazy.
+  qosTree `seq` do
+    modifyMVarMasked_ broker $ \bst-> do
+      modifyMVarMasked_
+        ( Session.sessionSubscriptions session )
+        ( pure . R.unionWith max qosTree )
+      pure $ bst { brokerSubscriptions = R.unionWith IS.union (brokerSubscriptions bst) sidTree }
+    Session.enqueueSubscribeAcknowledged session pid (fmap (Just . snd) filters)
   where
-    -- Tries to receive the first packet and (if applicable) extracts the
-    -- CONNECT information to call the contination with.
-    withConnect :: (ClientIdentifier -> CleanSession -> KeepAlive -> Maybe Will -> Maybe (Username, Maybe Password) -> BS.ByteString -> IO ()) -> IO ()
-    withConnect  = undefined
+    qosTree = R.insertFoldable (fmap (Arrow.second Identity) filters) R.empty
+    sidTree = R.map (const $ IS.singleton $ Session.sessionIdentifier session) qosTree
 
-    send :: RawMessage -> IO ()
-    send  = undefined
-
-    maintainConnection :: MqttBrokerSession -> IO ()
-    maintainConnection session =
-      processKeepAlive `race_` processInput `race_` processOutput
-        `race_` processBestEffortQueue `race_` processGuaranteedDeliveryQueue
-
-      where
-        processKeepAlive = undefined
-        processInput     = undefined
-        processOutput    = undefined
-        processBestEffortQueue = forever $ do
-          message <- BC.readChan (sessionBestEffortQueue session)
-          putMVar (sessionOutputBuffer session) Publish
-            { publishDuplicate = False
-            , publishRetain    = retained message
-            , publishQoS       = undefined -- Nothing
-            , publishTopic     = topic message
-            , publishBody      = payload message
-            }
-        processGuaranteedDeliveryQueue = undefined
-
-getSession :: MqttBroker -> ClientIdentifier -> IO (MqttBrokerSession, SessionPresent)
-getSession broker clientIdentifier =
-  modifyMVar (brokerSessions broker) $ \ms->
-    case M.lookup clientIdentifier ms of
-      Just session -> pure (ms, (session, True))
-      Nothing      -> do
-        mthread <- newMVar =<< async (pure ())
-        session <- MqttBrokerSession
-          <$> pure broker
-          <*> pure mthread
-          <*> newEmptyMVar
-          <*> BC.newBoundedChan 1000
-          <*> BC.newBoundedChan 1000
-          <*> newEmptyMVar
-          <*> newEmptyMVar
-        pure (M.insert clientIdentifier session ms, (session, False))
--}
+unsubscribe :: Broker auth -> Session.Session -> PacketIdentifier -> [Filter] -> IO ()
+unsubscribe (Broker _ broker) session pid filters =
+  -- Force the `unsubBrokerTree` first in order to lock the broker as little as possible.
+  unsubBrokerTree `seq` do
+    modifyMVarMasked_ broker $ \bst-> do
+      modifyMVarMasked_
+        ( Session.sessionSubscriptions session )
+        ( pure . flip (R.differenceWith (const . const Nothing)) unsubBrokerTree )
+      pure $ bst { brokerSubscriptions = R.differenceWith
+                    (\is (Identity i)-> Just (IS.delete i is))
+                    (brokerSubscriptions bst) unsubBrokerTree }
+    Session.enqueueUnsubscribeAcknowledged session pid
+  where
+    unsubBrokerTree  = R.insertFoldable
+      ( fmap (,Identity $ Session.sessionIdentifier session) filters ) R.empty

@@ -30,6 +30,8 @@ module Network.MQTT.RoutingTree (
   , insert
   -- ** insertWith
   , insertWith
+  -- ** insertFoldable
+  , insertFoldable
   -- ** map
   , map
   -- ** adjust
@@ -107,6 +109,9 @@ insertWith f tf a = insertWith' (filterLevels tf)
             Just n  -> nodeFromTreeAndValue (nodeTree n) $ fromMaybe a $ f a <$> nodeValue n
           (y:ys) -> nodeFromTree $ insertWith' (y:|ys) $ fromMaybe empty $ nodeTree <$> mn
 
+insertFoldable :: (RoutingTreeValue a, Foldable t) => t (Filter, a) -> RoutingTree a -> RoutingTree a
+insertFoldable  = flip $ foldr $ uncurry insert
+
 adjust :: RoutingTreeValue a => (a -> a) -> Filter -> RoutingTree a -> RoutingTree a
 adjust f tf = adjust' (filterLevels tf)
   where
@@ -157,11 +162,11 @@ unionWith f (RoutingTree m1) (RoutingTree m2) = RoutingTree (M.unionWith g m1 m2
     merge t  _         _        = nodeFromTree         t
     g n1 n2 = merge (unionWith f (nodeTree n1) (nodeTree n2)) (nodeValue n1) (nodeValue n2)
 
-differenceWith :: RoutingTreeValue a => (a -> a -> a) -> RoutingTree a -> RoutingTree a -> RoutingTree a
+differenceWith :: (RoutingTreeValue a, RoutingTreeValue b) => (a -> b -> Maybe a) -> RoutingTree a -> RoutingTree b -> RoutingTree a
 differenceWith f (RoutingTree m1) (RoutingTree m2) = RoutingTree (M.differenceWith g m1 m2)
   where
     g n1 n2 = k (differenceWith f (nodeTree n1) (nodeTree n2)) (d (nodeValue n1) (nodeValue n2))
-    d (Just v1) (Just v2) = Just (f v1 v2)
+    d (Just v1) (Just v2) = f v1 v2
     d (Just v1)  _        = Just v1
     d  _         _        = Nothing
     k t Nothing  | null t               = Nothing
@@ -264,6 +269,7 @@ matchFilter tf = matchFilter' (filterLevels tf)
         matchMultiLevelWildcard  = M.member multiLevelWildcard  m
         matchSingleLevelWildcard = fromMaybe False $ matchFilter' (y:|zs) . nodeTree <$> M.lookup singleLevelWildcard m
         matchExact               = fromMaybe False $ matchFilter' (y:|zs) . nodeTree <$> M.lookup x m
+
 
 --------------------------------------------------------------------------------
 -- Specialised nodeTree implemenations using data families

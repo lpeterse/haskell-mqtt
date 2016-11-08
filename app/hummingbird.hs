@@ -49,4 +49,4 @@ main  = do
       threadDelay 1000000
       Broker.publishUpstream' broker msg
       where
-        msg = Message "$SYS/ping" "foobar" Qos0 False False 
+        msg = Message "$SYS/ping" "foobar" Qos0 False False

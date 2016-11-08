@@ -86,6 +86,12 @@ enqueueSubscribeAcknowledged session pid mqoss = do
     pure $! queue { queueSubscribed = queueSubscribed queue Seq.|> (pid, mqoss) }
   notePending session
 
+enqueueUnsubscribeAcknowledged :: Session -> PacketIdentifier -> IO ()
+enqueueUnsubscribeAcknowledged session pid = do
+  modifyMVar_ (sessionQueue session) $ \queue->
+    pure $! queue { queueUnsubscribed = queueUnsubscribed queue Seq.|> pid}
+  notePending session
+
 -- | Blocks until messages are available and prefers non-qos0 messages over
 --  qos0 messages.
 dequeue :: Session -> IO (Seq.Seq ServerMessage)
@@ -138,10 +144,10 @@ dequeueNonQos0
       | otherwise = ( q { queueCompleted = mempty }, s <> fmap PublishReceived (queueCompleted q) )
     dequeueSubscribed qs@(q,s)
       | Seq.null (queueSubscribed q) = qs
-      | otherwise = ( q { queueSubscribed = mempty }, s <> fmap (uncurry SubscribeAcknowledgement) (queueSubscribed q) )
+      | otherwise = ( q { queueSubscribed = mempty }, s <> fmap (uncurry SubscribeAcknowledged) (queueSubscribed q) )
     dequeueUnsubscribed qs@(q,s)
       | Seq.null (queueUnsubscribed q) = qs
-      | otherwise = ( q { queueUnsubscribed = mempty }, s <> fmap UnsubscribeAcknowledgement (queueUnsubscribed q) )
+      | otherwise = ( q { queueUnsubscribed = mempty }, s <> fmap UnsubscribeAcknowledged (queueUnsubscribed q) )
     dequeueQos1 qs@(q,s)
       | Seq.null msgs = qs
       | otherwise = ( q { queuePids           = pids''
