@@ -129,6 +129,10 @@ publishUpstream :: Broker auth -> Session.Session -> Message -> IO ()
 publishUpstream broker session msg =
   publishDownstream broker msg
 
+publishUpstream' :: Broker auth -> Message -> IO ()
+publishUpstream' broker msg =
+  publishDownstream broker msg
+
 -- TODO: refactor
 subscribe :: Broker auth -> Session.Session -> PacketIdentifier -> [(Filter, QualityOfService)] -> IO ()
 subscribe (Broker _ broker) session pid filters = do

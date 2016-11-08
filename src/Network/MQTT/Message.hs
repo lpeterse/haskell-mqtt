@@ -372,23 +372,24 @@ buildServerMessage (ConnectAck crs) =
     Left cr -> fromIntegral $ fromEnum cr + 1
     Right s -> if s then 0x0100 else 0
 
-{-
-buildServerMessage (Publish d r t qos b) =
-  case qos of
-    PublishQoS0 ->
-      let len = 2 + BS.length t + BS.length b
-          h   = fromIntegral $ (if r then 0x31000000 else 0x30000000)
+buildServerMessage (Publish msg) =
+      let len = 2 + topicLen + fromIntegral (BSL.length $ msgBody msg)
+          h   = fromIntegral $ (if msgRetain msg then 0x31000000 else 0x30000000)
                 .|. len `unsafeShiftL` 16
-                .|. BS.length t
+                .|. topicLen
       in if len < 128
         then BS.word32BE h
-          <> BS.byteString t
-          <> BS.byteString b
-        else BS.word8 ( if r then 0x31 else 0x30 )
+          <> topicBuilder
+          <> BS.lazyByteString (msgBody msg)
+        else BS.word8 ( if msgRetain msg then 0x31 else 0x30 )
           <> lengthBuilder len
-          <> BS.word16BE ( fromIntegral $ BS.length t )
-          <> BS.byteString t
-          <> BS.byteString b
+          <> BS.word16BE ( fromIntegral topicLen )
+          <> topicBuilder
+          <> BS.lazyByteString (msgBody msg)
+  where
+    topicBuilder = TF.topicBuilder (msgTopic msg)
+    topicLen     = TF.topicLength (msgTopic msg)
+{-
     PublishQoS1 dup (PacketIdentifier pid) ->
       let len = 4 + BS.length t + BS.length b
       in BS.word8 ( 0x30
@@ -400,7 +401,7 @@ buildServerMessage (Publish d r t qos b) =
       <> BS.byteString t
       <> BS.word16BE (fromIntegral pid)
       <> BS.byteString b
-    PublishQoS2 (PacketIdentifier pid) ->
+    Qos2 pid ->
       let tLen = topicLength t;
           len = 4 + tLen + BS.length b
       in BS.word8 ( 0x30 .|. ( if r then 0x01 else 0x00 ) .|. 0x04 )

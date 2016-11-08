@@ -160,6 +160,9 @@ handleConnection broker conn _connInfo =
           pure False
         ClientDisconnect ->
           pure True
-    handleOutput session = forever $
+        _ -> pure False -- FIXME
+    handleOutput session = forever $ do
       -- The `dequeue` operation is blocking until messages get available.
-      mapM_ (SS.sendMessage conn) =<< Session.dequeue session
+      msgs <- Session.dequeue session
+      --print msgs
+      mapM_ (SS.sendMessage conn) msgs
