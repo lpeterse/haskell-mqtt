@@ -66,16 +66,16 @@ data SessionRequest
      }
 
 withSession :: Broker auth -> SessionRequest -> IO () -> IO () -> (Session.Session -> SessionPresent -> IO ()) -> IO ()
-withSession broker request sessionRejectHandler sessionErrorHandler sessionHandler
-  | sessionRequestClientIdentifier request /= "mqtt-default" = sessionRejectHandler
-  | otherwise = do
-      r <- randomIO :: IO Double
-      if r < 0.5
-        then sessionErrorHandler
-        else bracket
-          ( createSession broker defaultSessionConfig )
-          ( when (sessionClean request) . closeSession broker )
-          ( \session-> sessionHandler session False )
+withSession broker request sessionRejectHandler sessionErrorHandler sessionHandler = do
+  r <- randomIO :: IO Double
+  if r < 0.2
+    then sessionErrorHandler
+    else if r < 0.4
+      then sessionRejectHandler
+      else bracket
+      ( createSession broker defaultSessionConfig )
+      ( when (sessionClean request) . closeSession broker )
+      ( \session-> sessionHandler session False )
 
 createSession :: Broker auth -> SessionConfig -> IO Session.Session
 createSession (Broker _ broker) config =

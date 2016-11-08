@@ -195,11 +195,11 @@ instance (StreamServerStack a) => ServerStack (WebSocket a) where
   withConnection server handle =
     withConnection (wsTransportServer server) $ \connection info-> do
       let readSocket = (\bs-> if BS.null bs then Nothing else Just bs) <$> receiveStream connection
-      let writeSocket Nothing   = undefined
+      let writeSocket Nothing   = pure ()
           writeSocket (Just bs) = sendStream connection (BSL.toStrict bs)
       stream <- WS.makeStream readSocket writeSocket
       pendingConnection <- WS.makePendingConnectionFromStream stream (WS.ConnectionOptions $ pure ())
-      acceptedConnection <- WS.acceptRequest pendingConnection
+      acceptedConnection <- WS.acceptRequestWith pendingConnection (WS.AcceptRequest $ Just "mqtt")
       x <- handle
         (WebSocketServerConnection connection acceptedConnection)
         (WebSocketServerConnectionInfo info $ WS.pendingRequest pendingConnection)

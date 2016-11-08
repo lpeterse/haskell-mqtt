@@ -94,9 +94,11 @@ deriving instance Show (SS.ServerConnectionInfo transport) => Show (SS.ServerCon
 
 handleConnection :: forall transport authenticator. (SS.StreamServerStack transport) => Broker.Broker authenticator -> SS.ServerConnection (MQTT transport) -> SS.ServerConnectionInfo (MQTT transport) -> IO ()
 handleConnection broker conn _connInfo =
-  E.handle (\e->
-    print (e :: E.SomeException)
+  E.handle (\e-> do
+    print "HUHU"
+    print (e :: E.SomeException) >> E.throwIO e
    ) $ do
+    print "handleConnection"
     recentActivity <- newIORef True
     msg <- SS.receiveMessage conn
     print msg
@@ -104,14 +106,17 @@ handleConnection broker conn _connInfo =
       ClientConnect {} ->
         let sessionHandler session sessionPresent = do
               SS.sendMessage conn (ConnectAck $ Right sessionPresent)
+              print "Client accepted."
               foldl1 race_
                 [ handleInput recentActivity session
                 , handleOutput session
                 , keepAlive recentActivity (connectKeepAlive msg)
                 ]
-            sessionUnauthorizedHandler =
+            sessionUnauthorizedHandler = do
+              print "Client not authorized."
               SS.sendMessage conn (ConnectAck $ Left NotAuthorized)
-            sessionErrorHandler =
+            sessionErrorHandler = do
+              print "Server unavailable."
               SS.sendMessage conn (ConnectAck $ Left ServerUnavailable)
             sessionRequest = Broker.SessionRequest
               { Broker.sessionRequestClientIdentifier = connectClientIdentifier msg
@@ -142,25 +147,28 @@ handleConnection broker conn _connInfo =
         regularInterval = fromIntegral interval * 500000
         alertInterval   = fromIntegral interval * 1000000
     handleInput :: RecentActivity -> Session.Session -> IO ()
-    handleInput recentActivity session = SS.consumeMessages conn $ \packet-> do
-      writeIORef recentActivity True
-      case packet of
-        ClientConnect {} ->
-          E.throwIO (ProtocolViolation "Unexpected CONN packet." :: SS.ServerException (MQTT transport))
-        ClientPublish msg -> do
-          Broker.publishUpstream broker session msg
-          pure False
-        ClientSubscribe pid filters -> do
-          Broker.subscribe broker session pid filters
-          pure False
-        ClientUnsubscribe {} ->
-          pure False
-        ClientPingRequest {} -> do
-          SS.sendMessage conn PingResponse
-          pure False
-        ClientDisconnect ->
-          pure True
-        _ -> pure False -- FIXME
+    handleInput recentActivity session = do
+      print "Start consuming messages."
+      SS.consumeMessages conn $ \packet-> do
+        writeIORef recentActivity True
+        print packet
+        case packet of
+          ClientConnect {} ->
+            E.throwIO (ProtocolViolation "Unexpected CONN packet." :: SS.ServerException (MQTT transport))
+          ClientPublish msg -> do
+            Broker.publishUpstream broker session msg
+            pure False
+          ClientSubscribe pid filters -> do
+            Broker.subscribe broker session pid filters
+            pure False
+          ClientUnsubscribe {} ->
+            pure False
+          ClientPingRequest {} -> do
+            SS.sendMessage conn PingResponse
+            pure False
+          ClientDisconnect ->
+            pure True
+          _ -> pure False -- FIXME
     handleOutput session = forever $ do
       -- The `dequeue` operation is blocking until messages get available.
       msgs <- Session.dequeue session
