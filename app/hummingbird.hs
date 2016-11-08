@@ -32,7 +32,7 @@ main  = do
     sockConfig :: SS.ServerConfig (Server.MQTT (S.Socket S.Inet S.Stream S.TCP))
     sockConfig = Server.MqttServerConfig {
       Server.mqttTransportConfig = SS.SocketServerConfig {
-        SS.socketServerConfigBindAddress = S.SocketAddressInet  S.inetLoopback 1883
+        SS.socketServerConfigBindAddress = S.SocketAddressInet  S.inetAny 1883
       , SS.socketServerConfigListenQueueSize = 5
       }
     }
@@ -40,7 +40,7 @@ main  = do
     wsConfig = Server.MqttServerConfig {
       Server.mqttTransportConfig = SS.WebSocketServerConfig {
         SS.wsTransportConfig = SS.SocketServerConfig {
-          SS.socketServerConfigBindAddress = S.SocketAddressInet  S.inetLoopback 1884
+          SS.socketServerConfigBindAddress = S.SocketAddressInet  S.inetAny 1884
         , SS.socketServerConfigListenQueueSize = 5
         }
       }

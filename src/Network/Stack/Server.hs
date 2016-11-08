@@ -123,6 +123,7 @@ instance (Storable (S.SocketAddress f), S.Family f, S.Type t, S.Protocol p, Type
   withServer c handle = E.bracket
     (SocketServer <$> S.socket <*> pure c)
     (S.close . socketServer) $ \server-> do
+      S.setSocketOption (socketServer server) (S.ReuseAddress True)
       S.bind (socketServer server) (socketServerConfigBindAddress $ socketServerConfig server)
       S.listen (socketServer server) (socketServerConfigListenQueueSize $ socketServerConfig server)
       handle server
