@@ -17,7 +17,6 @@ module Network.MQTT.Server where
 import Data.IORef
 import           Control.Concurrent
 import           Control.Concurrent.Async
-import           Control.Concurrent.MVar
 import qualified Control.Exception        as E
 import           Control.Monad
 import qualified Data.ByteString          as BS
@@ -58,9 +57,9 @@ instance (SS.StreamServerStack transport) => SS.ServerStack (MQTT transport) whe
   withServer config handle =
     SS.withServer (mqttTransportConfig config) $ \server->
       handle (MqttServer server config)
-  withConnection server handleConnection =
+  withConnection server handler =
     SS.withConnection (mqttTransportServer server) $ \connection info->
-      flip handleConnection (MqttServerConnectionInfo info) =<< MqttServerConnection
+      flip handler (MqttServerConnectionInfo info) =<< MqttServerConnection
         <$> pure connection
         <*> newMVar mempty
 
@@ -68,12 +67,12 @@ instance (SS.StreamServerStack transport) => SS.MessageServerStack (MQTT transpo
   type ClientMessage (MQTT transport) = ClientMessage
   type ServerMessage (MQTT transport) = ServerMessage
   sendMessage connection =
-    SS.sendStreamLazy (mqttTransportConnection connection) . BS.toLazyByteString . buildServerMessage
+    SS.sendStreamLazy (mqttTransportConnection connection) . BS.toLazyByteString . serverMessageBuilder
   receiveMessage connection =
     modifyMVar (mqttTransportLeftover connection) (execute . decode)
     where
       fetch  = SS.receiveStream (mqttTransportConnection connection)
-      decode = SG.runGetPartial parseClientMessage
+      decode = SG.runGetPartial clientMessageParser
       execute (SG.Partial continuation) = execute =<< continuation <$> fetch
       execute (SG.Fail failure _)       = E.throwIO (ProtocolViolation failure :: SS.ServerException (MQTT transport))
       execute (SG.Done msg leftover')   = pure (leftover', msg)
@@ -81,7 +80,7 @@ instance (SS.StreamServerStack transport) => SS.MessageServerStack (MQTT transpo
     modifyMVar_ (mqttTransportLeftover connection) (execute . decode)
     where
       fetch  = SS.receiveStream (mqttTransportConnection connection)
-      decode = SG.runGetPartial parseClientMessage
+      decode = SG.runGetPartial clientMessageParser
       execute (SG.Partial continuation) = execute =<< continuation <$> fetch
       execute (SG.Fail failure _)       = E.throwIO (ProtocolViolation failure :: SS.ServerException (MQTT transport))
       execute (SG.Done msg leftover')   = do

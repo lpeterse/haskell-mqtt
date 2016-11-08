@@ -1,5 +1,4 @@
-{-# LANGUAGE GeneralizedNewtypeDeriving #-}
-{-# LANGUAGE TupleSections              #-}
+{-# LANGUAGE TupleSections #-}
 --------------------------------------------------------------------------------
 -- |
 -- Module      :  Network.MQTT.Message
@@ -22,11 +21,11 @@ module Network.MQTT.Message
   , ConnectionRefusal (..)
   , Message (..)
   , ClientMessage (..)
-  , buildClientMessage
-  , parseClientMessage
+  , clientMessageBuilder
+  , clientMessageParser
   , ServerMessage (..)
-  , buildServerMessage
-  , parseServerMessage
+  , serverMessageBuilder
+  , serverMessageParser
   , lengthParser
   , lengthBuilder
   , utf8Parser
@@ -39,6 +38,7 @@ import           Data.Bits
 import qualified Data.ByteString            as BS
 import qualified Data.ByteString.Builder    as BS
 import qualified Data.ByteString.Lazy       as BSL
+import           Data.Maybe
 import           Data.Monoid
 import qualified Data.Serialize.Get         as SG
 import qualified Data.Text                  as T
@@ -89,6 +89,10 @@ data ClientMessage
      }
    | ClientPublish                                                !Message
    | ClientPublish'              {-# UNPACK #-} !PacketIdentifier !Message
+   | ClientPublishAcknowledged   {-# UNPACK #-} !PacketIdentifier
+   | ClientPublishReceived       {-# UNPACK #-} !PacketIdentifier
+   | ClientPublishRelease        {-# UNPACK #-} !PacketIdentifier
+   | ClientPublishComplete       {-# UNPACK #-} !PacketIdentifier
    | ClientSubscribe             {-# UNPACK #-} !PacketIdentifier ![(TF.Filter, QualityOfService)]
    | ClientUnsubscribe           {-# UNPACK #-} !PacketIdentifier ![TF.Filter]
    | ClientPingRequest
@@ -104,37 +108,41 @@ data ServerMessage
    | PublishReceived             {-# UNPACK #-} !PacketIdentifier
    | PublishRelease              {-# UNPACK #-} !PacketIdentifier
    | PublishComplete             {-# UNPACK #-} !PacketIdentifier
-   | SubscribeAcknowledged    {-# UNPACK #-} !PacketIdentifier ![Maybe QualityOfService]
-   | UnsubscribeAcknowledged  {-# UNPACK #-} !PacketIdentifier
+   | SubscribeAcknowledged       {-# UNPACK #-} !PacketIdentifier ![Maybe QualityOfService]
+   | UnsubscribeAcknowledged     {-# UNPACK #-} !PacketIdentifier
    deriving (Eq, Show)
 
-parseClientMessage :: SG.Get ClientMessage
-parseClientMessage =
+clientMessageParser :: SG.Get ClientMessage
+clientMessageParser =
   SG.lookAhead SG.getWord8 >>= \h-> case h .&. 0xf0 of
-    0x10 -> clientConnectParser
-    0x30 -> clientPublishParser
-    0x80 -> clientSubscribeParser
-    0xa0 -> clientUnsubscribeParser
-    0xc0 -> clientPingRequestParser
-    0xe0 -> clientDisconnectParser
-    _    -> fail "parseClientMessage: Invalid message type."
+    0x10 -> connectParser
+    0x30 -> publishParser      ClientPublish ClientPublish'
+    0x40 -> acknowledgedParser ClientPublishAcknowledged
+    0x50 -> acknowledgedParser ClientPublishReceived
+    0x60 -> acknowledgedParser ClientPublishRelease
+    0x70 -> acknowledgedParser ClientPublishComplete
+    0x80 -> subscribeParser
+    0xa0 -> unsubscribeParser
+    0xc0 -> pingRequestParser
+    0xe0 -> disconnectParser
+    _    -> fail "clientMessageParser: Invalid message type."
 
-parseServerMessage :: SG.Get ServerMessage
-parseServerMessage =
+serverMessageParser :: SG.Get ServerMessage
+serverMessageParser =
   SG.lookAhead SG.getWord8 >>= \h-> case h .&. 0xf0 of
-    0x20 -> serverConnectAcknowledgedParser
-    0x30 -> serverPublishParser
-    0x40 -> serverPublishAcknowledgedParser
-    0x50 -> serverPublishReceivedParser
-    0x60 -> serverPublishReleasedParser
-    0x70 -> serverPublishCompletedParser
-    0x90 -> serverSubscribeAcknowledgedParser
-    0xb0 -> serverUnsubscribeAcknowledgedParser
-    0xd0 -> serverPingResponseParser
-    _    -> fail "pServerMessage: Packet type not implemented."
+    0x20 -> connectAcknowledgedParser
+    0x30 -> publishParser      Publish Publish'
+    0x40 -> acknowledgedParser PublishAcknowledged
+    0x50 -> acknowledgedParser PublishReceived
+    0x60 -> acknowledgedParser PublishRelease
+    0x70 -> acknowledgedParser PublishComplete
+    0x90 -> subscribeAcknowledgedParser
+    0xb0 -> acknowledgedParser UnsubscribeAcknowledged
+    0xd0 -> pingResponseParser
+    _    -> fail "serverMessageParser: Packet type not implemented."
 
-clientConnectParser :: SG.Get ClientMessage
-clientConnectParser = do
+connectParser :: SG.Get ClientMessage
+connectParser = do
   h <- SG.getWord8
   when (h .&. 0x0f /= 0) $
     fail "clientConnectParser: The header flags are reserved and MUST be set to 0."
@@ -166,8 +174,8 @@ clientConnectParser = do
             else Just <$> (SG.getWord16be >>= SG.getByteString . fromIntegral) )
   pure ( ClientConnect cid cleanSession keepAlive will cred )
 
-serverConnectAcknowledgedParser :: SG.Get ServerMessage
-serverConnectAcknowledgedParser = do
+connectAcknowledgedParser :: SG.Get ServerMessage
+connectAcknowledgedParser = do
   x <- SG.getWord32be
   ConnectAck <$> case x .&. 0xff of
     0 -> pure $ Right (x .&. 0x0100 /= 0)
@@ -178,8 +186,8 @@ serverConnectAcknowledgedParser = do
     5 -> pure $ Left NotAuthorized
     _ -> fail "serverConnectAcknowledgedParser: Invalid (reserved) return code."
 
-serverPublishParser :: SG.Get ServerMessage
-serverPublishParser = do
+publishParser :: (Message -> a) -> (PacketIdentifier -> Message -> a) -> SG.Get a
+publishParser publish publish' = do
   hflags <- SG.getWord8
   let dup = hflags .&. 0x08 /= 0 -- duplicate flag
   let ret = hflags .&. 0x01 /= 0 -- retain flag
@@ -189,54 +197,22 @@ serverPublishParser = do
   if  qosBits == 0x00
     then do
       body <- SG.getLazyByteString $ fromIntegral ( len - topicLen )
-      pure (Publish $ Message topic body Qos0 dup ret)
+      pure (publish $ Message topic body Qos0 dup ret)
     else do
       let qos = if qosBits == 0x02 then Qos1 else Qos2
       pid  <- fromIntegral <$> SG.getWord16be
       body <- SG.getLazyByteString $ fromIntegral ( len - topicLen - 2 )
-      pure (Publish' pid $ Message topic body qos dup ret)
+      pure (publish' pid $ Message topic body qos dup ret)
 
-clientPublishParser :: SG.Get ClientMessage
-clientPublishParser = do
-  hflags <- SG.getWord8
-  let dup = hflags .&. 0x08 /= 0 -- duplicate flag
-  let ret = hflags .&. 0x01 /= 0 -- retain flag
-  len <- lengthParser
-  (topic, topicLen)  <- topicParser
-  let qosBits = hflags .&. 0x06
-  if  qosBits == 0x00
-    then do
-      body <- SG.getLazyByteString $ fromIntegral ( len - topicLen )
-      pure (ClientPublish $ Message topic body Qos0 dup ret)
-    else do
-      let qos = if qosBits == 0x02 then Qos1 else Qos2
-      pid  <- fromIntegral <$> SG.getWord16be
-      body <- SG.getLazyByteString $ fromIntegral ( len - topicLen - 2 )
-      pure (ClientPublish' pid $ Message topic body qos dup ret)
+acknowledgedParser :: (PacketIdentifier -> a) -> SG.Get a
+acknowledgedParser f = do
+  w32 <- SG.getWord32be
+  pure $ f $ fromIntegral $ w32 .&. 0xffff
+{-# INLINE acknowledgedParser #-}
 
-serverPublishAcknowledgedParser :: SG.Get ServerMessage
-serverPublishAcknowledgedParser = do
-    w32 <- SG.getWord32be
-    pure $ PublishAcknowledged $ fromIntegral $ w32 .&. 0xffff
-
-serverPublishReceivedParser :: SG.Get ServerMessage
-serverPublishReceivedParser = do
-    w32 <- SG.getWord32be
-    pure $ PublishReceived $ fromIntegral $ w32 .&. 0xffff
-
-serverPublishReleasedParser :: SG.Get ServerMessage
-serverPublishReleasedParser = do
-    w32 <- SG.getWord32be
-    pure $ PublishRelease $ fromIntegral $ w32 .&. 0xffff
-
-serverPublishCompletedParser :: SG.Get ServerMessage
-serverPublishCompletedParser = do
-    w32 <- SG.getWord32be
-    pure $ PublishComplete $ fromIntegral $ w32 .&. 0xffff
-
-clientSubscribeParser :: SG.Get ClientMessage
-clientSubscribeParser = do
-  _    <- SG.getWord8
+subscribeParser :: SG.Get ClientMessage
+subscribeParser = do
+  void SG.getWord8
   rlen <- lengthParser
   pid  <- fromIntegral <$> SG.getWord16be
   ClientSubscribe pid <$> parseFilters (rlen - 2) []
@@ -253,9 +229,9 @@ clientSubscribeParser = do
         0x02 -> pure Qos2
         _    -> fail "clientSubscribeParser: Violation of [MQTT-3.8.3-4]."
 
-clientUnsubscribeParser :: SG.Get ClientMessage
-clientUnsubscribeParser = do
-  _    <- SG.getWord8
+unsubscribeParser :: SG.Get ClientMessage
+unsubscribeParser = do
+  void SG.getWord8
   rlen <- lengthParser
   pid  <- fromIntegral <$> SG.getWord16be
   ClientUnsubscribe pid <$> parseFilters (rlen - 2) []
@@ -266,9 +242,9 @@ clientUnsubscribeParser = do
           (filtr,len) <- filterParser
           parseFilters ( r - len ) ( filtr : accum )
 
-serverSubscribeAcknowledgedParser :: SG.Get ServerMessage
-serverSubscribeAcknowledgedParser = do
-  _    <- SG.getWord8
+subscribeAcknowledgedParser :: SG.Get ServerMessage
+subscribeAcknowledgedParser = do
+  void SG.getWord8
   rlen <- lengthParser
   pid  <- fromIntegral <$> SG.getWord16be
   SubscribeAcknowledged pid <$> (map f . BS.unpack <$> SG.getBytes (rlen - 2))
@@ -278,28 +254,26 @@ serverSubscribeAcknowledgedParser = do
     f 0x02 = Just Qos2
     f    _ = Nothing
 
-serverUnsubscribeAcknowledgedParser :: SG.Get ServerMessage
-serverUnsubscribeAcknowledgedParser = do
-  pid <- fromIntegral <$> SG.getWord32be
-  pure $ UnsubscribeAcknowledged $ pid .&. 0xffff
-
-clientPingRequestParser :: SG.Get ClientMessage
-clientPingRequestParser = do
-  _ <- SG.getWord16be
+pingRequestParser :: SG.Get ClientMessage
+pingRequestParser = do
+  void SG.getWord16be
   pure ClientPingRequest
+{-# INLINE pingRequestParser #-}
 
-serverPingResponseParser :: SG.Get ServerMessage
-serverPingResponseParser = do
-  _ <- SG.getWord16be
+pingResponseParser :: SG.Get ServerMessage
+pingResponseParser = do
+  void SG.getWord16be
   pure PingResponse
+{-# INLINE pingResponseParser #-}
 
-clientDisconnectParser :: SG.Get ClientMessage
-clientDisconnectParser = do
-  _ <- SG.getWord16be
+disconnectParser :: SG.Get ClientMessage
+disconnectParser = do
+  void SG.getWord16be
   pure ClientDisconnect
+{-# INLINE disconnectParser #-}
 
-buildClientMessage :: ClientMessage -> BS.Builder
-buildClientMessage (ClientConnect cid cleanSession keepAlive will credentials) =
+clientMessageBuilder :: ClientMessage -> BS.Builder
+clientMessageBuilder (ClientConnect cid cleanSession keepAlive will credentials) =
   BS.word8 0x10
   <> lengthBuilder ( 10 + cidLen + willLen + credLen )
   <> BS.word64BE ( 0x00044d5154540400 .|. willFlag .|. credFlag .|. sessFlag )
@@ -345,7 +319,7 @@ buildClientMessage (ClientConnect cid cleanSession keepAlive will credentials) =
             x4   = BS.byteString p
         in (x1 <> x2 <> x3 <> x4, 4 + ulen + plen, 0xc0)
 {-
-buildClientMessage (Subscribe (PacketIdentifier p) tf)  =
+clientMessageBuilder (Subscribe (PacketIdentifier p) tf)  =
   BS.word8 0x82 <> lengthBuilder len <> BS.word16BE (fromIntegral p) <> mconcat ( map f tf )
   where
     f (t, q) = (bUtf8String t <>) $ BS.word8 $ case q of
@@ -353,72 +327,52 @@ buildClientMessage (Subscribe (PacketIdentifier p) tf)  =
       Qos1 -> 0x01
       Qos2 -> 0x02
     len  = 2 + length tf * 3 + sum ( map (BS.length . T.encodeUtf8 . fst) tf )
-buildClientMessage (Unsubscribe (PacketIdentifier p) tfs) =
+clientMessageBuilder (Unsubscribe (PacketIdentifier p) tfs) =
   BS.word8 0xa2 <> lengthBuilder len
     <> BS.word16BE (fromIntegral p) <> mconcat ( map bUtf8String tfs )
   where
     bfs = map T.encodeUtf8 tfs
     len = 2 + sum ( map ( ( + 2 ) . BS.length ) bfs )
 -}
-buildClientMessage ClientPingRequest =
+clientMessageBuilder (ClientPublish msg) =
+  publishBuilder Nothing msg
+clientMessageBuilder (ClientPublish' pid msg) =
+  publishBuilder (Just pid) msg
+clientMessageBuilder (ClientPublishAcknowledged p) =
+  BS.word32BE $ fromIntegral $ 0x40020000 .|. p
+clientMessageBuilder (ClientPublishReceived p) =
+  BS.word32BE $ fromIntegral $ 0x50020000 .|. p
+clientMessageBuilder (ClientPublishRelease p) =
+  BS.word32BE $ fromIntegral $ 0x62020000 .|. p
+clientMessageBuilder (ClientPublishComplete p) =
+  BS.word32BE $ fromIntegral $ 0x70020000 .|. p
+clientMessageBuilder (ClientSubscribe _pid _filters) =
+  undefined
+clientMessageBuilder (ClientUnsubscribe _pid _filters) =
+  undefined
+clientMessageBuilder ClientPingRequest =
   BS.word16BE 0xc000
-buildClientMessage ClientDisconnect =
+clientMessageBuilder ClientDisconnect =
   BS.word16BE 0xe000
 
-buildServerMessage :: ServerMessage -> BS.Builder
-buildServerMessage (ConnectAck crs) =
+serverMessageBuilder :: ServerMessage -> BS.Builder
+serverMessageBuilder (ConnectAck crs) =
   BS.word32BE $ 0x20020000 .|. case crs of
     Left cr -> fromIntegral $ fromEnum cr + 1
     Right s -> if s then 0x0100 else 0
-
-buildServerMessage (Publish msg) =
-      let len = 2 + topicLen + fromIntegral (BSL.length $ msgBody msg)
-          h   = fromIntegral $ (if msgRetain msg then 0x31000000 else 0x30000000)
-                .|. len `unsafeShiftL` 16
-                .|. topicLen
-      in if len < 128
-        then BS.word32BE h
-          <> topicBuilder
-          <> BS.lazyByteString (msgBody msg)
-        else BS.word8 ( if msgRetain msg then 0x31 else 0x30 )
-          <> lengthBuilder len
-          <> BS.word16BE ( fromIntegral topicLen )
-          <> topicBuilder
-          <> BS.lazyByteString (msgBody msg)
-  where
-    topicBuilder = TF.topicBuilder (msgTopic msg)
-    topicLen     = TF.topicLength (msgTopic msg)
-{-
-    PublishQoS1 dup (PacketIdentifier pid) ->
-      let len = 4 + BS.length t + BS.length b
-      in BS.word8 ( 0x30
-        .|. ( if dup then 0x08 else 0 )
-        .|. ( if r then 0x01 else 0 )
-        .|. 0x02 )
-      <> lengthBuilder len
-      <> BS.word16BE ( fromIntegral $ BS.length t )
-      <> BS.byteString t
-      <> BS.word16BE (fromIntegral pid)
-      <> BS.byteString b
-    Qos2 pid ->
-      let tLen = topicLength t;
-          len = 4 + tLen + BS.length b
-      in BS.word8 ( 0x30 .|. ( if r then 0x01 else 0x00 ) .|. 0x04 )
-      <> lengthBuilder len
-      <> BS.word16BE (fromIntegral tLen)
-      <> topicBuilder t
-      <> BS.word16BE (fromIntegral pid)
-      <> BS.byteString b
--}
-buildServerMessage (PublishAcknowledged p) =
+serverMessageBuilder (Publish msg) =
+  publishBuilder Nothing msg
+serverMessageBuilder (Publish' pid msg) =
+  publishBuilder (Just pid) msg
+serverMessageBuilder (PublishAcknowledged p) =
   BS.word32BE $ fromIntegral $ 0x40020000 .|. p
-buildServerMessage (PublishReceived p) =
+serverMessageBuilder (PublishReceived p) =
   BS.word32BE $ fromIntegral $ 0x50020000 .|. p
-buildServerMessage (PublishRelease p) =
+serverMessageBuilder (PublishRelease p) =
   BS.word32BE $ fromIntegral $ 0x62020000 .|. p
-buildServerMessage (PublishComplete p) =
+serverMessageBuilder (PublishComplete p) =
   BS.word32BE $ fromIntegral $ 0x70020000 .|. p
-buildServerMessage (SubscribeAcknowledged p rcs) =
+serverMessageBuilder (SubscribeAcknowledged p rcs) =
   BS.word8 0x90 <> lengthBuilder (2 + length rcs)
     <> BS.word16BE (fromIntegral p) <> mconcat ( map ( BS.word8 . f ) rcs )
   where
@@ -426,15 +380,31 @@ buildServerMessage (SubscribeAcknowledged p rcs) =
     f (Just Qos0) = 0x00
     f (Just Qos1) = 0x01
     f (Just Qos2) = 0x02
-
-buildServerMessage (UnsubscribeAcknowledged p) =
+serverMessageBuilder (UnsubscribeAcknowledged p) =
   BS.word16BE 0xb002 <> BS.word16BE (fromIntegral p)
-buildServerMessage PingResponse =
+serverMessageBuilder PingResponse =
   BS.word16BE 0xd000
 
---------------------------------------------------------------------------------
--- Utils
---------------------------------------------------------------------------------
+publishBuilder :: Maybe PacketIdentifier -> Message -> BS.Builder
+publishBuilder mpid msg
+  | len < 128 =
+      BS.word32BE (fromIntegral h)
+      <> topicBuilder
+      <> BS.lazyByteString (msgBody msg)
+  | otherwise =
+      BS.word8 ( if msgRetain msg then 0x31 else 0x30 )
+      <> lengthBuilder len
+      <> BS.word16BE (fromIntegral topicLen)
+      <> topicBuilder
+      <> fromMaybe mempty (BS.word16BE . fromIntegral <$> mpid)
+      <> BS.lazyByteString (msgBody msg)
+  where
+    topicLen     = TF.topicLength  (msgTopic msg)
+    topicBuilder = TF.topicBuilder (msgTopic msg)
+    len          = 2 + topicLen + fromIntegral (BSL.length $ msgBody msg)
+    h            = (if msgRetain msg then 0x31000000 else 0x30000000)
+                .|. len `unsafeShiftL` 16
+                .|. topicLen
 
 topicParser :: SG.Get (TF.Topic, Int)
 topicParser = do
@@ -511,5 +481,5 @@ lengthBuilder i
                                          .|. unsafeShiftL ( i .&. 0x3f80    )  1
                                          .|. unsafeShiftL ( i .&. 0x1fc000  )  2
                                          .|. unsafeShiftL ( i .&. 0x0ff00000)  3
-  | otherwise               = error "sRemainingLength: invalid input"
+  | otherwise               = error "lengthBuilder: invalid input"
 {-# INLINE lengthBuilder #-}

@@ -76,15 +76,15 @@ withSession broker request sessionRejectHandler sessionErrorHandler sessionHandl
       else bracket
       ( createSession broker defaultSessionConfig )
       ( when (sessionClean request) . closeSession broker )
-      ( \session-> sessionHandler session False )
+      ( `sessionHandler` False )
 
 createSession :: Broker auth -> SessionConfig -> IO Session.Session
-createSession (Broker _ broker) config =
-  modifyMVar broker $ \brokerState-> do
+createSession (Broker _ broker) _config =
+  modifyMVar broker $ \st-> do
     subscriptions <- newMVar R.empty
     queue <- newMVar (Session.emptyServerQueue 1000)
     queuePending <- newEmptyMVar
-    let newSessionIdentifier = brokerMaxSessionIdentifier brokerState + 1
+    let newSessionIdentifier = brokerMaxSessionIdentifier st + 1
         newSession = Session.Session
          { Session.sessionIdentifier       = newSessionIdentifier
          , Session.sessionSubscriptions    = subscriptions
@@ -92,45 +92,43 @@ createSession (Broker _ broker) config =
          , Session.sessionQueuePending     = queuePending
          , Session.sessionQueueLimitQos0   = 256
          }
-        newBrokerState = brokerState
+        newBrokerState = st
          { brokerMaxSessionIdentifier = newSessionIdentifier
-         , brokerSessions             = IM.insert newSessionIdentifier newSession (brokerSessions brokerState)
+         , brokerSessions             = IM.insert newSessionIdentifier newSession (brokerSessions st)
          }
     pure (newBrokerState, newSession)
 
 closeSession :: Broker auth -> Session.Session -> IO ()
 closeSession (Broker _ broker) session =
-  modifyMVar_ broker $ \brokerState->
+  modifyMVar_ broker $ \st->
     withMVar (Session.sessionSubscriptions session) $ \subscriptions->
-      pure $ brokerState
+      pure $ st
         { brokerSubscriptions =
             -- Remove the session identifier from each set that the session subscription
             -- tree has a corresponding value for (which is ignored).
             R.differenceWith (\b _-> Just (IS.delete (Session.sessionIdentifier session) b))
-              ( brokerSubscriptions brokerState) subscriptions
+              ( brokerSubscriptions st) subscriptions
         , brokerSessions =
             IM.delete
               ( Session.sessionIdentifier session )
-              ( brokerSessions brokerState)
+              ( brokerSessions st)
         }
 
 publishDownstream :: Broker auth -> Message -> IO ()
 publishDownstream (Broker _auth broker) msg = do
   let topic = msgTopic msg
-  brokerState <- readMVar broker
-  forM_ (IS.elems $ fromMaybe IS.empty $ R.lookupWith IS.union topic $ brokerSubscriptions brokerState) $ \key->
-    case IM.lookup (key :: Int) (brokerSessions brokerState) of
+  st <- readMVar broker
+  forM_ (IS.elems $ fromMaybe IS.empty $ R.lookupWith IS.union topic $ brokerSubscriptions st) $ \key->
+    case IM.lookup (key :: Int) (brokerSessions st) of
       Nothing      ->
         putStrLn "WARNING: dead session reference"
       Just session -> Session.enqueueMessage session msg
 
 publishUpstream :: Broker auth -> Session.Session -> Message -> IO ()
-publishUpstream broker session msg =
-  publishDownstream broker msg
+publishUpstream broker _session = publishDownstream broker
 
 publishUpstream' :: Broker auth -> Message -> IO ()
-publishUpstream' broker msg =
-  publishDownstream broker msg
+publishUpstream'  = publishDownstream
 
 subscribe :: Broker auth -> Session.Session -> PacketIdentifier -> [(Filter, QualityOfService)] -> IO ()
 subscribe (Broker _ broker) session pid filters =
