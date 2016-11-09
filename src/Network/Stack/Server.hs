@@ -16,17 +16,21 @@ module Network.Stack.Server where
 
 import           Control.Concurrent.Async
 import           Control.Concurrent.MVar
-import qualified Control.Exception         as E
+import qualified Control.Exception             as E
 import           Control.Monad
-import qualified Data.ByteString           as BS
-import qualified Data.ByteString.Lazy      as BSL
+import qualified Data.ByteString               as BS
+import qualified Data.ByteString.Builder       as BS
+import qualified Data.ByteString.Builder.Extra as BS
+import qualified Data.ByteString.Lazy          as BSL
 import           Data.Typeable
-import qualified Data.X509                 as X509
+import Data.Int
+import qualified Data.X509                     as X509
 import           Foreign.Storable
-import qualified Network.TLS               as TLS
-import qualified Network.WebSockets        as WS
-import qualified Network.WebSockets.Stream as WS
-import qualified System.Socket             as S
+import qualified Network.TLS                   as TLS
+import qualified Network.WebSockets            as WS
+import qualified Network.WebSockets.Stream     as WS
+import qualified System.Socket                 as S
+import qualified System.Socket.Type.Stream     as S
 
 data TLS a
 data WebSocket a
@@ -65,17 +69,17 @@ class (Typeable a) => ServerStack a where
   --   >       putStrLn "The connection handler returned:"
   --   >       print result
   withConnection :: Server a -> (ServerConnection a -> ServerConnectionInfo a -> IO b) -> IO (Async b)
-  --flush          :: ServerConnection a -> IO ()
-  --send           :: ServerConnection a -> ServerMessage a -> IO ()
-  --receive        :: ServerConnection a -> Int -> IO (ServerMessage a)
 
 class ServerStack a => StreamServerStack a where
   sendStream              :: ServerConnection a -> BS.ByteString -> IO ()
-  sendStream        server = sendStreamLazy server . BSL.fromStrict
+  sendStream server        = sendStreamLazy server . BSL.fromStrict
   sendStreamLazy          :: ServerConnection a -> BSL.ByteString -> IO ()
   sendStreamLazy server    = mapM_ (sendStream server) . BSL.toChunks
+  sendStreamBuilder       :: ServerConnection a -> Int -> BS.Builder -> IO ()
+  sendStreamBuilder server chunksize = sendStreamLazy server
+    . BS.toLazyByteStringWith (BS.untrimmedStrategy chunksize chunksize) mempty
   receiveStream           :: ServerConnection a -> IO BS.ByteString
-  receiveStream     server = BSL.toStrict <$> receiveStreamLazy server
+  receiveStream server     = BSL.toStrict <$> receiveStreamLazy server
   receiveStreamLazy       :: ServerConnection a -> IO BSL.ByteString
   receiveStreamLazy server = BSL.fromStrict <$> receiveStream server
   {-# MINIMAL (sendStream|sendStreamLazy), (receiveStream|receiveStreamLazy) #-}
@@ -84,15 +88,14 @@ class ServerStack a => MessageServerStack a where
   type ClientMessage a
   type ServerMessage a
   sendMessage      :: ServerConnection a -> ServerMessage a -> IO ()
+  sendMessages     :: Foldable t => ServerConnection a -> t (ServerMessage a) -> IO ()
   receiveMessage   :: ServerConnection a -> IO (ClientMessage a)
   consumeMessages  :: ServerConnection a -> (ClientMessage a -> IO Bool) -> IO ()
 
-instance (Typeable f, Typeable t, Typeable p, Storable (S.SocketAddress f), S.Family f, S.Type t, S.Protocol p) => StreamServerStack (S.Socket f t p) where
-  sendStream (SocketServerConnection s) = sendAll
-    where
-      sendAll bs = do
-        sent <- S.send s bs S.msgNoSignal
-        when (sent < BS.length bs) $ sendAll (BS.drop sent bs)
+instance (Typeable f, Typeable p, Storable (S.SocketAddress f), S.Family f, S.Protocol p) => StreamServerStack (S.Socket f S.Stream p) where
+  sendStream (SocketServerConnection s) bs = S.sendAll s bs S.msgNoSignal
+  sendStreamLazy (SocketServerConnection s) lbs = S.sendAllLazy s lbs S.msgNoSignal
+  sendStreamBuilder (SocketServerConnection s) bufsize builder = void (S.sendAllBuilder s bufsize builder S.msgNoSignal)
   receiveStream (SocketServerConnection s) = S.receive s 4096 S.msgNoSignal
 
 instance (StreamServerStack a) => StreamServerStack (TLS a) where

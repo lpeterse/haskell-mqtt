@@ -20,7 +20,6 @@ import           Control.Concurrent.Async
 import qualified Control.Exception        as E
 import           Control.Monad
 import qualified Data.ByteString          as BS
-import qualified Data.ByteString.Builder  as BS
 import qualified Data.Serialize.Get       as SG
 import           Data.Typeable
 import qualified Network.MQTT.Broker      as Broker
@@ -67,7 +66,9 @@ instance (SS.StreamServerStack transport) => SS.MessageServerStack (MQTT transpo
   type ClientMessage (MQTT transport) = ClientMessage
   type ServerMessage (MQTT transport) = ServerMessage
   sendMessage connection =
-    SS.sendStreamLazy (mqttTransportConnection connection) . BS.toLazyByteString . serverMessageBuilder
+    SS.sendStreamBuilder (mqttTransportConnection connection) 8192 . serverMessageBuilder
+  sendMessages connection msgs =
+    SS.sendStreamBuilder (mqttTransportConnection connection) 8192 $ foldl (\b m-> b `mappend` serverMessageBuilder m) mempty msgs
   receiveMessage connection =
     modifyMVar (mqttTransportLeftover connection) (execute . decode)
     where
@@ -150,7 +151,6 @@ handleConnection broker conn _connInfo =
       print "Start consuming messages."
       SS.consumeMessages conn $ \packet-> do
         writeIORef recentActivity True
-        print packet
         case packet of
           ClientConnect {} ->
             E.throwIO (ProtocolViolation "Unexpected CONN packet." :: SS.ServerException (MQTT transport))
@@ -171,5 +171,5 @@ handleConnection broker conn _connInfo =
     handleOutput session = forever $ do
       -- The `dequeue` operation is blocking until messages get available.
       msgs <- Session.dequeue session
-      --print msgs
-      mapM_ (SS.sendMessage conn) msgs
+      --threadDelay 10
+      SS.sendMessages conn msgs
