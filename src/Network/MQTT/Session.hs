@@ -120,7 +120,7 @@ dequeue session = do
 
 dequeueQos0    :: ServerQueue -> (ServerQueue, Seq.Seq ServerMessage)
 dequeueQos0 queue =
-  ( queue { queueQos0 = mempty }, fmap Publish (queueQos0 queue) )
+  ( queue { queueQos0 = mempty }, fmap ServerPublish (queueQos0 queue) )
 
 dequeueNonQos0 :: ServerQueue -> (ServerQueue, Seq.Seq ServerMessage)
 dequeueNonQos0
@@ -135,19 +135,19 @@ dequeueNonQos0
   where
     dequeueAcknowledged qs@(q,s)
       | Seq.null (queueAcknowledged q) = qs
-      | otherwise = ( q { queueAcknowledged = mempty }, s <> fmap PublishAcknowledged (queueAcknowledged q) )
+      | otherwise = ( q { queueAcknowledged = mempty }, s <> fmap ServerPublishAcknowledged (queueAcknowledged q) )
     dequeueReceived qs@(q,s)
       | Seq.null (queueReceived q) = qs
-      | otherwise = ( q { queueReceived = mempty }, s <> fmap PublishReceived (queueReceived q) )
+      | otherwise = ( q { queueReceived = mempty }, s <> fmap ServerPublishReceived (queueReceived q) )
     dequeueCompleted qs@(q,s)
       | Seq.null (queueCompleted q) = qs
-      | otherwise = ( q { queueCompleted = mempty }, s <> fmap PublishReceived (queueCompleted q) )
+      | otherwise = ( q { queueCompleted = mempty }, s <> fmap ServerPublishReceived (queueCompleted q) )
     dequeueSubscribed qs@(q,s)
       | Seq.null (queueSubscribed q) = qs
-      | otherwise = ( q { queueSubscribed = mempty }, s <> fmap (uncurry SubscribeAcknowledged) (queueSubscribed q) )
+      | otherwise = ( q { queueSubscribed = mempty }, s <> fmap (uncurry ServerSubscribeAcknowledged) (queueSubscribed q) )
     dequeueUnsubscribed qs@(q,s)
       | Seq.null (queueUnsubscribed q) = qs
-      | otherwise = ( q { queueUnsubscribed = mempty }, s <> fmap UnsubscribeAcknowledged (queueUnsubscribed q) )
+      | otherwise = ( q { queueUnsubscribed = mempty }, s <> fmap ServerUnsubscribeAcknowledged (queueUnsubscribed q) )
     dequeueQos1 qs@(q,s)
       | Seq.null msgs = qs
       | otherwise = ( q { queuePids           = pids''
@@ -155,7 +155,7 @@ dequeueNonQos0
                         , queueUnacknowledged = foldr (uncurry IM.insert) (queueUnacknowledged q)
                                                       (Seq.zipWith (,) pids' msgs')
                         }
-                    , s <> Seq.zipWith Publish' pids' msgs' )
+                    , s <> Seq.zipWith ServerPublish' pids' msgs' )
       where
         pids                    = queuePids q
         msgs                    = queueQos1 q
@@ -169,7 +169,7 @@ dequeueNonQos0
                         , queueUnreceived  = foldr (uncurry IM.insert) (queueUnreceived q)
                                                    (Seq.zipWith (,) pids' msgs')
                         }
-                      , s <> Seq.zipWith Publish' pids' msgs' )
+                      , s <> Seq.zipWith ServerPublish' pids' msgs' )
       where
         pids                    = queuePids q
         msgs                    = queueQos2 q

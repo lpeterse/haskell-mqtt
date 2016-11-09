@@ -101,15 +101,15 @@ data ClientMessage
 
 data ServerMessage
    = ConnectAck !(Either ConnectionRefusal SessionPresent)
-   | PingResponse
-   | Publish                                                      !Message
-   | Publish'                    {-# UNPACK #-} !PacketIdentifier !Message
-   | PublishAcknowledged         {-# UNPACK #-} !PacketIdentifier
-   | PublishReceived             {-# UNPACK #-} !PacketIdentifier
-   | PublishRelease              {-# UNPACK #-} !PacketIdentifier
-   | PublishComplete             {-# UNPACK #-} !PacketIdentifier
-   | SubscribeAcknowledged       {-# UNPACK #-} !PacketIdentifier ![Maybe QualityOfService]
-   | UnsubscribeAcknowledged     {-# UNPACK #-} !PacketIdentifier
+   | ServerPublish                                                         !Message
+   | ServerPublish'                       {-# UNPACK #-} !PacketIdentifier !Message
+   | ServerPublishAcknowledged            {-# UNPACK #-} !PacketIdentifier
+   | ServerPublishReceived                {-# UNPACK #-} !PacketIdentifier
+   | ServerPublishRelease                 {-# UNPACK #-} !PacketIdentifier
+   | ServerPublishComplete                {-# UNPACK #-} !PacketIdentifier
+   | ServerSubscribeAcknowledged          {-# UNPACK #-} !PacketIdentifier ![Maybe QualityOfService]
+   | ServerUnsubscribeAcknowledged        {-# UNPACK #-} !PacketIdentifier
+   | ServerPingResponse
    deriving (Eq, Show)
 
 clientMessageParser :: SG.Get ClientMessage
@@ -131,13 +131,13 @@ serverMessageParser :: SG.Get ServerMessage
 serverMessageParser =
   SG.lookAhead SG.getWord8 >>= \h-> case h .&. 0xf0 of
     0x20 -> connectAcknowledgedParser
-    0x30 -> publishParser      Publish Publish'
-    0x40 -> acknowledgedParser PublishAcknowledged
-    0x50 -> acknowledgedParser PublishReceived
-    0x60 -> acknowledgedParser PublishRelease
-    0x70 -> acknowledgedParser PublishComplete
+    0x30 -> publishParser      ServerPublish ServerPublish'
+    0x40 -> acknowledgedParser ServerPublishAcknowledged
+    0x50 -> acknowledgedParser ServerPublishReceived
+    0x60 -> acknowledgedParser ServerPublishRelease
+    0x70 -> acknowledgedParser ServerPublishComplete
+    0xb0 -> acknowledgedParser ServerUnsubscribeAcknowledged
     0x90 -> subscribeAcknowledgedParser
-    0xb0 -> acknowledgedParser UnsubscribeAcknowledged
     0xd0 -> pingResponseParser
     _    -> fail "serverMessageParser: Packet type not implemented."
 
@@ -247,7 +247,7 @@ subscribeAcknowledgedParser = do
   void SG.getWord8
   rlen <- lengthParser
   pid  <- fromIntegral <$> SG.getWord16be
-  SubscribeAcknowledged pid <$> (map f . BS.unpack <$> SG.getBytes (rlen - 2))
+  ServerSubscribeAcknowledged pid <$> (map f . BS.unpack <$> SG.getBytes (rlen - 2))
   where
     f 0x00 = Just Qos0
     f 0x01 = Just Qos1
@@ -263,7 +263,7 @@ pingRequestParser = do
 pingResponseParser :: SG.Get ServerMessage
 pingResponseParser = do
   void SG.getWord16be
-  pure PingResponse
+  pure ServerPingResponse
 {-# INLINE pingResponseParser #-}
 
 disconnectParser :: SG.Get ClientMessage
@@ -318,22 +318,6 @@ clientMessageBuilder (ClientConnect cid cleanSession keepAlive will credentials)
             x3   = BS.word16BE (fromIntegral plen)
             x4   = BS.byteString p
         in (x1 <> x2 <> x3 <> x4, 4 + ulen + plen, 0xc0)
-{-
-clientMessageBuilder (Subscribe (PacketIdentifier p) tf)  =
-  BS.word8 0x82 <> lengthBuilder len <> BS.word16BE (fromIntegral p) <> mconcat ( map f tf )
-  where
-    f (t, q) = (bUtf8String t <>) $ BS.word8 $ case q of
-      Qos0 -> 0x00
-      Qos1 -> 0x01
-      Qos2 -> 0x02
-    len  = 2 + length tf * 3 + sum ( map (BS.length . T.encodeUtf8 . fst) tf )
-clientMessageBuilder (Unsubscribe (PacketIdentifier p) tfs) =
-  BS.word8 0xa2 <> lengthBuilder len
-    <> BS.word16BE (fromIntegral p) <> mconcat ( map bUtf8String tfs )
-  where
-    bfs = map T.encodeUtf8 tfs
-    len = 2 + sum ( map ( ( + 2 ) . BS.length ) bfs )
--}
 clientMessageBuilder (ClientPublish msg) =
   publishBuilder Nothing msg
 clientMessageBuilder (ClientPublish' pid msg) =
@@ -346,10 +330,28 @@ clientMessageBuilder (ClientPublishRelease p) =
   BS.word32BE $ fromIntegral $ 0x62020000 .|. p
 clientMessageBuilder (ClientPublishComplete p) =
   BS.word32BE $ fromIntegral $ 0x70020000 .|. p
-clientMessageBuilder (ClientSubscribe _pid _filters) =
-  undefined
-clientMessageBuilder (ClientUnsubscribe _pid _filters) =
-  undefined
+clientMessageBuilder (ClientSubscribe pid filters) =
+  BS.word8 0x82 <> lengthBuilder len <> BS.word16BE (fromIntegral pid)
+                                     <> mconcat (fmap filterBuilder filters)
+  where
+    filterBuilder (f, q) = BS.word16BE (fromIntegral fl) <> fb <> qb
+      where
+        fb = TF.filterBuilder f
+        fl = TF.filterLength  f
+        qb = BS.word8 $ case q of
+          Qos0 -> 0x00
+          Qos1 -> 0x01
+          Qos2 -> 0x02
+    len  = 2  + sum ( map ( (+3) . TF.filterLength . fst ) filters )
+clientMessageBuilder (ClientUnsubscribe pid filters) =
+  BS.word8 0xa2 <> lengthBuilder len <> BS.word16BE (fromIntegral pid)
+                                     <> mconcat ( map filterBuilder filters )
+  where
+    filterBuilder f = BS.word16BE (fromIntegral fl) <> fb
+      where
+        fb = TF.filterBuilder f
+        fl = TF.filterLength  f
+    len  = 2  + sum ( map ( (+2) . TF.filterLength ) filters )
 clientMessageBuilder ClientPingRequest =
   BS.word16BE 0xc000
 clientMessageBuilder ClientDisconnect =
@@ -360,19 +362,19 @@ serverMessageBuilder (ConnectAck crs) =
   BS.word32BE $ 0x20020000 .|. case crs of
     Left cr -> fromIntegral $ fromEnum cr + 1
     Right s -> if s then 0x0100 else 0
-serverMessageBuilder (Publish msg) =
+serverMessageBuilder (ServerPublish msg) =
   publishBuilder Nothing msg
-serverMessageBuilder (Publish' pid msg) =
+serverMessageBuilder (ServerPublish' pid msg) =
   publishBuilder (Just pid) msg
-serverMessageBuilder (PublishAcknowledged p) =
+serverMessageBuilder (ServerPublishAcknowledged p) =
   BS.word32BE $ fromIntegral $ 0x40020000 .|. p
-serverMessageBuilder (PublishReceived p) =
+serverMessageBuilder (ServerPublishReceived p) =
   BS.word32BE $ fromIntegral $ 0x50020000 .|. p
-serverMessageBuilder (PublishRelease p) =
+serverMessageBuilder (ServerPublishRelease p) =
   BS.word32BE $ fromIntegral $ 0x62020000 .|. p
-serverMessageBuilder (PublishComplete p) =
+serverMessageBuilder (ServerPublishComplete p) =
   BS.word32BE $ fromIntegral $ 0x70020000 .|. p
-serverMessageBuilder (SubscribeAcknowledged p rcs) =
+serverMessageBuilder (ServerSubscribeAcknowledged p rcs) =
   BS.word8 0x90 <> lengthBuilder (2 + length rcs)
     <> BS.word16BE (fromIntegral p) <> mconcat ( map ( BS.word8 . f ) rcs )
   where
@@ -380,9 +382,9 @@ serverMessageBuilder (SubscribeAcknowledged p rcs) =
     f (Just Qos0) = 0x00
     f (Just Qos1) = 0x01
     f (Just Qos2) = 0x02
-serverMessageBuilder (UnsubscribeAcknowledged p) =
+serverMessageBuilder (ServerUnsubscribeAcknowledged p) =
   BS.word16BE 0xb002 <> BS.word16BE (fromIntegral p)
-serverMessageBuilder PingResponse =
+serverMessageBuilder ServerPingResponse =
   BS.word16BE 0xd000
 
 publishBuilder :: Maybe PacketIdentifier -> Message -> BS.Builder

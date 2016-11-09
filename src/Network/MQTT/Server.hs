@@ -163,7 +163,7 @@ handleConnection broker conn _connInfo =
           ClientUnsubscribe {} ->
             pure False
           ClientPingRequest {} -> do
-            SS.sendMessage conn PingResponse
+            SS.sendMessage conn ServerPingResponse
             pure False
           ClientDisconnect ->
             pure True

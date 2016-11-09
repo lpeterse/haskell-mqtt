@@ -16,7 +16,9 @@ module Network.MQTT.Topic
   , topicBuilder
   , Filter ()
   , filterLevels
+  , filterLength
   , filterParser
+  , filterBuilder
   , Level ()
   , levelParser
   , multiLevelWildcard
@@ -99,6 +101,13 @@ topicBuilder (Topic (Level x:|xs)) =
     (BS.shortByteString x) xs
 {-# INLINE topicBuilder #-}
 
+filterBuilder :: Filter -> BS.Builder
+filterBuilder (Filter (Level x:|xs)) =
+  foldl'
+    (\acc (Level l)-> acc <> slashBuilder <> BS.shortByteString l)
+    (BS.shortByteString x) xs
+{-# INLINE filterBuilder #-}
+
 topicLength :: Topic -> Int
 topicLength (Topic (Level x:|xs)) =
    BS.length x + len' xs 0
@@ -106,6 +115,14 @@ topicLength (Topic (Level x:|xs)) =
     len' []                      acc = acc
     len' (Level z:zs) acc = len' zs $! acc + 1 + BS.length z
 {-# INLINE topicLength #-}
+
+filterLength :: Filter -> Int
+filterLength (Filter (Level x:|xs)) =
+   BS.length x + len' xs 0
+   where
+    len' []                      acc = acc
+    len' (Level z:zs) acc = len' zs $! acc + 1 + BS.length z
+{-# INLINE filterLength #-}
 
 filterParser :: A.Parser Filter
 filterParser = (<|> fail "invalid filter") $ Filter <$> do

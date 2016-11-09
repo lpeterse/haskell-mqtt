@@ -4,6 +4,7 @@
 {-# LANGUAGE TypeFamilies      #-}
 module Main where
 
+import           Data.String
 import           Control.Concurrent
 import           Control.Concurrent.Async
 import           Control.Monad
@@ -45,8 +46,8 @@ main  = do
         }
       }
     }
-    pingThread broker = forever $ do
-      threadDelay 1000000
-      Broker.publishUpstream' broker msg
+    pingThread broker = forM_ [0..] $ \uptime-> do
+      threadDelay 1000
+      Broker.publishUpstream' broker (msg (uptime :: Int))
       where
-        msg = Message "$SYS/ping" "foobar" Qos0 False False
+        msg uptime = Message "$SYS/uptime" (fromString $ show uptime) Qos0 False False
