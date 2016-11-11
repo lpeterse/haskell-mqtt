@@ -20,7 +20,7 @@ import qualified System.Socket.Type.Stream  as S
 main :: IO ()
 main  = do
   broker <- Broker.new undefined
-  void $ async (pingThread broker)
+  --void $ async (pingThread broker)
   SS.withServer sockConfig (handleServer broker) `race_` SS.withServer wsConfig (handleServer broker)
   where
     handleServer :: (SS.StreamServerStack a, Show (SS.ServerConnectionInfo a)) => Broker.Broker auth -> SS.Server (Server.MQTT a) -> IO ()

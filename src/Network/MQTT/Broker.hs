@@ -67,13 +67,8 @@ data SessionRequest
      }
 
 withSession :: Broker auth -> SessionRequest -> IO () -> IO () -> (Session.Session -> SessionPresent -> IO ()) -> IO ()
-withSession broker request sessionRejectHandler sessionErrorHandler sessionHandler = do
-  r <- randomIO :: IO Double
-  if r < 0.2
-    then sessionErrorHandler
-    else if r < 0.4
-      then sessionRejectHandler
-      else bracket
+withSession broker request _sessionRejectHandler _sessionErrorHandler sessionHandler = do
+  bracket
       ( createSession broker defaultSessionConfig )
       ( when (sessionClean request) . closeSession broker )
       ( `sessionHandler` False )
