@@ -66,7 +66,7 @@ test-suite test
     TopicTest
   build-depends:
       base >= 4.8 && < 5
-    , cereal
+    , binary
     , tasty >= 0.11
     , tasty-hunit
     , tasty-quickcheck

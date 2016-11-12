@@ -20,7 +20,7 @@ import           Control.Concurrent.Async
 import qualified Control.Exception        as E
 import           Control.Monad
 import qualified Data.ByteString          as BS
-import qualified Data.Serialize.Get       as SG
+import qualified Data.Binary.Get          as SG
 import           Data.Typeable
 import qualified Network.MQTT.Broker      as Broker
 import qualified Network.MQTT.Session     as Session
@@ -70,25 +70,29 @@ instance (SS.StreamServerStack transport) => SS.MessageServerStack (MQTT transpo
   sendMessages connection msgs =
     SS.sendStreamBuilder (mqttTransportConnection connection) 8192 $ foldl (\b m-> b `mappend` serverMessageBuilder m) mempty msgs
   receiveMessage connection =
-    modifyMVar (mqttTransportLeftover connection) (execute . decode)
+    modifyMVar (mqttTransportLeftover connection) (execute . SG.pushChunk decode)
     where
-      fetch  = SS.receiveStream (mqttTransportConnection connection)
-      decode = SG.runGetPartial clientMessageParser
+      fetch  = do
+        bs <- SS.receiveStream (mqttTransportConnection connection)
+        pure $ if BS.null bs then Nothing else Just bs
+      decode = SG.runGetIncremental clientMessageParser
       execute (SG.Partial continuation) = execute =<< continuation <$> fetch
-      execute (SG.Fail failure _)       = E.throwIO (ProtocolViolation failure :: SS.ServerException (MQTT transport))
-      execute (SG.Done msg leftover')   = pure (leftover', msg)
+      execute (SG.Fail _ _ failure)     = E.throwIO (ProtocolViolation failure :: SS.ServerException (MQTT transport))
+      execute (SG.Done leftover' _ msg) = pure (leftover', msg)
   consumeMessages connection consume =
-    modifyMVar_ (mqttTransportLeftover connection) (execute . decode)
+    modifyMVar_ (mqttTransportLeftover connection) (execute . SG.pushChunk decode)
     where
-      fetch  = SS.receiveStream (mqttTransportConnection connection)
-      decode = SG.runGetPartial clientMessageParser
+      fetch  = do
+        bs <- SS.receiveStream (mqttTransportConnection connection)
+        pure $ if BS.null bs then Nothing else Just bs
+      decode = SG.runGetIncremental clientMessageParser
       execute (SG.Partial continuation) = execute =<< continuation <$> fetch
-      execute (SG.Fail failure _)       = E.throwIO (ProtocolViolation failure :: SS.ServerException (MQTT transport))
-      execute (SG.Done msg leftover')   = do
+      execute (SG.Fail _ _ failure)     = E.throwIO (ProtocolViolation failure :: SS.ServerException (MQTT transport))
+      execute (SG.Done leftover' _ msg) = do
         done <- consume msg
         if done
           then pure leftover'
-          else execute (decode leftover')
+          else execute (SG.pushChunk decode leftover')
 
 deriving instance Show (SS.ServerConnectionInfo transport) => Show (SS.ServerConnectionInfo (MQTT transport))
 

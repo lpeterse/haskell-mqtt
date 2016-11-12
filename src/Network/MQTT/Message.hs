@@ -40,7 +40,7 @@ import qualified Data.ByteString.Builder    as BS
 import qualified Data.ByteString.Lazy       as BSL
 import           Data.Maybe
 import           Data.Monoid
-import qualified Data.Serialize.Get         as SG
+import qualified Data.Binary.Get            as SG
 import qualified Data.Text                  as T
 import qualified Data.Text.Encoding         as T
 import           Data.Word
@@ -247,7 +247,7 @@ subscribeAcknowledgedParser = do
   void SG.getWord8
   rlen <- lengthParser
   pid  <- fromIntegral <$> SG.getWord16be
-  ServerSubscribeAcknowledged pid <$> (map f . BS.unpack <$> SG.getBytes (rlen - 2))
+  ServerSubscribeAcknowledged pid <$> (map f . BS.unpack <$> SG.getByteString (rlen - 2))
   where
     f 0x00 = Just Qos0
     f 0x01 = Just Qos1
