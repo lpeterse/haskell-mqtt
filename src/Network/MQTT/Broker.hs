@@ -76,12 +76,14 @@ withSession broker request _sessionRejectHandler _sessionErrorHandler sessionHan
 createSession :: Broker auth -> SessionConfig -> IO Session.Session
 createSession (Broker _ broker) _config =
   modifyMVar broker $ \st-> do
+    incompleteQos2 <- newMVar IM.empty
     subscriptions <- newMVar R.empty
     queue <- newMVar (Session.emptyServerQueue 1000)
     queuePending <- newEmptyMVar
     let newSessionIdentifier = brokerMaxSessionIdentifier st + 1
         newSession = Session.Session
          { Session.sessionIdentifier       = newSessionIdentifier
+         , Session.sessionIncompleteQos2   = incompleteQos2
          , Session.sessionSubscriptions    = subscriptions
          , Session.sessionQueue            = queue
          , Session.sessionQueuePending     = queuePending

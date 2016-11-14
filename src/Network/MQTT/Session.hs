@@ -25,6 +25,7 @@ type Identifier = Int
 data Session = Session
   { sessionIdentifier     :: !Identifier
   , sessionSubscriptions  :: !(MVar (R.RoutingTree (Identity QualityOfService)))
+  , sessionIncompleteQos2 :: !(MVar (IM.IntMap Message))
   , sessionQueue          :: !(MVar ServerQueue)
   , sessionQueuePending   :: !(MVar ())
   , sessionQueueLimitQos0 :: Int
@@ -80,6 +81,24 @@ enqueueMessage session msg = do
       Qos2 -> queue { queueQos1 = queueQos1 queue Seq.|> msg }
   notePending session
 
+enqueuePublishAcknowledged :: Session -> PacketIdentifier -> IO ()
+enqueuePublishAcknowledged session pid = do
+  modifyMVar_ (sessionQueue session) $ \queue->
+    pure $! queue { queueAcknowledged = queueAcknowledged queue Seq.|> pid }
+  notePending session
+
+enqueuePublishReceived :: Session -> PacketIdentifier -> IO ()
+enqueuePublishReceived session pid = do
+  modifyMVar_ (sessionQueue session) $ \queue->
+    pure $! queue { queueReceived = queueReceived queue Seq.|> pid }
+  notePending session
+
+enqueuePublishCompleted :: Session -> PacketIdentifier -> IO ()
+enqueuePublishCompleted session pid = do
+  modifyMVar_ (sessionQueue session) $ \queue->
+    pure $! queue { queueCompleted = queueCompleted queue Seq.|> pid }
+  notePending session
+
 enqueueSubscribeAcknowledged :: Session -> PacketIdentifier -> [Maybe QualityOfService] -> IO ()
 enqueueSubscribeAcknowledged session pid mqoss = do
   modifyMVar_ (sessionQueue session) $ \queue->
@@ -122,6 +141,18 @@ dequeueQos0    :: ServerQueue -> (ServerQueue, Seq.Seq ServerMessage)
 dequeueQos0 queue =
   ( queue { queueQos0 = mempty }, fmap ServerPublish (queueQos0 queue) )
 
+holdQos2Message :: Session -> PacketIdentifier -> Message -> IO ()
+holdQos2Message session pid msg =
+  modifyMVar_ (sessionIncompleteQos2 session) $ \im->
+    pure $! IM.insert pid msg im
+
+releaseQos2Message :: Session -> PacketIdentifier -> IO (Maybe Message)
+releaseQos2Message session pid =
+  modifyMVar (sessionIncompleteQos2 session) $ \im->
+    case IM.lookup pid im of
+      Nothing  -> pure (im, Nothing)
+      Just msg -> pure (IM.delete pid im, Just msg)
+
 dequeueNonQos0 :: ServerQueue -> (ServerQueue, Seq.Seq ServerMessage)
 dequeueNonQos0
   = dequeueQos1
@@ -141,7 +172,7 @@ dequeueNonQos0
       | otherwise = ( q { queueReceived = mempty }, s <> fmap ServerPublishReceived (queueReceived q) )
     dequeueCompleted qs@(q,s)
       | Seq.null (queueCompleted q) = qs
-      | otherwise = ( q { queueCompleted = mempty }, s <> fmap ServerPublishReceived (queueCompleted q) )
+      | otherwise = ( q { queueCompleted = mempty }, s <> fmap ServerPublishComplete (queueCompleted q) )
     dequeueSubscribed qs@(q,s)
       | Seq.null (queueSubscribed q) = qs
       | otherwise = ( q { queueSubscribed = mempty }, s <> fmap (uncurry ServerSubscribeAcknowledged) (queueSubscribed q) )

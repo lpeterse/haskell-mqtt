@@ -161,6 +161,25 @@ handleConnection broker conn _connInfo =
           ClientPublish msg -> do
             Broker.publishUpstream broker session msg
             pure False
+          ClientPublish' pid msg -> do
+            case msgQos msg of
+              Qos0 -> pure () -- should not happen (invalid state)
+              Qos1 -> do
+                Broker.publishUpstream broker session msg
+                Session.enqueuePublishAcknowledged session pid
+              Qos2 -> do
+                Session.holdQos2Message session pid msg
+                Session.enqueuePublishReceived session pid
+            pure False
+          ClientPublishRelease pid -> do
+            mmsg <- Session.releaseQos2Message session pid
+            case mmsg of
+              Nothing ->
+                pure () -- WARNING
+              Just msg -> do
+                Broker.publishUpstream broker session msg
+                Session.enqueuePublishCompleted session pid
+            pure False
           ClientSubscribe pid filters -> do
             Broker.subscribe broker session pid filters
             pure False
