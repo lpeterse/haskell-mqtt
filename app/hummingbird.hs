@@ -20,7 +20,7 @@ import qualified System.Socket.Type.Stream  as S
 main :: IO ()
 main  = do
   broker <- Broker.new undefined
-  --void $ async (pingThread broker)
+  void $ async (pingThread broker)
   SS.withServer sockConfig (handleServer broker) `race_` SS.withServer wsConfig (handleServer broker)
   where
     handleServer :: (SS.StreamServerStack a, Show (SS.ServerConnectionInfo a)) => Broker.Broker auth -> SS.Server (Server.MQTT a) -> IO ()
@@ -47,7 +47,7 @@ main  = do
       }
     }
     pingThread broker = forM_ [0..] $ \uptime-> do
-      threadDelay 1000
+      threadDelay 1000000
       Broker.publishUpstream' broker (msg (uptime :: Int))
       where
         msg uptime = Message "$SYS/uptime" (fromString $ show uptime) Qos0 False False

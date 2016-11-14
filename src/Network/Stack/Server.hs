@@ -71,11 +71,12 @@ class (Typeable a) => ServerStack a where
   withConnection :: Server a -> (ServerConnection a -> ServerConnectionInfo a -> IO b) -> IO (Async b)
 
 class ServerStack a => StreamServerStack a where
-  sendStream              :: ServerConnection a -> BS.ByteString -> IO ()
-  sendStream server        = sendStreamLazy server . BSL.fromStrict
-  sendStreamLazy          :: ServerConnection a -> BSL.ByteString -> IO ()
-  sendStreamLazy server    = mapM_ (sendStream server) . BSL.toChunks
-  sendStreamBuilder       :: ServerConnection a -> Int -> BS.Builder -> IO ()
+  sendStream              :: ServerConnection a -> BS.ByteString -> IO Int
+  sendStream server bs     = fromIntegral <$> sendStreamLazy server (BSL.fromStrict bs)
+  sendStreamLazy          :: ServerConnection a -> BSL.ByteString -> IO Int64
+  sendStreamLazy server    = foldM
+    (\sent bs-> sendStream server bs >>= \sent'-> pure $! sent + fromIntegral sent') 0 . BSL.toChunks
+  sendStreamBuilder       :: ServerConnection a -> Int -> BS.Builder -> IO Int64
   sendStreamBuilder server chunksize = sendStreamLazy server
     . BS.toLazyByteStringWith (BS.untrimmedStrategy chunksize chunksize) mempty
   receiveStream           :: ServerConnection a -> IO BS.ByteString
@@ -87,25 +88,25 @@ class ServerStack a => StreamServerStack a where
 class ServerStack a => MessageServerStack a where
   type ClientMessage a
   type ServerMessage a
-  sendMessage      :: ServerConnection a -> ServerMessage a -> IO ()
-  sendMessages     :: Foldable t => ServerConnection a -> t (ServerMessage a) -> IO ()
+  sendMessage      :: ServerConnection a -> ServerMessage a -> IO Int64
+  sendMessages     :: Foldable t => ServerConnection a -> t (ServerMessage a) -> IO Int64
   receiveMessage   :: ServerConnection a -> IO (ClientMessage a)
   consumeMessages  :: ServerConnection a -> (ClientMessage a -> IO Bool) -> IO ()
 
 instance (Typeable f, Typeable p, Storable (S.SocketAddress f), S.Family f, S.Protocol p) => StreamServerStack (S.Socket f S.Stream p) where
   sendStream (SocketServerConnection s) bs = S.sendAll s bs S.msgNoSignal
   sendStreamLazy (SocketServerConnection s) lbs = S.sendAllLazy s lbs S.msgNoSignal
-  sendStreamBuilder (SocketServerConnection s) bufsize builder = void (S.sendAllBuilder s bufsize builder S.msgNoSignal)
+  sendStreamBuilder (SocketServerConnection s) bufsize builder = S.sendAllBuilder s bufsize builder S.msgNoSignal
   receiveStream (SocketServerConnection s) = S.receive s 4096 S.msgNoSignal
 
 instance (StreamServerStack a) => StreamServerStack (TLS a) where
-  sendStreamLazy    connection = TLS.sendData      (tlsContext   connection)
-  receiveStream     connection = TLS.recvData      (tlsContext   connection)
+  sendStreamLazy connection lbs = TLS.sendData (tlsContext connection) lbs >> pure (BSL.length lbs)
+  receiveStream     connection  = TLS.recvData (tlsContext connection)
 
 instance (StreamServerStack a) => StreamServerStack (WebSocket a) where
-  sendStream        connection = WS.sendBinaryData (wsConnection connection)
-  sendStreamLazy    connection = WS.sendBinaryData (wsConnection connection)
-  receiveStreamLazy connection = WS.receiveData    (wsConnection connection)
+  sendStream     connection bs  = WS.sendBinaryData (wsConnection connection) bs  >> pure (BS.length bs)
+  sendStreamLazy connection lbs = WS.sendBinaryData (wsConnection connection) lbs >> pure (BSL.length lbs)
+  receiveStreamLazy connection  = WS.receiveData    (wsConnection connection)
 
 deriving instance Show (S.SocketAddress f) => Show (ServerConnectionInfo (S.Socket f t p))
 deriving instance Show (ServerConnectionInfo a) => Show (ServerConnectionInfo (TLS a))
@@ -161,7 +162,7 @@ instance (StreamServerStack a) => ServerStack (TLS a) where
       let backend = TLS.Backend {
           TLS.backendFlush = pure ()
         , TLS.backendClose = pure () -- backend gets closed automatically
-        , TLS.backendSend  = sendStream connection
+        , TLS.backendSend  = void . sendStream connection
         , TLS.backendRecv  = const (receiveStream connection)
         }
       mvar <- newEmptyMVar
@@ -199,7 +200,7 @@ instance (StreamServerStack a) => ServerStack (WebSocket a) where
     withConnection (wsTransportServer server) $ \connection info-> do
       let readSocket = (\bs-> if BS.null bs then Nothing else Just bs) <$> receiveStream connection
       let writeSocket Nothing   = pure ()
-          writeSocket (Just bs) = sendStream connection (BSL.toStrict bs)
+          writeSocket (Just bs) = void (sendStream connection (BSL.toStrict bs))
       stream <- WS.makeStream readSocket writeSocket
       pendingConnection <- WS.makePendingConnectionFromStream stream (WS.ConnectionOptions $ pure ())
       acceptedConnection <- WS.acceptRequestWith pendingConnection (WS.AcceptRequest $ Just "mqtt")

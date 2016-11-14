@@ -109,7 +109,7 @@ handleConnection broker conn _connInfo =
     case msg of
       ClientConnect {} ->
         let sessionHandler session sessionPresent = do
-              SS.sendMessage conn (ConnectAck $ Right sessionPresent)
+              void $ SS.sendMessage conn (ConnectAck $ Right sessionPresent)
               print "Client accepted."
               foldl1 race_
                 [ handleInput recentActivity session
@@ -118,10 +118,10 @@ handleConnection broker conn _connInfo =
                 ]
             sessionUnauthorizedHandler = do
               print "Client not authorized."
-              SS.sendMessage conn (ConnectAck $ Left NotAuthorized)
+              void $ SS.sendMessage conn (ConnectAck $ Left NotAuthorized)
             sessionErrorHandler = do
               print "Server unavailable."
-              SS.sendMessage conn (ConnectAck $ Left ServerUnavailable)
+              void $ SS.sendMessage conn (ConnectAck $ Left ServerUnavailable)
             sessionRequest = Broker.SessionRequest
               { Broker.sessionRequestClientIdentifier = connectClientIdentifier msg
               , Broker.sessionRequestCredentials      = connectCredentials msg
