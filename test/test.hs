@@ -4,9 +4,9 @@ module Main where
 import           Control.Exception       (SomeException, try)
 import qualified Data.ByteString         as BS
 import qualified Data.ByteString.Builder as BS
-import qualified Data.ByteString.Lazy    as LBS
+import qualified Data.ByteString.Lazy    as BSL
 import           Data.Monoid
-import qualified Data.Serialize.Get      as SG
+import qualified Data.Binary.Get         as SG
 import qualified Data.Text               as T
 import           Network.MQTT.Message
 import           Prelude                 hiding (head)
@@ -31,56 +31,46 @@ tgRawMessage = testGroup "Encoding / Decoding"
 testLengthEncoding :: TestTree
 testLengthEncoding =
   testGroup "lengthParser, lengthBuilder"
-  [ testCase "p [193,2] == 321" $ assertEqual ""
-      ( Right 321 )
-      ( SG.runGet lengthParser $ BS.pack [193,2] )
+  [ testCase "p [193,2] == 321" $ assertEqual "" 321
+      ( SG.runGet lengthParser $ BSL.pack [193,2] )
 
-  , testCase "p [0x00] == 0" $ assertEqual ""
-      ( Right 0 )
-      ( SG.runGet lengthParser (BS.pack [0x00]) )
+  , testCase "p [0x00] == 0" $ assertEqual "" 0
+      ( SG.runGet lengthParser (BSL.pack [0x00]) )
 
-  , testCase "p [0x7f] == 127" $ assertEqual ""
-      ( Right 127 )
-      ( SG.runGet lengthParser (BS.pack [0x7f]) )
+  , testCase "p [0x7f] == 127" $ assertEqual "" 127
+      ( SG.runGet lengthParser (BSL.pack [0x7f]) )
 
-  , testCase "p [0x80, 0x01] == 128" $ assertEqual ""
-      ( Right 128 )
-      ( SG.runGet lengthParser (BS.pack [0x80, 0x01]) )
+  , testCase "p [0x80, 0x01] == 128" $ assertEqual "" 128
+      ( SG.runGet lengthParser (BSL.pack [0x80, 0x01]) )
 
-  , testCase "p [0xff, 0x7f] == 16383" $ assertEqual ""
-      ( Right 16383 )
-      ( SG.runGet lengthParser (BS.pack [0xff, 0x7f]) )
+  , testCase "p [0xff, 0x7f] == 16383" $ assertEqual "" 16383
+      ( SG.runGet lengthParser (BSL.pack [0xff, 0x7f]) )
 
-  , testCase "p [0x80, 0x80, 0x01] == 16384" $ assertEqual ""
-      ( Right 16384 )
-      ( SG.runGet lengthParser (BS.pack [0x80, 0x80, 0x01]) )
+  , testCase "p [0x80, 0x80, 0x01] == 16384" $ assertEqual "" 16384
+      ( SG.runGet lengthParser (BSL.pack [0x80, 0x80, 0x01]) )
 
-  , testCase "p [0xff, 0xff, 0x7f] == 2097151" $ assertEqual ""
-      ( Right 2097151 )
-      ( SG.runGet lengthParser (BS.pack [0xff, 0xff, 0x7f]) )
+  , testCase "p [0xff, 0xff, 0x7f] == 2097151" $ assertEqual "" 2097151
+      ( SG.runGet lengthParser (BSL.pack [0xff, 0xff, 0x7f]) )
 
-  , testCase "p [0x80, 0x80, 0x80, 0x01] == 2097152" $ assertEqual ""
-      ( Right 2097152 )
-      ( SG.runGet lengthParser (BS.pack [0x80, 0x80, 0x80, 0x01]) )
+  , testCase "p [0x80, 0x80, 0x80, 0x01] == 2097152" $ assertEqual "" 2097152
+      ( SG.runGet lengthParser (BSL.pack [0x80, 0x80, 0x80, 0x01]) )
 
-  , testCase "p [0xff, 0xff, 0xff, 0x7f] == 268435455" $ assertEqual ""
-      ( Right 268435455 )
-      ( SG.runGet lengthParser (BS.pack [0xff, 0xff, 0xff, 0x7f]) )
+  , testCase "p [0xff, 0xff, 0xff, 0x7f] == 268435455" $ assertEqual "" 268435455
+      ( SG.runGet lengthParser (BSL.pack [0xff, 0xff, 0xff, 0x7f]) )
 
   , testCase "p [0xff, 0xff, 0xff, 0xff] == invalid" $ assertEqual ""
-      ( Left "Failed reading: lengthParser: invalid input\nEmpty call stack\n" )
-      ( SG.runGet lengthParser (BS.pack [0xff, 0xff, 0xff, 0xff]) )
+      ( Left ("", 4, "lengthParser: invalid input") )
+      ( SG.runGetOrFail lengthParser (BSL.pack [0xff, 0xff, 0xff, 0xff]) )
 
   , QC.testProperty "lengthParser . lengthBuilder == id" $
       \i -> let i' = i `mod` 268435455
-            in  Right i' == SG.runGet lengthParser
-              (LBS.toStrict $ BS.toLazyByteString (lengthBuilder i'))
+            in  i' == SG.runGet lengthParser (BS.toLazyByteString (lengthBuilder i'))
   ]
 
 {-
 tgRawMessageAll :: TestTree
 tgRawMessageAll = QC.testProperty "pRawMessage . bRawMessage == id" $ \msg->
-  Right msg === SG.runGet pRawMessage (LBS.toStrict $ BS.toLazyByteString $ bRawMessage msg)
+  Right msg === SG.runGet pRawMessage (BSL.toStrict $ BS.toLazyByteString $ bRawMessage msg)
 
 instance Arbitrary RawMessage where
   arbitrary = oneof
