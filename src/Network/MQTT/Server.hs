@@ -19,19 +19,31 @@ import           Control.Concurrent
 import           Control.Concurrent.Async
 import qualified Control.Exception        as E
 import           Control.Monad
+import           Data.CaseInsensitive          (CI)
 import qualified Data.ByteString          as BS
 import qualified Data.Binary.Get          as SG
 import           Data.Typeable
+import           Network.MQTT.Authentication
 import qualified Network.MQTT.Broker      as Broker
 import qualified Network.MQTT.Session     as Session
 import           Network.MQTT.Message
 import qualified Network.Stack.Server     as SS
+import qualified System.Socket as S
+import qualified Network.WebSockets as WS
 
 instance (Typeable transport) => E.Exception (SS.ServerException (MQTT transport))
 
 data MQTT transport
-
 type RecentActivity = IORef Bool
+
+class SS.ServerStack a => MqttServerTransportStack a where
+  connRequestHead :: SS.ServerConnectionInfo a -> Maybe WS.RequestHead
+
+instance (Typeable f, Typeable t, Typeable p, S.Family f, S.Protocol p, S.Type t) => MqttServerTransportStack (S.Socket f t p) where
+  connRequestHead = Nothing
+
+instance MqttServerTransportStack (SS.WebSocket a) where
+  connRequestHead = Just . SS.wsRequestHead
 
 instance (SS.StreamServerStack transport) => SS.ServerStack (MQTT transport) where
   data Server (MQTT transport) = MqttServer
@@ -96,8 +108,8 @@ instance (SS.StreamServerStack transport) => SS.MessageServerStack (MQTT transpo
 
 deriving instance Show (SS.ServerConnectionInfo transport) => Show (SS.ServerConnectionInfo (MQTT transport))
 
-handleConnection :: forall transport authenticator. (SS.StreamServerStack transport) => Broker.Broker authenticator -> SS.ServerConnection (MQTT transport) -> SS.ServerConnectionInfo (MQTT transport) -> IO ()
-handleConnection broker conn _connInfo =
+handleConnection :: forall transport authenticator. (SS.StreamServerStack transport, MqttServerTransportStack transport) => Broker.Broker authenticator -> SS.ServerConnection (MQTT transport) -> SS.ServerConnectionInfo (MQTT transport) -> IO ()
+handleConnection broker conn connInfo =
   E.handle (\e-> do
     print "HUHU"
     print (e :: E.SomeException) >> E.throwIO e
@@ -122,11 +134,13 @@ handleConnection broker conn _connInfo =
             sessionErrorHandler = do
               print "Server unavailable."
               void $ SS.sendMessage conn (ConnectAck $ Left ServerUnavailable)
-            sessionRequest = Broker.SessionRequest
-              { Broker.sessionRequestClientIdentifier = connectClientIdentifier msg
-              , Broker.sessionRequestCredentials      = connectCredentials msg
-              , Broker.sessionRequestConnectionInfo   = ()
-              , Broker.sessionClean                   = connectCleanSession msg
+            request = Request
+              { requestClientIdentifier = connectClientIdentifier msg
+              , requestCleanSession     = connectCleanSession msg
+              , requestCredentials      = connectCredentials msg
+              , requestHead             = connRequestHead connInfo
+              , requestSecure           = False
+              , requestCertificateChain = Nothing
               }
           in Broker.withSession broker sessionRequest sessionUnauthorizedHandler sessionErrorHandler sessionHandler
       _ -> E.throwIO (ProtocolViolation "Expected CONN packet." :: SS.ServerException (MQTT transport))

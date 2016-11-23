@@ -4,14 +4,15 @@
 {-# LANGUAGE TypeFamilies      #-}
 module Main where
 
-import           Data.String
 import           Control.Concurrent
 import           Control.Concurrent.Async
 import           Control.Monad
+import           Data.String
 import qualified Network.MQTT.Broker        as Broker
 import           Network.MQTT.Message
 import qualified Network.MQTT.Server        as Server
 import qualified Network.Stack.Server       as SS
+import qualified System.Clock               as Clock
 import qualified System.Socket              as S
 import qualified System.Socket.Family.Inet  as S
 import qualified System.Socket.Protocol.TCP as S
@@ -48,6 +49,9 @@ main  = do
     }
     pingThread broker = forM_ [0..] $ \uptime-> do
       threadDelay 1000000
-      Broker.publishUpstream' broker (msg (uptime :: Int))
+      time <- Clock.sec <$> Clock.getTime Clock.Realtime
+      Broker.publishUpstream' broker (uptimeMsg (uptime :: Int))
+      Broker.publishUpstream' broker (unixtimeMsg time)
       where
-        msg uptime = Message "$SYS/uptime" (fromString $ show uptime) Qos0 False False
+        uptimeMsg uptime = Message "$SYS/uptime" (fromString $ show uptime) Qos0 False False
+        unixtimeMsg time = Message "$SYS/unixtime" (fromString $ show time) Qos0 False False

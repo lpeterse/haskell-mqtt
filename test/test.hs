@@ -19,8 +19,8 @@ import qualified TopicTest
 main :: IO ()
 main  = defaultMain $ testGroup "Network.MQTT"
   [ RoutingTreeTest.tests
-  , tgRawMessage
   , TopicTest.tests
+  , tgRawMessage
   ]
 
 tgRawMessage :: TestTree

@@ -1,4 +1,5 @@
-{-# LANGUAGE OverloadedStrings, TupleSections #-}
+{-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE TupleSections     #-}
 --------------------------------------------------------------------------------
 -- |
 -- Module      :  Network.MQTT.Broker
@@ -18,11 +19,11 @@ import           Data.Functor.Identity
 import qualified Data.IntMap              as IM
 import qualified Data.IntSet              as IS
 import           Data.Maybe
+import           Network.MQTT.Authentication ( Request(..) )
 import           Network.MQTT.Message
 import qualified Network.MQTT.RoutingTree as R
 import qualified Network.MQTT.Session     as Session
 import           Network.MQTT.Topic
-import           System.Random
 
 data Broker authenticator  = Broker {
     brokerAuthenticator :: authenticator
@@ -58,19 +59,11 @@ data SessionConfig
 defaultSessionConfig :: SessionConfig
 defaultSessionConfig = SessionConfig 100 100 100
 
-data SessionRequest
-   = SessionRequest
-     { sessionRequestClientIdentifier :: !ClientIdentifier
-     , sessionRequestCredentials      :: !(Maybe (Username, Maybe Password))
-     , sessionRequestConnectionInfo   :: ()
-     , sessionClean                   :: CleanSession
-     }
-
-withSession :: Broker auth -> SessionRequest -> IO () -> IO () -> (Session.Session -> SessionPresent -> IO ()) -> IO ()
-withSession broker request _sessionRejectHandler _sessionErrorHandler sessionHandler = do
+withSession :: Broker auth -> Request -> IO () -> IO () -> (Session.Session -> SessionPresent -> IO ()) -> IO ()
+withSession broker request _sessionRejectHandler _sessionErrorHandler sessionHandler =
   bracket
       ( createSession broker defaultSessionConfig )
-      ( when (sessionClean request) . closeSession broker )
+      ( when (requestCleanSession request) . closeSession broker )
       ( `sessionHandler` False )
 
 createSession :: Broker auth -> SessionConfig -> IO Session.Session

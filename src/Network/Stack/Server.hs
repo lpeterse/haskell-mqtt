@@ -22,8 +22,8 @@ import qualified Data.ByteString               as BS
 import qualified Data.ByteString.Builder       as BS
 import qualified Data.ByteString.Builder.Extra as BS
 import qualified Data.ByteString.Lazy          as BSL
+import           Data.Int
 import           Data.Typeable
-import Data.Int
 import qualified Data.X509                     as X509
 import           Foreign.Storable
 import qualified Network.TLS                   as TLS
@@ -112,7 +112,7 @@ deriving instance Show (S.SocketAddress f) => Show (ServerConnectionInfo (S.Sock
 deriving instance Show (ServerConnectionInfo a) => Show (ServerConnectionInfo (TLS a))
 deriving instance Show (ServerConnectionInfo a) => Show (ServerConnectionInfo (WebSocket a))
 
-instance (Storable (S.SocketAddress f), S.Family f, S.Type t, S.Protocol p, Typeable f, Typeable t, Typeable p) => ServerStack (S.Socket f t p) where
+instance (S.Family f, S.Type t, S.Protocol p, Typeable f, Typeable t, Typeable p) => ServerStack (S.Socket f t p) where
   data Server (S.Socket f t p) = SocketServer
     { socketServer       :: !(S.Socket f t p)
     , socketServerConfig :: !(ServerConfig (S.Socket f t p))

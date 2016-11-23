@@ -1,7 +1,10 @@
 resolver: lts-7.2
 packages:
   - '.'
+  - location:
+      git: https://github.com/lpeterse/haskell-socket.git
+      commit: 6f135e01ecacfd01586146fc6187dae8776fe79f
 extra-deps:
-  - socket-0.7.0.0
+  - socket-0.8.0.0
 flags: {}
 extra-package-dbs: []

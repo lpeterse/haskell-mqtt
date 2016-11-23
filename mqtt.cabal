@@ -113,7 +113,8 @@ executable hummingbird
     socket,
     text,
     bytestring,
-    async
+    async,
+    clock
   ghc-options:      -rtsopts -Wall -O2 -threaded -fprof-auto
   --prof -fprof-auto
   default-language: Haskell2010
