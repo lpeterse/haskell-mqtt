@@ -14,9 +14,10 @@ module Network.MQTT.Authentication where
 
 import           Control.Exception
 import qualified Data.ByteString      as BS
+import           Data.CaseInsensitive
 import qualified Data.Text            as T
 import qualified Data.X509            as X509
-import qualified Network.WebSockets   as WS
+
 
 -- | An `Authenticator` is able to determine a `Principal`'s identity from a
 --   `Request`.
@@ -46,7 +47,8 @@ data Request
      requestCredentials      :: Maybe (T.Text, Maybe BS.ByteString),
      -- | The HTTP request head in case the client connected via
      --   [WebSocket](https://en.wikipedia.org/wiki/WebSocket).
-     requestHead             :: Maybe WS.RequestHead,
+     requestHttpPath         :: Maybe BS.ByteString,
+     requestHttpHeaders      :: [(CI BS.ByteString, BS.ByteString)],
      -- | Is this connection secure in terms of
      --  [Transport Layer Security](https://en.wikipedia.org/wiki/Transport_Layer_Security)?
      requestSecure           :: Bool,
@@ -56,5 +58,5 @@ data Request
      --   verified that the peer owns the corresponding private key. The validation
      --   of the certificate claims (including certificate chain checking) /must/
      --   be performed by the `Authenticator`.
-     requestCertificateChain  :: Maybe X509.CertificateChain
+     requestCertificateChain :: Maybe X509.CertificateChain
    }

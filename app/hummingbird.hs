@@ -7,7 +7,10 @@ module Main where
 import           Control.Concurrent
 import           Control.Concurrent.Async
 import           Control.Monad
+import           Control.Exception
+import           Data.Typeable
 import           Data.String
+import           Network.MQTT.Authentication
 import qualified Network.MQTT.Broker        as Broker
 import           Network.MQTT.Message
 import qualified Network.MQTT.Server        as Server
@@ -20,11 +23,11 @@ import qualified System.Socket.Type.Stream  as S
 
 main :: IO ()
 main  = do
-  broker <- Broker.new undefined
+  broker <- Broker.new SimpleAuthenticator
   void $ async (pingThread broker)
   SS.withServer sockConfig (handleServer broker) `race_` SS.withServer wsConfig (handleServer broker)
   where
-    handleServer :: (SS.StreamServerStack a, Show (SS.ServerConnectionInfo a)) => Broker.Broker auth -> SS.Server (Server.MQTT a) -> IO ()
+    handleServer :: (SS.StreamServerStack a, Show (SS.ServerConnectionInfo a), Server.MqttServerTransportStack a, Authenticator auth) => Broker.Broker auth -> SS.Server (Server.MQTT a) -> IO ()
     handleServer broker server = forever $ do
       putStrLn "Waiting for connection..."
       SS.withConnection server $ \connection info-> do
@@ -55,3 +58,12 @@ main  = do
       where
         uptimeMsg uptime = Message "$SYS/uptime" (fromString $ show uptime) Qos0 False False
         unixtimeMsg time = Message "$SYS/unixtime" (fromString $ show time) Qos0 False False
+
+data SimpleAuthenticator = SimpleAuthenticator
+
+instance Authenticator SimpleAuthenticator where
+  data Principal SimpleAuthenticator = SimplePrincipal deriving (Show)
+  data AuthenticationException SimpleAuthenticator = SimpleAuthenticationException deriving (Show, Typeable)
+  authenticate _ _ = pure Nothing
+
+instance Exception (AuthenticationException SimpleAuthenticator) where

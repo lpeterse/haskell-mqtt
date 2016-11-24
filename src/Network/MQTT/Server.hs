@@ -14,22 +14,22 @@
 --------------------------------------------------------------------------------
 module Network.MQTT.Server where
 
-import Data.IORef
 import           Control.Concurrent
 import           Control.Concurrent.Async
-import qualified Control.Exception        as E
+import qualified Control.Exception           as E
 import           Control.Monad
-import           Data.CaseInsensitive          (CI)
-import qualified Data.ByteString          as BS
-import qualified Data.Binary.Get          as SG
+import qualified Data.Binary.Get             as SG
+import qualified Data.ByteString             as BS
+import           Data.CaseInsensitive
+import           Data.IORef
 import           Data.Typeable
 import           Network.MQTT.Authentication
-import qualified Network.MQTT.Broker      as Broker
-import qualified Network.MQTT.Session     as Session
+import qualified Network.MQTT.Broker         as Broker
 import           Network.MQTT.Message
-import qualified Network.Stack.Server     as SS
-import qualified System.Socket as S
-import qualified Network.WebSockets as WS
+import qualified Network.MQTT.Session        as Session
+import qualified Network.Stack.Server        as SS
+import qualified Network.WebSockets          as WS
+import qualified System.Socket               as S
 
 instance (Typeable transport) => E.Exception (SS.ServerException (MQTT transport))
 
@@ -37,13 +37,16 @@ data MQTT transport
 type RecentActivity = IORef Bool
 
 class SS.ServerStack a => MqttServerTransportStack a where
-  connRequestHead :: SS.ServerConnectionInfo a -> Maybe WS.RequestHead
+  connHttpPath    :: SS.ServerConnectionInfo a -> Maybe BS.ByteString
+  connHttpHeaders :: SS.ServerConnectionInfo a -> [(CI BS.ByteString, BS.ByteString)]
 
 instance (Typeable f, Typeable t, Typeable p, S.Family f, S.Protocol p, S.Type t) => MqttServerTransportStack (S.Socket f t p) where
-  connRequestHead = Nothing
+  connHttpPath    = const Nothing
+  connHttpHeaders = const []
 
-instance MqttServerTransportStack (SS.WebSocket a) where
-  connRequestHead = Just . SS.wsRequestHead
+instance SS.StreamServerStack a => MqttServerTransportStack (SS.WebSocket a) where
+  connHttpPath    = Just . WS.requestPath . SS.wsRequestHead
+  connHttpHeaders = WS.requestHeaders . SS.wsRequestHead
 
 instance (SS.StreamServerStack transport) => SS.ServerStack (MQTT transport) where
   data Server (MQTT transport) = MqttServer
@@ -108,7 +111,7 @@ instance (SS.StreamServerStack transport) => SS.MessageServerStack (MQTT transpo
 
 deriving instance Show (SS.ServerConnectionInfo transport) => Show (SS.ServerConnectionInfo (MQTT transport))
 
-handleConnection :: forall transport authenticator. (SS.StreamServerStack transport, MqttServerTransportStack transport) => Broker.Broker authenticator -> SS.ServerConnection (MQTT transport) -> SS.ServerConnectionInfo (MQTT transport) -> IO ()
+handleConnection :: forall transport authenticator. (SS.StreamServerStack transport, MqttServerTransportStack transport, Authenticator authenticator) => Broker.Broker authenticator -> SS.ServerConnection (MQTT transport) -> SS.ServerConnectionInfo (MQTT transport) -> IO ()
 handleConnection broker conn connInfo =
   E.handle (\e-> do
     print "HUHU"
@@ -138,11 +141,12 @@ handleConnection broker conn connInfo =
               { requestClientIdentifier = connectClientIdentifier msg
               , requestCleanSession     = connectCleanSession msg
               , requestCredentials      = connectCredentials msg
-              , requestHead             = connRequestHead connInfo
+              , requestHttpPath         = connHttpPath (mqttTransportServerConnectionInfo connInfo)
+              , requestHttpHeaders      = connHttpHeaders (mqttTransportServerConnectionInfo connInfo)
               , requestSecure           = False
               , requestCertificateChain = Nothing
               }
-          in Broker.withSession broker sessionRequest sessionUnauthorizedHandler sessionErrorHandler sessionHandler
+          in Broker.withSession broker request sessionUnauthorizedHandler sessionErrorHandler sessionHandler
       _ -> E.throwIO (ProtocolViolation "Expected CONN packet." :: SS.ServerException (MQTT transport))
   where
     -- The keep alive thread wakes up every `keepAlive/2` seconds.
@@ -200,7 +204,7 @@ handleConnection broker conn connInfo =
           ClientUnsubscribe {} ->
             pure False
           ClientPingRequest {} -> do
-            SS.sendMessage conn ServerPingResponse
+            void $ SS.sendMessage conn ServerPingResponse
             pure False
           ClientDisconnect ->
             pure True
