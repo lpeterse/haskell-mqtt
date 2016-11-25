@@ -48,6 +48,10 @@ instance SS.StreamServerStack a => MqttServerTransportStack (SS.WebSocket a) whe
   connHttpPath    = Just . WS.requestPath . SS.wsRequestHead
   connHttpHeaders = WS.requestHeaders . SS.wsRequestHead
 
+instance SS.StreamServerStack a => MqttServerTransportStack (SS.TLS a) where
+  connHttpPath    = const Nothing
+  connHttpHeaders = const []
+
 instance (SS.StreamServerStack transport) => SS.ServerStack (MQTT transport) where
   data Server (MQTT transport) = MqttServer
     { mqttTransportServer     :: SS.Server transport
@@ -88,7 +92,7 @@ instance (SS.StreamServerStack transport) => SS.MessageServerStack (MQTT transpo
     modifyMVar (mqttTransportLeftover connection) (execute . SG.pushChunk decode)
     where
       fetch  = do
-        bs <- SS.receiveStream (mqttTransportConnection connection)
+        bs <- SS.receiveStream (mqttTransportConnection connection) 4096
         pure $ if BS.null bs then Nothing else Just bs
       decode = SG.runGetIncremental clientMessageParser
       execute (SG.Partial continuation) = execute =<< continuation <$> fetch
@@ -98,7 +102,7 @@ instance (SS.StreamServerStack transport) => SS.MessageServerStack (MQTT transpo
     modifyMVar_ (mqttTransportLeftover connection) (execute . SG.pushChunk decode)
     where
       fetch  = do
-        bs <- SS.receiveStream (mqttTransportConnection connection)
+        bs <- SS.receiveStream (mqttTransportConnection connection) 4096
         pure $ if BS.null bs then Nothing else Just bs
       decode = SG.runGetIncremental clientMessageParser
       execute (SG.Partial continuation) = execute =<< continuation <$> fetch

@@ -79,10 +79,10 @@ class ServerStack a => StreamServerStack a where
   sendStreamBuilder       :: ServerConnection a -> Int -> BS.Builder -> IO Int64
   sendStreamBuilder server chunksize = sendStreamLazy server
     . BS.toLazyByteStringWith (BS.untrimmedStrategy chunksize chunksize) mempty
-  receiveStream           :: ServerConnection a -> IO BS.ByteString
-  receiveStream server     = BSL.toStrict <$> receiveStreamLazy server
-  receiveStreamLazy       :: ServerConnection a -> IO BSL.ByteString
-  receiveStreamLazy server = BSL.fromStrict <$> receiveStream server
+  receiveStream           :: ServerConnection a -> Int -> IO BS.ByteString
+  receiveStream server i   = BSL.toStrict <$> receiveStreamLazy server i
+  receiveStreamLazy       :: ServerConnection a -> Int -> IO BSL.ByteString
+  receiveStreamLazy server i = BSL.fromStrict <$> receiveStream server i
   {-# MINIMAL (sendStream|sendStreamLazy), (receiveStream|receiveStreamLazy) #-}
 
 class ServerStack a => MessageServerStack a where
@@ -93,20 +93,20 @@ class ServerStack a => MessageServerStack a where
   receiveMessage   :: ServerConnection a -> IO (ClientMessage a)
   consumeMessages  :: ServerConnection a -> (ClientMessage a -> IO Bool) -> IO ()
 
-instance (Typeable f, Typeable p, Storable (S.SocketAddress f), S.Family f, S.Protocol p) => StreamServerStack (S.Socket f S.Stream p) where
+instance (Typeable f, Typeable p, S.Family f, S.Protocol p) => StreamServerStack (S.Socket f S.Stream p) where
   sendStream (SocketServerConnection s) bs = S.sendAll s bs S.msgNoSignal
   sendStreamLazy (SocketServerConnection s) lbs = S.sendAllLazy s lbs S.msgNoSignal
   sendStreamBuilder (SocketServerConnection s) bufsize builder = S.sendAllBuilder s bufsize builder S.msgNoSignal
-  receiveStream (SocketServerConnection s) = S.receive s 4096 S.msgNoSignal
+  receiveStream (SocketServerConnection s) i = S.receive s i S.msgNoSignal
 
 instance (StreamServerStack a) => StreamServerStack (TLS a) where
   sendStreamLazy connection lbs = TLS.sendData (tlsContext connection) lbs >> pure (BSL.length lbs)
-  receiveStream     connection  = TLS.recvData (tlsContext connection)
+  receiveStream  connection _   = TLS.recvData (tlsContext connection)
 
 instance (StreamServerStack a) => StreamServerStack (WebSocket a) where
   sendStream     connection bs  = WS.sendBinaryData (wsConnection connection) bs  >> pure (BS.length bs)
   sendStreamLazy connection lbs = WS.sendBinaryData (wsConnection connection) lbs >> pure (BSL.length lbs)
-  receiveStreamLazy connection  = WS.receiveData    (wsConnection connection)
+  receiveStreamLazy connection _ = WS.receiveData   (wsConnection connection)
 
 deriving instance Show (S.SocketAddress f) => Show (ServerConnectionInfo (S.Socket f t p))
 deriving instance Show (ServerConnectionInfo a) => Show (ServerConnectionInfo (TLS a))
@@ -163,12 +163,16 @@ instance (StreamServerStack a) => ServerStack (TLS a) where
           TLS.backendFlush = pure ()
         , TLS.backendClose = pure () -- backend gets closed automatically
         , TLS.backendSend  = void . sendStream connection
-        , TLS.backendRecv  = const (receiveStream connection)
+        , TLS.backendRecv  = receiveStream connection
         }
+      print "new TLS"
       mvar <- newEmptyMVar
       context <- TLS.contextNew backend (tlsServerParams $ tlsServerConfig server)
+      print "new Context"
       TLS.contextHookSetCertificateRecv context (putMVar mvar)
-      TLS.handshake context
+      print "handshake"
+      TLS.handshake context `E.onException` print "foobar"
+      print "certchain"
       certificateChain <- tryTakeMVar mvar
       x <- handle
         (TlsServerConnection connection context)
@@ -198,7 +202,7 @@ instance (StreamServerStack a) => ServerStack (WebSocket a) where
       handle (WebSocketServer server)
   withConnection server handle =
     withConnection (wsTransportServer server) $ \connection info-> do
-      let readSocket = (\bs-> if BS.null bs then Nothing else Just bs) <$> receiveStream connection
+      let readSocket = (\bs-> if BS.null bs then Nothing else Just bs) <$> receiveStream connection 4096
       let writeSocket Nothing   = pure ()
           writeSocket (Just bs) = void (sendStream connection (BSL.toStrict bs))
       stream <- WS.makeStream readSocket writeSocket
