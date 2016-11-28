@@ -25,6 +25,7 @@ import qualified Network.MQTT.RoutingTree as R
 import qualified Network.MQTT.Session     as Session
 import           Network.MQTT.Topic
 import qualified System.Log.Logger        as Log
+import qualified Data.Map as M
 
 data Broker authenticator  = Broker {
     brokerAuthenticator :: authenticator
@@ -36,14 +37,16 @@ data BrokerState authenticator
     { brokerMaxSessionIdentifier :: !Session.Identifier
     , brokerSubscriptions        :: !(R.RoutingTree IS.IntSet)
     , brokerSessions             :: !(IM.IntMap Session.Session)
+    , brokerPrincipals           :: !(M.Map Principal (M.Map ClientIdentifier Int))
     }
 
-new :: authenticator -> IO (Broker authenticator)
+new :: Authenticator auth => auth -> IO (Broker auth)
 new authenticator = do
   st <-newMVar BrokerState
     { brokerMaxSessionIdentifier = 0
     , brokerSubscriptions        = mempty
     , brokerSessions             = mempty
+    , brokerPrincipals           = mempty
     }
   pure Broker {
       brokerAuthenticator = authenticator
@@ -60,7 +63,7 @@ data SessionConfig
 defaultSessionConfig :: SessionConfig
 defaultSessionConfig = SessionConfig 100 100 100
 
-withSession :: (Authenticator auth) => Broker auth -> Request -> IO () -> (AuthenticationException auth -> IO ()) -> (Session.Session -> SessionPresent -> Principal auth -> IO ()) -> IO ()
+withSession :: (Authenticator auth) => Broker auth -> Request -> IO () -> (AuthenticationException auth -> IO ()) -> (Session.Session -> SessionPresent -> Principal -> IO ()) -> IO ()
 withSession broker request sessionRejectHandler sessionErrorHandler sessionHandler = do
   emp <- try $ authenticate (brokerAuthenticator broker) request
   case emp of
@@ -68,31 +71,51 @@ withSession broker request sessionRejectHandler sessionErrorHandler sessionHandl
     Right mp -> case mp of
       Nothing -> sessionRejectHandler
       Just principal -> bracket
-        ( createSession broker defaultSessionConfig )
-        ( when (requestCleanSession request) . closeSession broker )
-        ( \sess-> sessionHandler sess False principal  )
+        ( modifyMVar (brokerState broker) $ getSession principal (requestClientIdentifier request) )
+        (\(_present, session)-> when (requestCleanSession request) (closeSession broker session) )
+        (\(present, session)-> sessionHandler session present principal )
 
-createSession :: Broker auth -> SessionConfig -> IO Session.Session
-createSession (Broker _ broker) _config =
-  modifyMVar broker $ \st-> do
-    incompleteQos2 <- newMVar IM.empty
-    subscriptions <- newMVar R.empty
-    queue <- newMVar (Session.emptyServerQueue 1000)
-    queuePending <- newEmptyMVar
-    let newSessionIdentifier = brokerMaxSessionIdentifier st + 1
-        newSession = Session.Session
-         { Session.sessionIdentifier       = newSessionIdentifier
-         , Session.sessionIncompleteQos2   = incompleteQos2
-         , Session.sessionSubscriptions    = subscriptions
-         , Session.sessionQueue            = queue
-         , Session.sessionQueuePending     = queuePending
-         , Session.sessionQueueLimitQos0   = 256
-         }
-        newBrokerState = st
-         { brokerMaxSessionIdentifier = newSessionIdentifier
-         , brokerSessions             = IM.insert newSessionIdentifier newSession (brokerSessions st)
-         }
-    pure (newBrokerState, newSession)
+getSession :: Principal -> ClientIdentifier -> BrokerState auth -> IO (BrokerState auth, (SessionPresent, Session.Session))
+getSession principal cid st =
+  case M.lookup principal (brokerPrincipals st) of
+    Just mcis -> case M.lookup cid mcis of
+      Just sid ->
+        case IM.lookup sid (brokerSessions st) of
+          -- Resuming an existing session..
+          Just session -> pure (st, (True, session))
+          -- Orphaned session id. This is illegal state.
+          Nothing -> do
+            Log.warningM "Broker.getSession" $ "Illegal state: Found orphanded session id " ++ show sid ++ "."
+            createSession
+      -- No session found for client identifier. Creating one.
+      Nothing -> createSession
+    -- No session entry found for principal. Creating one.
+    Nothing -> createSession
+  where
+    --createSession :: IO (BrokerState auth, Session.Session)
+    createSession = do
+      incompleteQos2 <- newMVar IM.empty
+      subscriptions <- newMVar R.empty
+      queue <- newMVar (Session.emptyServerQueue 1000)
+      queuePending <- newEmptyMVar
+      let newSessionIdentifier = brokerMaxSessionIdentifier st + 1
+          newSession = Session.Session
+           { Session.sessionIdentifier       = newSessionIdentifier
+           , Session.sessionClientIdentifier = cid
+           , Session.sessionPrincipal        = principal
+           , Session.sessionIncompleteQos2   = incompleteQos2
+           , Session.sessionSubscriptions    = subscriptions
+           , Session.sessionQueue            = queue
+           , Session.sessionQueuePending     = queuePending
+           , Session.sessionQueueLimitQos0   = 256
+           }
+          newBrokerState = st
+           { brokerMaxSessionIdentifier = newSessionIdentifier
+           , brokerSessions             = IM.insert newSessionIdentifier newSession (brokerSessions st)
+           , brokerPrincipals           = M.unionWith M.union (brokerPrincipals st) (M.singleton principal $ M.singleton cid newSessionIdentifier)
+           }
+      Log.infoM "Broker.createSession" $ "Creating new session with id " ++ show newSessionIdentifier ++ " for " ++ show principal ++ "."
+      pure (newBrokerState, (False, newSession))
 
 closeSession :: Broker auth -> Session.Session -> IO ()
 closeSession (Broker _ broker) session =
@@ -107,7 +130,12 @@ closeSession (Broker _ broker) session =
         , brokerSessions =
             IM.delete
               ( Session.sessionIdentifier session )
-              ( brokerSessions st)
+              ( brokerSessions st )
+        , brokerPrincipals =
+            M.update
+              (\mcid-> let mcid' = M.delete (Session.sessionClientIdentifier session) mcid
+                              in if M.null mcid' then Nothing else Just mcid')
+              ( Session.sessionPrincipal session ) ( brokerPrincipals st )
         }
 
 publishDownstream :: Broker auth -> Message -> IO ()

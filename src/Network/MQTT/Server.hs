@@ -132,21 +132,29 @@ handleConnection broker conn connInfo = do
               , requestCertificateChain = Nothing
               }
             sessionErrorHandler e = do
-              Log.errorM "Server.handleConnection.exception" $ show e
+              Log.errorM "Server.connectionRequest" $ show e
               void $ SS.sendMessage conn (ConnectAck $ Left ServerUnavailable)
             sessionUnauthorizedHandler = do
-              Log.warningM "Server.handleConnection.unauthorized" ""
+              Log.warningM "Server.connectionRequest" "Authentication failed."
               void $ SS.sendMessage conn (ConnectAck $ Left NotAuthorized)
             sessionHandler session sessionPresent principal = do
-              Log.infoM "Server.handleConnection.authorized" $ show principal
+              Log.infoM "Server.connection" $ "Session " ++ show (Session.sessionIdentifier session)
+                ++  ": Associated " ++ show principal
+                ++ (if sessionPresent then " with existing session." else " with new session.")
               void $ SS.sendMessage conn (ConnectAck $ Right sessionPresent)
               foldl1 race_
                 [ handleInput recentActivity session
                 , handleOutput session
                 , keepAlive recentActivity (connectKeepAlive msg)
-                ]
+                ] `E.catch` (\e-> do
+                  Log.warningM "Server.connection" $"Session " ++ show (Session.sessionIdentifier session)
+                    ++ ": Connection terminated with exception: " ++ show (e :: E.SomeException)
+                  E.throwIO e
+                )
+              Log.infoM "Server.connection" $
+                "Session " ++ show (Session.sessionIdentifier session) ++ ": Graceful disconnect."
           in do
-            Log.infoM "Server.handleConnection" $ show request
+            Log.infoM "Server.connectionRequest" $ show request
             Broker.withSession broker request sessionUnauthorizedHandler sessionErrorHandler sessionHandler
       _ -> E.throwIO (ProtocolViolation "Expected CONN packet." :: SS.ServerException (MQTT transport))
   where
@@ -206,9 +214,8 @@ handleConnection broker conn connInfo = do
           ClientPingRequest {} -> do
             void $ SS.sendMessage conn ServerPingResponse
             pure False
-          ClientDisconnect ->
+          ClientDisconnect -> do
             pure True
-          _ -> pure False -- FIXME
     handleOutput session = forever $ do
       -- The `dequeue` operation is blocking until messages get available.
       msgs <- Session.dequeue session

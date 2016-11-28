@@ -62,7 +62,7 @@ main  = do
 data SimpleAuthenticator = SimpleAuthenticator
 
 instance Authenticator SimpleAuthenticator where
-  data Principal SimpleAuthenticator = SimplePrincipal deriving (Show)
+  data Principal SimpleAuthenticator = SimplePrincipal deriving (Eq, Ord, Show)
   data AuthenticationException SimpleAuthenticator = SimpleAuthenticationException deriving (Show, Typeable)
   authenticate _ _ = pure Nothing
 

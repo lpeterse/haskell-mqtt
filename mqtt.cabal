@@ -107,20 +107,20 @@ executable MqttTreeSizeTest
     hs-source-dirs:   app
     main-is:          MqttTreeSizeTest.hs
 
-executable hummingbird
-  build-depends:
-    base,
-    mqtt,
-    socket,
-    text,
-    bytestring,
-    async,
-    clock
-  ghc-options:      -rtsopts -Wall -O2 -threaded -fprof-auto
+--executable hummingbird
+--  build-depends:
+--    base,
+--    mqtt,
+--    socket,
+--    text,
+--    bytestring,
+--    async,
+--    clock
+--  ghc-options:      -rtsopts -Wall -O2 -threaded -fprof-auto
   --prof -fprof-auto
-  default-language: Haskell2010
-  hs-source-dirs:   app
-  main-is:          hummingbird.hs
+--  default-language: Haskell2010
+--  hs-source-dirs:   app
+--  main-is:          hummingbird.hs
 
 benchmark topic-matching
   type:             exitcode-stdio-1.0
