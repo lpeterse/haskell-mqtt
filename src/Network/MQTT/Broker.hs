@@ -19,11 +19,12 @@ import           Data.Functor.Identity
 import qualified Data.IntMap              as IM
 import qualified Data.IntSet              as IS
 import           Data.Maybe
-import           Network.MQTT.Authentication ( Authenticator, Request(..), authenticate )
+import           Network.MQTT.Authentication ( Authenticator, AuthenticationException, Request(..), Principal, authenticate )
 import           Network.MQTT.Message
 import qualified Network.MQTT.RoutingTree as R
 import qualified Network.MQTT.Session     as Session
 import           Network.MQTT.Topic
+import qualified System.Log.Logger        as Log
 
 data Broker authenticator  = Broker {
     brokerAuthenticator :: authenticator
@@ -59,14 +60,17 @@ data SessionConfig
 defaultSessionConfig :: SessionConfig
 defaultSessionConfig = SessionConfig 100 100 100
 
-withSession :: (Authenticator auth) => Broker auth -> Request -> IO () -> IO () -> (Session.Session -> SessionPresent -> IO ()) -> IO ()
-withSession broker request _sessionRejectHandler _sessionErrorHandler sessionHandler = do
-  mprincipal <- authenticate (brokerAuthenticator broker) request
-  print mprincipal
-  bracket
-      ( createSession broker defaultSessionConfig )
-      ( when (requestCleanSession request) . closeSession broker )
-      ( `sessionHandler` False )
+withSession :: (Authenticator auth) => Broker auth -> Request -> IO () -> (AuthenticationException auth -> IO ()) -> (Session.Session -> SessionPresent -> Principal auth -> IO ()) -> IO ()
+withSession broker request sessionRejectHandler sessionErrorHandler sessionHandler = do
+  emp <- try $ authenticate (brokerAuthenticator broker) request
+  case emp of
+    Left e -> sessionErrorHandler e
+    Right mp -> case mp of
+      Nothing -> sessionRejectHandler
+      Just principal -> bracket
+        ( createSession broker defaultSessionConfig )
+        ( when (requestCleanSession request) . closeSession broker )
+        ( \sess-> sessionHandler sess False principal  )
 
 createSession :: Broker auth -> SessionConfig -> IO Session.Session
 createSession (Broker _ broker) _config =

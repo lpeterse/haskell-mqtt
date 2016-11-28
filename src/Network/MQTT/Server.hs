@@ -30,6 +30,7 @@ import qualified Network.MQTT.Session        as Session
 import qualified Network.Stack.Server        as SS
 import qualified Network.WebSockets          as WS
 import qualified System.Socket               as S
+import qualified System.Log.Logger           as Log
 
 instance (Typeable transport) => E.Exception (SS.ServerException (MQTT transport))
 
@@ -116,32 +117,12 @@ instance (SS.StreamServerStack transport) => SS.MessageServerStack (MQTT transpo
 deriving instance Show (SS.ServerConnectionInfo transport) => Show (SS.ServerConnectionInfo (MQTT transport))
 
 handleConnection :: forall transport authenticator. (SS.StreamServerStack transport, MqttServerTransportStack transport, Authenticator authenticator) => Broker.Broker authenticator -> SS.ServerConnection (MQTT transport) -> SS.ServerConnectionInfo (MQTT transport) -> IO ()
-handleConnection broker conn connInfo =
-  E.handle (\e-> do
-    print "HUHU"
-    print (e :: E.SomeException) >> E.throwIO e
-   ) $ do
-    print "handleConnection"
+handleConnection broker conn connInfo = do
     recentActivity <- newIORef True
     msg <- SS.receiveMessage conn
-    print msg
     case msg of
       ClientConnect {} ->
-        let sessionHandler session sessionPresent = do
-              void $ SS.sendMessage conn (ConnectAck $ Right sessionPresent)
-              print "Client accepted."
-              foldl1 race_
-                [ handleInput recentActivity session
-                , handleOutput session
-                , keepAlive recentActivity (connectKeepAlive msg)
-                ]
-            sessionUnauthorizedHandler = do
-              print "Client not authorized."
-              void $ SS.sendMessage conn (ConnectAck $ Left NotAuthorized)
-            sessionErrorHandler = do
-              print "Server unavailable."
-              void $ SS.sendMessage conn (ConnectAck $ Left ServerUnavailable)
-            request = Request
+        let request = Request
               { requestClientIdentifier = connectClientIdentifier msg
               , requestCleanSession     = connectCleanSession msg
               , requestCredentials      = connectCredentials msg
@@ -150,7 +131,23 @@ handleConnection broker conn connInfo =
               , requestSecure           = False
               , requestCertificateChain = Nothing
               }
-          in Broker.withSession broker request sessionUnauthorizedHandler sessionErrorHandler sessionHandler
+            sessionErrorHandler e = do
+              Log.errorM "Server.handleConnection.exception" $ show e
+              void $ SS.sendMessage conn (ConnectAck $ Left ServerUnavailable)
+            sessionUnauthorizedHandler = do
+              Log.warningM "Server.handleConnection.unauthorized" ""
+              void $ SS.sendMessage conn (ConnectAck $ Left NotAuthorized)
+            sessionHandler session sessionPresent principal = do
+              Log.infoM "Server.handleConnection.authorized" $ show principal
+              void $ SS.sendMessage conn (ConnectAck $ Right sessionPresent)
+              foldl1 race_
+                [ handleInput recentActivity session
+                , handleOutput session
+                , keepAlive recentActivity (connectKeepAlive msg)
+                ]
+          in do
+            Log.infoM "Server.handleConnection" $ show request
+            Broker.withSession broker request sessionUnauthorizedHandler sessionErrorHandler sessionHandler
       _ -> E.throwIO (ProtocolViolation "Expected CONN packet." :: SS.ServerException (MQTT transport))
   where
     -- The keep alive thread wakes up every `keepAlive/2` seconds.
@@ -173,8 +170,7 @@ handleConnection broker conn connInfo =
         regularInterval = fromIntegral interval * 500000
         alertInterval   = fromIntegral interval * 1000000
     handleInput :: RecentActivity -> Session.Session -> IO ()
-    handleInput recentActivity session = do
-      print "Start consuming messages."
+    handleInput recentActivity session =
       SS.consumeMessages conn $ \packet-> do
         writeIORef recentActivity True
         case packet of

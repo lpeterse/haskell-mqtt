@@ -59,4 +59,4 @@ data Request
      --   of the certificate claims (including certificate chain checking) /must/
      --   be performed by the `Authenticator`.
      requestCertificateChain :: Maybe X509.CertificateChain
-   }
+   } deriving (Eq, Show)

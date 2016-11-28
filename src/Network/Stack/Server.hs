@@ -165,14 +165,10 @@ instance (StreamServerStack a) => ServerStack (TLS a) where
         , TLS.backendSend  = void . sendStream connection
         , TLS.backendRecv  = receiveStream connection
         }
-      print "new TLS"
       mvar <- newEmptyMVar
       context <- TLS.contextNew backend (tlsServerParams $ tlsServerConfig server)
-      print "new Context"
       TLS.contextHookSetCertificateRecv context (putMVar mvar)
-      print "handshake"
-      TLS.handshake context `E.onException` print "foobar"
-      print "certchain"
+      TLS.handshake context
       certificateChain <- tryTakeMVar mvar
       x <- handle
         (TlsServerConnection connection context)
