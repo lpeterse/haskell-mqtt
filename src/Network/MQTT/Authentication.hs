@@ -17,6 +17,7 @@ import qualified Data.ByteString      as BS
 import           Data.CaseInsensitive
 import qualified Data.Text            as T
 import qualified Data.X509            as X509
+import Network.MQTT.Message
 
 
 -- | A peer identity optionally associated with connection/session
@@ -49,7 +50,7 @@ data ConnectionRequest
      --  [Transport Layer Security](https://en.wikipedia.org/wiki/Transport_Layer_Security)?
      requestSecure           :: Bool,
      -- | The username and password supplied with the MQTT handshake.
-     requestCredentials      :: Maybe (T.Text, Maybe BS.ByteString),
+     requestCredentials      :: Maybe (Username, Maybe Password),
      -- | The HTTP request head in case the client connected via
      --   [WebSocket](https://en.wikipedia.org/wiki/WebSocket).
      requestHttp             :: Maybe (BS.ByteString, [(CI BS.ByteString, BS.ByteString)]),
@@ -61,4 +62,4 @@ data ConnectionRequest
      --   be performed by the `Authenticator`.
      requestCertificateChain :: Maybe X509.CertificateChain,
      requestRemoteAddress    :: Maybe BS.ByteString
-   } deriving (Eq, Show)
+   } deriving (Show)

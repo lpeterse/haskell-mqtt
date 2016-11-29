@@ -15,7 +15,7 @@ module Network.MQTT.Message
   , Retain
   , KeepAliveInterval
   , Username
-  , Password
+  , Password (..)
   , PacketIdentifier
   , QualityOfService (..)
   , ConnectionRefusal (..)
@@ -52,9 +52,12 @@ type Retain           = Bool
 type Duplicate        = Bool
 type KeepAliveInterval = Word16
 type Username         = T.Text
-type Password         = BS.ByteString
+newtype Password      = Password BS.ByteString
 type ClientIdentifier = T.Text
 type PacketIdentifier = Int
+
+instance Show Password where
+  show = const "*********"
 
 data QualityOfService
   = Qos0
@@ -97,7 +100,7 @@ data ClientMessage
    | ClientUnsubscribe           {-# UNPACK #-} !PacketIdentifier ![TF.Filter]
    | ClientPingRequest
    | ClientDisconnect
-   deriving (Eq, Show)
+   deriving (Show)
 
 data ServerMessage
    = ConnectAck !(Either ConnectionRefusal SessionPresent)
@@ -171,7 +174,7 @@ connectParser = do
       <$> utf8Parser
       <*> if y .&. 0x40 == 0
             then pure Nothing
-            else Just <$> (SG.getWord16be >>= SG.getByteString . fromIntegral) )
+            else Just . Password <$> (SG.getByteString . fromIntegral =<< SG.getWord16be) )
   pure ( ClientConnect cid cleanSession keepAlive will cred )
 
 connectAcknowledgedParser :: SG.Get ServerMessage
@@ -309,7 +312,7 @@ clientMessageBuilder (ClientConnect cid cleanSession keepAlive will credentials)
             x1   = BS.word16BE (fromIntegral ulen)
             x2   = BS.byteString u
         in (x1 <> x2, 2 + ulen, 0x80)
-      Just (ut, Just p)  ->
+      Just (ut, Just (Password p))  ->
         let u    = T.encodeUtf8 ut
             ulen = BS.length u
             plen = BS.length p
