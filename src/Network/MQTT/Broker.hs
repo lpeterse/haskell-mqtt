@@ -27,17 +27,17 @@ import           Network.MQTT.Topic
 import qualified System.Log.Logger        as Log
 import qualified Data.Map as M
 
-data Broker authenticator  = Broker {
-    brokerAuthenticator :: authenticator
-  , brokerState         :: MVar (BrokerState authenticator)
+data Broker auth  = Broker {
+    brokerAuthenticator :: auth
+  , brokerState         :: MVar (BrokerState auth)
   }
 
-data BrokerState authenticator
+data BrokerState auth
   =  BrokerState
     { brokerMaxSessionIdentifier :: !Session.Identifier
     , brokerSubscriptions        :: !(R.RoutingTree IS.IntSet)
-    , brokerSessions             :: !(IM.IntMap Session.Session)
-    , brokerPrincipals           :: !(M.Map Principal (M.Map ClientIdentifier Int))
+    , brokerSessions             :: !(IM.IntMap (Session.Session auth))
+    , brokerPrincipals           :: !(M.Map (Principal auth) (M.Map ClientIdentifier Int))
     }
 
 new :: Authenticator auth => auth -> IO (Broker auth)
@@ -63,7 +63,7 @@ data SessionConfig
 defaultSessionConfig :: SessionConfig
 defaultSessionConfig = SessionConfig 100 100 100
 
-withSession :: (Authenticator auth) => Broker auth -> ConnectionRequest -> IO () -> (AuthenticationException auth -> IO ()) -> (Session.Session -> SessionPresent -> Principal -> IO ()) -> IO ()
+withSession :: (Authenticator auth) => Broker auth -> ConnectionRequest -> IO () -> (AuthenticationException auth -> IO ()) -> (Session.Session auth -> SessionPresent -> Principal auth -> IO ()) -> IO ()
 withSession broker request sessionRejectHandler sessionErrorHandler sessionHandler = do
   emp <- try $ authenticate (brokerAuthenticator broker) request
   case emp of
@@ -75,7 +75,7 @@ withSession broker request sessionRejectHandler sessionErrorHandler sessionHandl
         (\(_present, session)-> when (requestCleanSession request) (closeSession broker session) )
         (\(present, session)-> sessionHandler session present principal )
 
-getSession :: Principal -> ClientIdentifier -> BrokerState auth -> IO (BrokerState auth, (SessionPresent, Session.Session))
+getSession :: Authenticator auth => Principal auth -> ClientIdentifier -> BrokerState auth -> IO (BrokerState auth, (SessionPresent, Session.Session auth))
 getSession principal cid st =
   case M.lookup principal (brokerPrincipals st) of
     Just mcis -> case M.lookup cid mcis of
@@ -117,7 +117,7 @@ getSession principal cid st =
       Log.infoM "Broker.createSession" $ "Creating new session with id " ++ show newSessionIdentifier ++ " for " ++ show principal ++ "."
       pure (newBrokerState, (False, newSession))
 
-closeSession :: Broker auth -> Session.Session -> IO ()
+closeSession :: Authenticator auth => Broker auth -> Session.Session auth -> IO ()
 closeSession (Broker _ broker) session =
   modifyMVar_ broker $ \st->
     withMVar (Session.sessionSubscriptions session) $ \subscriptions->
@@ -148,13 +148,13 @@ publishDownstream (Broker _auth broker) msg = do
         putStrLn "WARNING: dead session reference"
       Just session -> Session.enqueueMessage session msg
 
-publishUpstream :: Broker auth -> Session.Session -> Message -> IO ()
+publishUpstream :: Broker auth -> Session.Session auth -> Message -> IO ()
 publishUpstream broker _session = publishDownstream broker
 
 publishUpstream' :: Broker auth -> Message -> IO ()
 publishUpstream'  = publishDownstream
 
-subscribe :: Broker auth -> Session.Session -> PacketIdentifier -> [(Filter, QualityOfService)] -> IO ()
+subscribe :: Broker auth -> Session.Session auth -> PacketIdentifier -> [(Filter, QualityOfService)] -> IO ()
 subscribe (Broker _ broker) session pid filters =
   -- Force the `qosTree` in order to lock the broker as little as possible.
   -- The `sidTree` is left lazy.
@@ -169,7 +169,7 @@ subscribe (Broker _ broker) session pid filters =
     qosTree = R.insertFoldable (fmap (Arrow.second Identity) filters) R.empty
     sidTree = R.map (const $ IS.singleton $ Session.sessionIdentifier session) qosTree
 
-unsubscribe :: Broker auth -> Session.Session -> PacketIdentifier -> [Filter] -> IO ()
+unsubscribe :: Broker auth -> Session.Session auth -> PacketIdentifier -> [Filter] -> IO ()
 unsubscribe (Broker _ broker) session pid filters =
   -- Force the `unsubBrokerTree` first in order to lock the broker as little as possible.
   unsubBrokerTree `seq` do

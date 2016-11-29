@@ -131,7 +131,7 @@ instance (SS.StreamServerStack transport) => SS.MessageServerStack (MQTT transpo
 
 deriving instance Show (SS.ServerConnectionInfo transport) => Show (SS.ServerConnectionInfo (MQTT transport))
 
-handleConnection :: forall transport authenticator. (SS.StreamServerStack transport, MqttServerTransportStack transport, Authenticator authenticator) => Broker.Broker authenticator -> SS.ServerConnection (MQTT transport) -> SS.ServerConnectionInfo (MQTT transport) -> IO ()
+handleConnection :: forall transport auth. (SS.StreamServerStack transport, MqttServerTransportStack transport, Authenticator auth) => Broker.Broker auth -> SS.ServerConnection (MQTT transport) -> SS.ServerConnectionInfo (MQTT transport) -> IO ()
 handleConnection broker conn connInfo = do
     recentActivity <- newIORef True
     msg <- SS.receiveMessage conn
@@ -176,7 +176,7 @@ handleConnection broker conn connInfo = do
     -- throws an exception.
     -- That way a timeout will be detected between 1.5 and 2 `keep alive`
     -- intervals after the last actual client activity.
-    keepAlive :: RecentActivity -> KeepAliveInterval -> Session.Session -> IO ()
+    keepAlive :: RecentActivity -> KeepAliveInterval -> Session.Session auth -> IO ()
     keepAlive recentActivity interval session = forever $ do
       writeIORef recentActivity False
       threadDelay regularInterval
@@ -192,7 +192,7 @@ handleConnection broker conn connInfo = do
           unless activity'' $ E.throwIO (KeepAliveTimeoutException :: SS.ServerException (MQTT transport))
       where
         regularInterval = fromIntegral interval *  500000
-    handleInput :: RecentActivity -> Session.Session -> IO ()
+    handleInput :: RecentActivity -> Session.Session auth -> IO ()
     handleInput recentActivity session =
       SS.consumeMessages conn $ \packet-> do
         writeIORef recentActivity True

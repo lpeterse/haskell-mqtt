@@ -21,11 +21,12 @@ import qualified Data.X509            as X509
 
 -- | A peer identity optionally associated with connection/session
 --   specific information.
-newtype Principal = Principal T.Text deriving (Eq, Ord, Show)
+--newtype Principal = Principal T.Text deriving (Eq, Ord, Show)
 
 -- | An `Authenticator` is able to determine a `Principal`'s identity from a
 --   `Request`.
-class (Exception (AuthenticationException a)) => Authenticator a where
+class (Exception (AuthenticationException a), Eq (Principal a), Ord (Principal a), Show (Principal a)) => Authenticator a where
+  data Principal a
   -- | This `Exception` may be thrown by any operation within this class.
   --   Operations /must/ only throw this type of exception. Other exceptions
   --   won't be catched and may kill the broker.
@@ -35,7 +36,7 @@ class (Exception (AuthenticationException a)) => Authenticator a where
   --   The operation shall return `Nothing` in case the authentication
   --   mechanism is working, but couldn't associate an identity. It shall
   --   throw and `AuthenticationException` in case of other problems.
-  authenticate :: a -> ConnectionRequest -> IO (Maybe Principal)
+  authenticate :: a -> ConnectionRequest -> IO (Maybe (Principal a))
 
 -- | This class defines how the information gathered from a
 --   connection request looks like. An `Authenticator` may use

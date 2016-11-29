@@ -23,8 +23,8 @@ import           Network.MQTT.Authentication
 
 type Identifier = Int
 
-data Session = Session
-  { sessionPrincipal        :: !Principal
+data Session auth = Session
+  { sessionPrincipal        :: !(Principal auth)
   , sessionClientIdentifier :: !ClientIdentifier
   , sessionIdentifier       :: !Identifier
   , sessionSubscriptions    :: !(MVar (R.RoutingTree (Identity QualityOfService)))
@@ -34,10 +34,10 @@ data Session = Session
   , sessionQueueLimitQos0   :: Int
   }
 
-instance Eq Session where
+instance Eq (Session auth) where
   (==) s1 s2 = (==) (sessionIdentifier s1) (sessionIdentifier s2)
 
-instance Ord Session where
+instance Ord (Session auth) where
   compare s1 s2 = compare (sessionIdentifier s1) (sessionIdentifier s2)
 
 data ServerQueue
@@ -72,10 +72,10 @@ emptyServerQueue i = ServerQueue
   , queueUncompleted = mempty
   }
 
-notePending   :: Session -> IO ()
+notePending   :: Session auth -> IO ()
 notePending    = void . flip tryPutMVar () . sessionQueuePending
 
-enqueueMessage :: Session -> Message -> IO ()
+enqueueMessage :: Session auth -> Message -> IO ()
 enqueueMessage session msg = do
   modifyMVar_ (sessionQueue session) $ \queue->
     pure $! case msgQos msg of
@@ -84,31 +84,31 @@ enqueueMessage session msg = do
       Qos2 -> queue { queueQos1 = queueQos1 queue Seq.|> msg }
   notePending session
 
-enqueuePublishAcknowledged :: Session -> PacketIdentifier -> IO ()
+enqueuePublishAcknowledged :: Session auth -> PacketIdentifier -> IO ()
 enqueuePublishAcknowledged session pid = do
   modifyMVar_ (sessionQueue session) $ \queue->
     pure $! queue { queueAcknowledged = queueAcknowledged queue Seq.|> pid }
   notePending session
 
-enqueuePublishReceived :: Session -> PacketIdentifier -> IO ()
+enqueuePublishReceived :: Session auth -> PacketIdentifier -> IO ()
 enqueuePublishReceived session pid = do
   modifyMVar_ (sessionQueue session) $ \queue->
     pure $! queue { queueReceived = queueReceived queue Seq.|> pid }
   notePending session
 
-enqueuePublishCompleted :: Session -> PacketIdentifier -> IO ()
+enqueuePublishCompleted :: Session auth -> PacketIdentifier -> IO ()
 enqueuePublishCompleted session pid = do
   modifyMVar_ (sessionQueue session) $ \queue->
     pure $! queue { queueCompleted = queueCompleted queue Seq.|> pid }
   notePending session
 
-enqueueSubscribeAcknowledged :: Session -> PacketIdentifier -> [Maybe QualityOfService] -> IO ()
+enqueueSubscribeAcknowledged :: Session auth -> PacketIdentifier -> [Maybe QualityOfService] -> IO ()
 enqueueSubscribeAcknowledged session pid mqoss = do
   modifyMVar_ (sessionQueue session) $ \queue->
     pure $! queue { queueSubscribed = queueSubscribed queue Seq.|> (pid, mqoss) }
   notePending session
 
-enqueueUnsubscribeAcknowledged :: Session -> PacketIdentifier -> IO ()
+enqueueUnsubscribeAcknowledged :: Session auth -> PacketIdentifier -> IO ()
 enqueueUnsubscribeAcknowledged session pid = do
   modifyMVar_ (sessionQueue session) $ \queue->
     pure $! queue { queueUnsubscribed = queueUnsubscribed queue Seq.|> pid}
@@ -116,7 +116,7 @@ enqueueUnsubscribeAcknowledged session pid = do
 
 -- | Blocks until messages are available and prefers non-qos0 messages over
 --  qos0 messages.
-dequeue :: Session -> IO (Seq.Seq ServerMessage)
+dequeue :: Session auth -> IO (Seq.Seq ServerMessage)
 dequeue session = do
   waitPending
   modifyMVar (sessionQueue session) $ \queue-> do
@@ -144,12 +144,12 @@ dequeueQos0    :: ServerQueue -> (ServerQueue, Seq.Seq ServerMessage)
 dequeueQos0 queue =
   ( queue { queueQos0 = mempty }, fmap ServerPublish (queueQos0 queue) )
 
-holdQos2Message :: Session -> PacketIdentifier -> Message -> IO ()
+holdQos2Message :: Session auth -> PacketIdentifier -> Message -> IO ()
 holdQos2Message session pid msg =
   modifyMVar_ (sessionIncompleteQos2 session) $ \im->
     pure $! IM.insert pid msg im
 
-releaseQos2Message :: Session -> PacketIdentifier -> IO (Maybe Message)
+releaseQos2Message :: Session auth -> PacketIdentifier -> IO (Maybe Message)
 releaseQos2Message session pid =
   modifyMVar (sessionIncompleteQos2 session) $ \im->
     case IM.lookup pid im of

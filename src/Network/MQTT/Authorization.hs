@@ -26,7 +26,7 @@ class (Authenticator a, Exception (AuthorizationException a)) => Authorizer a wh
   --   Beware that this operation is called on each publication. The implementation
   --   is advised to cache the result (i.e. in an `MVar`) and update it
   --   from time to time.
-  getPublishPermissions   :: a -> Principal -> IO (RoutingTree ())
+  getPublishPermissions   :: a -> Principal a -> IO (RoutingTree ())
   getPublishPermissions    = pure mempty
   -- | Determine the set of `Filter`s a `Principal` is allowed to subscribe.
   --   The `Principal` is implicitly allowed to subscribe all filters that
@@ -40,5 +40,5 @@ class (Authenticator a, Exception (AuthorizationException a)) => Authorizer a wh
   --   unsubscribed if they are no longer in the current permission set.
   --   There is no way specified by MQTT to signal this to the client other
   --   than terminating the session.
-  getSubscribePermissions :: a -> Principal -> IO (RoutingTree ())
+  getSubscribePermissions :: a -> Principal a -> IO (RoutingTree ())
   getSubscribePermissions  = pure mempty
