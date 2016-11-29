@@ -43,6 +43,7 @@ library
                        network-uri,
                        case-insensitive,
                        x509,
+                       x509-validation,
                        random,
                        websockets,
                        hslogger

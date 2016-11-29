@@ -160,14 +160,21 @@ instance (StreamServerStack a) => ServerStack (TLS a) where
   withConnection server handle =
     withConnection (tlsTransportServer server) $ \connection info-> do
       let backend = TLS.Backend {
-          TLS.backendFlush = pure ()
+          TLS.backendFlush = pure () -- backend doesn't buffer
         , TLS.backendClose = pure () -- backend gets closed automatically
         , TLS.backendSend  = void . sendStream connection
         , TLS.backendRecv  = receiveStream connection
         }
       mvar <- newEmptyMVar
-      context <- TLS.contextNew backend (tlsServerParams $ tlsServerConfig server)
-      TLS.contextHookSetCertificateRecv context (putMVar mvar)
+      let srvParams = tlsServerParams $ tlsServerConfig server
+          srvParams' = srvParams {
+            TLS.serverHooks = (TLS.serverHooks srvParams) {
+              TLS.onClientCertificate = \certChain-> do
+                putMVar mvar certChain
+                pure TLS.CertificateUsageAccept
+            }
+          }
+      context <- TLS.contextNew backend srvParams'
       TLS.handshake context
       certificateChain <- tryTakeMVar mvar
       x <- handle
