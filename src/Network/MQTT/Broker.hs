@@ -19,7 +19,7 @@ import           Data.Functor.Identity
 import qualified Data.IntMap              as IM
 import qualified Data.IntSet              as IS
 import           Data.Maybe
-import           Network.MQTT.Authentication ( Authenticator, AuthenticationException, Request(..), Principal, authenticate )
+import           Network.MQTT.Authentication ( Authenticator, AuthenticationException, ConnectionRequest(..), Principal, authenticate )
 import           Network.MQTT.Message
 import qualified Network.MQTT.RoutingTree as R
 import qualified Network.MQTT.Session     as Session
@@ -63,7 +63,7 @@ data SessionConfig
 defaultSessionConfig :: SessionConfig
 defaultSessionConfig = SessionConfig 100 100 100
 
-withSession :: (Authenticator auth) => Broker auth -> Request -> IO () -> (AuthenticationException auth -> IO ()) -> (Session.Session -> SessionPresent -> Principal -> IO ()) -> IO ()
+withSession :: (Authenticator auth) => Broker auth -> ConnectionRequest -> IO () -> (AuthenticationException auth -> IO ()) -> (Session.Session -> SessionPresent -> Principal -> IO ()) -> IO ()
 withSession broker request sessionRejectHandler sessionErrorHandler sessionHandler = do
   emp <- try $ authenticate (brokerAuthenticator broker) request
   case emp of

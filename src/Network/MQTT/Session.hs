@@ -24,14 +24,14 @@ import           Network.MQTT.Authentication
 type Identifier = Int
 
 data Session = Session
-  { sessionPrincipal      :: !Principal
+  { sessionPrincipal        :: !Principal
   , sessionClientIdentifier :: !ClientIdentifier
-  , sessionIdentifier     :: !Identifier
-  , sessionSubscriptions  :: !(MVar (R.RoutingTree (Identity QualityOfService)))
-  , sessionIncompleteQos2 :: !(MVar (IM.IntMap Message))
-  , sessionQueue          :: !(MVar ServerQueue)
-  , sessionQueuePending   :: !(MVar ())
-  , sessionQueueLimitQos0 :: Int
+  , sessionIdentifier       :: !Identifier
+  , sessionSubscriptions    :: !(MVar (R.RoutingTree (Identity QualityOfService)))
+  , sessionIncompleteQos2   :: !(MVar (IM.IntMap Message))
+  , sessionQueue            :: !(MVar ServerQueue)
+  , sessionQueuePending     :: !(MVar ())
+  , sessionQueueLimitQos0   :: Int
   }
 
 instance Eq Session where

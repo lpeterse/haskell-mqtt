@@ -38,20 +38,35 @@ data MQTT transport
 type RecentActivity = IORef Bool
 
 class SS.ServerStack a => MqttServerTransportStack a where
-  connHttpPath    :: SS.ServerConnectionInfo a -> Maybe BS.ByteString
-  connHttpHeaders :: SS.ServerConnectionInfo a -> [(CI BS.ByteString, BS.ByteString)]
+  getConnectionRequest :: SS.ServerConnectionInfo a -> IO ConnectionRequest
 
-instance (Typeable f, Typeable t, Typeable p, S.Family f, S.Protocol p, S.Type t) => MqttServerTransportStack (S.Socket f t p) where
-  connHttpPath    = const Nothing
-  connHttpHeaders = const []
+instance (Typeable f, Typeable t, Typeable p, S.Family f, S.Protocol p, S.Type t, S.HasNameInfo f) => MqttServerTransportStack (S.Socket f t p) where
+  getConnectionRequest (SS.SocketServerConnectionInfo addr) = do
+    remoteAddr <- S.hostName <$> S.getNameInfo addr (S.niNumericHost `mappend` S.niNumericService)
+    pure ConnectionRequest {
+        requestClientIdentifier = mempty
+      , requestSecure = False
+      , requestCleanSession = True
+      , requestCredentials = Nothing
+      , requestHttp = Nothing
+      , requestCertificateChain = Nothing
+      , requestRemoteAddress = Just remoteAddr
+      }
 
-instance SS.StreamServerStack a => MqttServerTransportStack (SS.WebSocket a) where
-  connHttpPath    = Just . WS.requestPath . SS.wsRequestHead
-  connHttpHeaders = WS.requestHeaders . SS.wsRequestHead
+instance (SS.StreamServerStack a, MqttServerTransportStack a) => MqttServerTransportStack (SS.WebSocket a) where
+  getConnectionRequest (SS.WebSocketServerConnectionInfo tci rh) = do
+    req <- getConnectionRequest tci
+    pure req {
+        requestHttp = Just (WS.requestPath rh, WS.requestHeaders rh)
+      }
 
-instance SS.StreamServerStack a => MqttServerTransportStack (SS.TLS a) where
-  connHttpPath    = const Nothing
-  connHttpHeaders = const []
+instance (SS.StreamServerStack a, MqttServerTransportStack a) => MqttServerTransportStack (SS.TLS a) where
+  getConnectionRequest (SS.TlsServerConnectionInfo tci mcc) = do
+    req <- getConnectionRequest tci
+    pure req {
+        requestSecure = True
+      , requestCertificateChain = mcc
+      }
 
 instance (SS.StreamServerStack transport) => SS.ServerStack (MQTT transport) where
   data Server (MQTT transport) = MqttServer
@@ -122,16 +137,7 @@ handleConnection broker conn connInfo = do
     msg <- SS.receiveMessage conn
     case msg of
       ClientConnect {} ->
-        let request = Request
-              { requestClientIdentifier = connectClientIdentifier msg
-              , requestCleanSession     = connectCleanSession msg
-              , requestCredentials      = connectCredentials msg
-              , requestHttpPath         = connHttpPath (mqttTransportServerConnectionInfo connInfo)
-              , requestHttpHeaders      = connHttpHeaders (mqttTransportServerConnectionInfo connInfo)
-              , requestSecure           = False
-              , requestCertificateChain = Nothing
-              }
-            sessionErrorHandler e = do
+        let sessionErrorHandler e = do
               Log.errorM "Server.connectionRequest" $ show e
               void $ SS.sendMessage conn (ConnectAck $ Left ServerUnavailable)
             sessionUnauthorizedHandler = do
@@ -145,7 +151,7 @@ handleConnection broker conn connInfo = do
               foldl1 race_
                 [ handleInput recentActivity session
                 , handleOutput session
-                , keepAlive recentActivity (connectKeepAlive msg)
+                , keepAlive recentActivity (connectKeepAlive msg) session
                 ] `E.catch` (\e-> do
                   Log.warningM "Server.connection" $"Session " ++ show (Session.sessionIdentifier session)
                     ++ ": Connection terminated with exception: " ++ show (e :: E.SomeException)
@@ -154,6 +160,12 @@ handleConnection broker conn connInfo = do
               Log.infoM "Server.connection" $
                 "Session " ++ show (Session.sessionIdentifier session) ++ ": Graceful disconnect."
           in do
+            req <- getConnectionRequest (mqttTransportServerConnectionInfo connInfo)
+            let request = req {
+                requestClientIdentifier = connectClientIdentifier msg
+              , requestCleanSession     = connectCleanSession msg
+              , requestCredentials      = connectCredentials msg
+              }
             Log.infoM "Server.connectionRequest" $ show request
             Broker.withSession broker request sessionUnauthorizedHandler sessionErrorHandler sessionHandler
       _ -> E.throwIO (ProtocolViolation "Expected CONN packet." :: SS.ServerException (MQTT transport))
@@ -164,23 +176,27 @@ handleConnection broker conn connInfo = do
     -- throws an exception.
     -- That way a timeout will be detected between 1.5 and 2 `keep alive`
     -- intervals after the last actual client activity.
-    keepAlive :: RecentActivity -> KeepAliveInterval -> IO ()
-    keepAlive recentActivity interval = forever $ do
+    keepAlive :: RecentActivity -> KeepAliveInterval -> Session.Session -> IO ()
+    keepAlive recentActivity interval session = forever $ do
       writeIORef recentActivity False
       threadDelay regularInterval
       activity <- readIORef recentActivity
       unless activity $ do
-        -- Alert state: The client must get active within the next interval.
-        threadDelay alertInterval
+        threadDelay regularInterval
         activity' <- readIORef recentActivity
-        unless activity' $ E.throwIO (KeepAliveTimeoutException :: SS.ServerException (MQTT transport))
+        unless activity' $ do
+          -- Alert state: The client must get active within the next interval.
+          Log.warningM "Server.connection.keepAlive" $ "Session " ++ show (Session.sessionIdentifier session) ++ ": Client is overdue."
+          threadDelay regularInterval
+          activity'' <- readIORef recentActivity
+          unless activity'' $ E.throwIO (KeepAliveTimeoutException :: SS.ServerException (MQTT transport))
       where
-        regularInterval = fromIntegral interval * 500000
-        alertInterval   = fromIntegral interval * 1000000
+        regularInterval = fromIntegral interval *  500000
     handleInput :: RecentActivity -> Session.Session -> IO ()
     handleInput recentActivity session =
       SS.consumeMessages conn $ \packet-> do
         writeIORef recentActivity True
+        --Log.debugM "Server.connection.handleInput" $ take 50 $ show packet
         case packet of
           ClientConnect {} ->
             E.throwIO (ProtocolViolation "Unexpected CONN packet." :: SS.ServerException (MQTT transport))
@@ -201,7 +217,7 @@ handleConnection broker conn connInfo = do
             mmsg <- Session.releaseQos2Message session pid
             case mmsg of
               Nothing ->
-                pure () -- WARNING
+                pure ()
               Just msg -> do
                 Broker.publishUpstream broker session msg
                 Session.enqueuePublishCompleted session pid
@@ -209,15 +225,16 @@ handleConnection broker conn connInfo = do
           ClientSubscribe pid filters -> do
             Broker.subscribe broker session pid filters
             pure False
-          ClientUnsubscribe {} ->
+          ClientUnsubscribe pid filters -> do
+            Broker.unsubscribe broker session pid filters
             pure False
-          ClientPingRequest {} -> do
+          ClientPingRequest -> do
+            Log.debugM "Server.connection.handleInput" $ "Session " ++ show (Session.sessionIdentifier session) ++ ": Received ping."
             void $ SS.sendMessage conn ServerPingResponse
             pure False
-          ClientDisconnect -> do
+          ClientDisconnect ->
             pure True
     handleOutput session = forever $ do
       -- The `dequeue` operation is blocking until messages get available.
       msgs <- Session.dequeue session
-      --threadDelay 10
       SS.sendMessages conn msgs
