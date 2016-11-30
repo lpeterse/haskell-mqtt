@@ -11,21 +11,26 @@
 --------------------------------------------------------------------------------
 module Network.MQTT.Broker where
 
-import           Control.Arrow            as Arrow
+import           Control.Arrow               as Arrow
 import           Control.Concurrent.MVar
 import           Control.Exception
 import           Control.Monad
 import           Data.Functor.Identity
-import qualified Data.IntMap              as IM
-import qualified Data.IntSet              as IS
+import qualified Data.IntMap                 as IM
+import qualified Data.IntSet                 as IS
+import qualified Data.Map                    as M
 import           Data.Maybe
-import           Network.MQTT.Authentication ( Authenticator, AuthenticationException, ConnectionRequest(..), Principal, authenticate, hasPublishPermission )
+import           Network.MQTT.Authentication (AuthenticationException,
+                                              Authenticator,
+                                              ConnectionRequest (..), Principal,
+                                              authenticate,
+                                              hasPublishPermission,
+                                              hasSubscribePermission)
 import           Network.MQTT.Message
-import qualified Network.MQTT.RoutingTree as R
-import qualified Network.MQTT.Session     as Session
+import qualified Network.MQTT.RoutingTree    as R
+import qualified Network.MQTT.Session        as Session
 import           Network.MQTT.Topic
-import qualified System.Log.Logger        as Log
-import qualified Data.Map as M
+import qualified System.Log.Logger           as Log
 
 data Broker auth  = Broker {
     brokerAuthenticator :: auth
@@ -164,8 +169,12 @@ publishUpstream broker session  msg = do
 publishUpstream' :: Broker auth -> Message -> IO ()
 publishUpstream'  = publishDownstream
 
-subscribe :: Broker auth -> Session.Session auth -> PacketIdentifier -> [(Filter, QualityOfService)] -> IO ()
-subscribe (Broker _ broker) session pid filters =
+subscribe :: Authenticator auth => Broker auth -> Session.Session auth -> PacketIdentifier -> [(Filter, QualityOfService)] -> IO ()
+subscribe (Broker auth broker) session pid filters = do
+  checkedFilters <- mapM checkPermission filters
+  let subscribeFilters = mapMaybe (\(filtr,mqos)-> (filtr,) . Identity <$> mqos) checkedFilters
+      qosTree = R.insertFoldable subscribeFilters R.empty
+      sidTree = R.map (const $ IS.singleton $ Session.sessionIdentifier session) qosTree
   -- Force the `qosTree` in order to lock the broker as little as possible.
   -- The `sidTree` is left lazy.
   qosTree `seq` do
@@ -174,10 +183,13 @@ subscribe (Broker _ broker) session pid filters =
         ( Session.sessionSubscriptions session )
         ( pure . R.unionWith max qosTree )
       pure $ bst { brokerSubscriptions = R.unionWith IS.union (brokerSubscriptions bst) sidTree }
-    Session.enqueueSubscribeAcknowledged session pid (fmap (Just . snd) filters)
+    Session.enqueueSubscribeAcknowledged session pid (fmap snd checkedFilters)
   where
-    qosTree = R.insertFoldable (fmap (Arrow.second Identity) filters) R.empty
-    sidTree = R.map (const $ IS.singleton $ Session.sessionIdentifier session) qosTree
+    checkPermission (filtr, qos) = do
+      isPermitted <- hasSubscribePermission auth (Session.sessionPrincipal session) filtr
+      Log.debugM "Broker.subscribe" $ show (Session.sessionPrincipal session) ++ " subscribes "
+        ++ show filtr ++ " with " ++ show qos ++ ": " ++ (if isPermitted then "OK" else "FORBIDDEN")
+      pure (filtr, if isPermitted then Just qos else Nothing)
 
 unsubscribe :: Broker auth -> Session.Session auth -> PacketIdentifier -> [Filter] -> IO ()
 unsubscribe (Broker _ broker) session pid filters =

@@ -22,7 +22,6 @@ library
   exposed-modules:     Network.Stack.Server,
                        Network.MQTT,
                        Network.MQTT.Authentication,
-                       Network.MQTT.Authorization,
                        Network.MQTT.Client,
                        Network.MQTT.Message,
                        Network.MQTT.Broker,
