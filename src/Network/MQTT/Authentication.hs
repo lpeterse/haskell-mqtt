@@ -17,7 +17,8 @@ import qualified Data.ByteString      as BS
 import           Data.CaseInsensitive
 import qualified Data.Text            as T
 import qualified Data.X509            as X509
-import Network.MQTT.Message
+import           Network.MQTT.Message
+import           Network.MQTT.Topic   as Topic
 
 
 -- | A peer identity optionally associated with connection/session
@@ -37,7 +38,9 @@ class (Exception (AuthenticationException a), Eq (Principal a), Ord (Principal a
   --   The operation shall return `Nothing` in case the authentication
   --   mechanism is working, but couldn't associate an identity. It shall
   --   throw and `AuthenticationException` in case of other problems.
-  authenticate :: a -> ConnectionRequest -> IO (Maybe (Principal a))
+  authenticate           :: a -> ConnectionRequest -> IO (Maybe (Principal a))
+  hasPublishPermission   :: a -> Principal a -> Topic.Topic -> IO Bool
+  hasSubscribePermission :: a -> Principal a -> Topic.Filter -> IO Bool
 
 -- | This class defines how the information gathered from a
 --   connection request looks like. An `Authenticator` may use

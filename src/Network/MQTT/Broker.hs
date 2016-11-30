@@ -19,7 +19,7 @@ import           Data.Functor.Identity
 import qualified Data.IntMap              as IM
 import qualified Data.IntSet              as IS
 import           Data.Maybe
-import           Network.MQTT.Authentication ( Authenticator, AuthenticationException, ConnectionRequest(..), Principal, authenticate )
+import           Network.MQTT.Authentication ( Authenticator, AuthenticationException, ConnectionRequest(..), Principal, authenticate, hasPublishPermission )
 import           Network.MQTT.Message
 import qualified Network.MQTT.RoutingTree as R
 import qualified Network.MQTT.Session     as Session
@@ -148,8 +148,18 @@ publishDownstream (Broker _auth broker) msg = do
         putStrLn "WARNING: dead session reference"
       Just session -> Session.enqueueMessage session msg
 
-publishUpstream :: Broker auth -> Session.Session auth -> Message -> IO ()
-publishUpstream broker _session = publishDownstream broker
+
+-- | Publish a message on the broker regarding specific permissions of the session.
+--
+--   QUESTION: Where do qos 1 and 2 messages get acknowledged?
+publishUpstream :: Authenticator auth => Broker auth -> Session.Session auth -> Message -> IO ()
+publishUpstream broker session  msg = do
+  isPermitted <- hasPublishPermission (brokerAuthenticator broker) (Session.sessionPrincipal session) (msgTopic msg)
+  Log.debugM "Broker.publishUpstream" $ show (Session.sessionPrincipal session) ++ " publishes on "
+    ++ show (msgTopic msg) ++ ": " ++ (if isPermitted then "OK" else "FORBIDDEN")
+  if isPermitted
+    then publishDownstream broker msg
+    else pure ()
 
 publishUpstream' :: Broker auth -> Message -> IO ()
 publishUpstream'  = publishDownstream

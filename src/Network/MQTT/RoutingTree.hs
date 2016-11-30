@@ -34,6 +34,8 @@ module Network.MQTT.RoutingTree (
   , insertFoldable
   -- ** map
   , map
+  -- ** mapMaybe
+  , mapMaybe
   -- ** adjust
   , adjust
   -- ** delete
@@ -48,7 +50,7 @@ import           Data.Functor.Identity
 import qualified Data.IntSet           as IS
 import           Data.List.NonEmpty    (NonEmpty (..))
 import qualified Data.Map              as M
-import           Data.Maybe
+import           Data.Maybe hiding (mapMaybe)
 import           Data.Monoid
 import           Network.MQTT.Topic
 import           Prelude               hiding (map, null)
@@ -152,6 +154,14 @@ map f (RoutingTree m) = RoutingTree $ fmap g m
         Nothing -> nodeFromTree t
         Just a  -> let b = f a in
           if nodeNull b then nodeFromTree t else nodeFromTreeAndValue t b
+
+-- FIXME: Review. Does not honour invariants!
+mapMaybe :: (RoutingTreeValue a, RoutingTreeValue b) => (a -> Maybe b) -> RoutingTree a -> RoutingTree b
+mapMaybe f (RoutingTree m) = RoutingTree $ fmap g m
+    where
+      g n = let t = mapMaybe f (nodeTree n) in case nodeValue n >>= f of
+        Nothing -> nodeFromTree t
+        Just b  -> nodeFromTreeAndValue t b
 
 unionWith :: (RoutingTreeValue a) => (a -> a -> a) -> RoutingTree a -> RoutingTree a -> RoutingTree a
 unionWith f (RoutingTree m1) (RoutingTree m2) = RoutingTree (M.unionWith g m1 m2)
