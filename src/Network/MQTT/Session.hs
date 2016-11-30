@@ -84,6 +84,11 @@ enqueueMessage session msg = do
       Qos2 -> queue { queueQos1 = queueQos1 queue Seq.|> msg }
   notePending session
 
+-- TODO: make more efficient
+enqueueMessages :: Foldable t => Session auth -> t Message -> IO ()
+enqueueMessages session msgs =
+  forM_ msgs (enqueueMessage session)
+
 enqueuePublishAcknowledged :: Session auth -> PacketIdentifier -> IO ()
 enqueuePublishAcknowledged session pid = do
   modifyMVar_ (sessionQueue session) $ \queue->

@@ -11,7 +11,6 @@
 --------------------------------------------------------------------------------
 module Network.MQTT.Broker where
 
-import           Control.Arrow               as Arrow
 import           Control.Concurrent.MVar
 import           Control.Exception
 import           Control.Monad
@@ -30,11 +29,13 @@ import           Network.MQTT.Message
 import qualified Network.MQTT.RoutingTree    as R
 import qualified Network.MQTT.Session        as Session
 import           Network.MQTT.Topic
+import qualified Network.MQTT.RetainedMessages as RM
 import qualified System.Log.Logger           as Log
 
 data Broker auth  = Broker {
-    brokerAuthenticator :: auth
-  , brokerState         :: MVar (BrokerState auth)
+    brokerAuthenticator    :: auth
+  , brokerRetainedMessages :: MVar RM.RetainedTree
+  , brokerState            :: MVar (BrokerState auth)
   }
 
 data BrokerState auth
@@ -47,6 +48,7 @@ data BrokerState auth
 
 new :: Authenticator auth => auth -> IO (Broker auth)
 new authenticator = do
+  rm <- newMVar RM.empty
   st <-newMVar BrokerState
     { brokerMaxSessionIdentifier = 0
     , brokerSubscriptions        = mempty
@@ -54,8 +56,9 @@ new authenticator = do
     , brokerPrincipals           = mempty
     }
   pure Broker {
-      brokerAuthenticator = authenticator
-    , brokerState         = st
+      brokerAuthenticator    = authenticator
+    , brokerRetainedMessages = rm
+    , brokerState            = st
     }
 
 data SessionConfig
@@ -123,8 +126,8 @@ getSession principal cid st =
       pure (newBrokerState, (False, newSession))
 
 closeSession :: Authenticator auth => Broker auth -> Session.Session auth -> IO ()
-closeSession (Broker _ broker) session =
-  modifyMVar_ broker $ \st->
+closeSession broker session =
+  modifyMVar_ (brokerState broker) $ \st->
     withMVar (Session.sessionSubscriptions session) $ \subscriptions->
       pure $ st
         { brokerSubscriptions =
@@ -144,15 +147,19 @@ closeSession (Broker _ broker) session =
         }
 
 publishDownstream :: Broker auth -> Message -> IO ()
-publishDownstream (Broker _auth broker) msg = do
+publishDownstream broker msg = do
+  -- Log.debugM "Broker.publishDownstream" $ show msg
+  when (msgRetain msg) $ do
+    Log.debugM "Broker.publishDownstream" "retain"
+    modifyMVar_ (brokerRetainedMessages broker) $ \rm->
+      pure $! RM.insert msg rm
   let topic = msgTopic msg
-  st <- readMVar broker
+  st <- readMVar (brokerState broker)
   forM_ (IS.elems $ fromMaybe IS.empty $ R.lookupWith IS.union topic $ brokerSubscriptions st) $ \key->
     case IM.lookup (key :: Int) (brokerSessions st) of
       Nothing      ->
         putStrLn "WARNING: dead session reference"
       Just session -> Session.enqueueMessage session msg
-
 
 -- | Publish a message on the broker regarding specific permissions of the session.
 --
@@ -170,7 +177,7 @@ publishUpstream' :: Broker auth -> Message -> IO ()
 publishUpstream'  = publishDownstream
 
 subscribe :: Authenticator auth => Broker auth -> Session.Session auth -> PacketIdentifier -> [(Filter, QualityOfService)] -> IO ()
-subscribe (Broker auth broker) session pid filters = do
+subscribe broker session pid filters = do
   checkedFilters <- mapM checkPermission filters
   let subscribeFilters = mapMaybe (\(filtr,mqos)-> (filtr,) . Identity <$> mqos) checkedFilters
       qosTree = R.insertFoldable subscribeFilters R.empty
@@ -178,24 +185,28 @@ subscribe (Broker auth broker) session pid filters = do
   -- Force the `qosTree` in order to lock the broker as little as possible.
   -- The `sidTree` is left lazy.
   qosTree `seq` do
-    modifyMVarMasked_ broker $ \bst-> do
+    modifyMVarMasked_ (brokerState broker) $ \bst-> do
       modifyMVarMasked_
         ( Session.sessionSubscriptions session )
         ( pure . R.unionWith max qosTree )
       pure $ bst { brokerSubscriptions = R.unionWith IS.union (brokerSubscriptions bst) sidTree }
     Session.enqueueSubscribeAcknowledged session pid (fmap snd checkedFilters)
+    rm <- readMVar (brokerRetainedMessages broker)
+    -- TODO: downgrade qos
+    forM_ subscribeFilters $ \(filtr,_qos)->
+       Session.enqueueMessages session $ RM.lookupFilter filtr rm
   where
     checkPermission (filtr, qos) = do
-      isPermitted <- hasSubscribePermission auth (Session.sessionPrincipal session) filtr
+      isPermitted <- hasSubscribePermission (brokerAuthenticator broker) (Session.sessionPrincipal session) filtr
       Log.debugM "Broker.subscribe" $ show (Session.sessionPrincipal session) ++ " subscribes "
         ++ show filtr ++ " with " ++ show qos ++ ": " ++ (if isPermitted then "OK" else "FORBIDDEN")
       pure (filtr, if isPermitted then Just qos else Nothing)
 
 unsubscribe :: Broker auth -> Session.Session auth -> PacketIdentifier -> [Filter] -> IO ()
-unsubscribe (Broker _ broker) session pid filters =
+unsubscribe broker session pid filters =
   -- Force the `unsubBrokerTree` first in order to lock the broker as little as possible.
   unsubBrokerTree `seq` do
-    modifyMVarMasked_ broker $ \bst-> do
+    modifyMVarMasked_ (brokerState broker) $ \bst-> do
       modifyMVarMasked_
         ( Session.sessionSubscriptions session )
         ( pure . flip (R.differenceWith (const . const Nothing)) unsubBrokerTree )

@@ -24,6 +24,7 @@ library
                        Network.MQTT.Authentication,
                        Network.MQTT.Client,
                        Network.MQTT.Message,
+                       Network.MQTT.RetainedMessages,
                        Network.MQTT.Broker,
                        Network.MQTT.Topic,
                        Network.MQTT.RoutingTree,

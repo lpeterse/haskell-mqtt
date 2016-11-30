@@ -200,12 +200,24 @@ publishParser publish publish' = do
   if  qosBits == 0x00
     then do
       body <- SG.getLazyByteString $ fromIntegral ( len - topicLen )
-      pure (publish $ Message topic body Qos0 dup ret)
+      pure $ publish Message {
+            msgTopic     = topic
+          , msgBody      = body
+          , msgQos       = Qos0
+          , msgDuplicate = dup
+          , msgRetain    = ret
+        }
     else do
       let qos = if qosBits == 0x02 then Qos1 else Qos2
       pid  <- fromIntegral <$> SG.getWord16be
       body <- SG.getLazyByteString $ fromIntegral ( len - topicLen - 2 )
-      pure (publish' pid $ Message topic body qos dup ret)
+      pure $ publish' pid Message {
+          msgTopic     = topic
+        , msgBody      = body
+        , msgQos       = qos
+        , msgDuplicate = dup
+        , msgRetain    = ret
+        }
 
 acknowledgedParser :: (PacketIdentifier -> a) -> SG.Get a
 acknowledgedParser f = do
