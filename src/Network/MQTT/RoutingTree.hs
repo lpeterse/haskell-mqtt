@@ -185,23 +185,34 @@ differenceWith f (RoutingTree m1) (RoutingTree m2) = RoutingTree (M.differenceWi
                  | otherwise            = Just (nodeFromTreeAndValue t v)
 
 lookupWith :: (RoutingTreeValue a) => (a -> a -> a) -> Topic -> RoutingTree a -> Maybe a
-lookupWith f tf = lookupWith'(topicLevels tf)
+lookupWith f tf = lookupHead (topicLevels tf)
   where
     merge (Just v1) (Just v2) = Just (f v1 v2)
     merge (Just v1) _         = Just v1
     merge _         (Just v2) = Just v2
     merge _         _         = Nothing
-    lookupWith' (x:|[]) (RoutingTree m) = case M.lookup x m of
-      Nothing -> Nothing
-      Just n  -> let RoutingTree m' = nodeTree n; v' = nodeValue n
+    -- If the first level starts with $ then it must not be matched against + and #.
+    lookupHead (x:|xs) t@(RoutingTree m)
+      | startsWithDollar x = case xs of
+          []     -> M.lookup x m >>= nodeValue
+          (y:ys) -> M.lookup x m >>= lookupTail y ys . nodeTree
+      | otherwise = lookupTail x xs t
+    lookupTail x [] (RoutingTree m) =
+      matchComponent `merge` matchSingleLevelWildcard `merge` matchMultiLevelWildcard
+      where
+        matchComponent = case M.lookup x m of
+          Nothing -> Nothing
+          Just n  -> let RoutingTree m' = nodeTree n; v' = nodeValue n
                  in  fromMaybe v' $ merge v' . nodeValue <$> M.lookup multiLevelWildcard m'
-    lookupWith' (x:|y:zs) (RoutingTree m) =
+        matchSingleLevelWildcard = M.lookup singleLevelWildcard m >>= nodeValue
+        matchMultiLevelWildcard  = M.lookup multiLevelWildcard  m >>= nodeValue
+    lookupTail x (y:ys) (RoutingTree m) =
       matchComponent `merge` matchSingleLevelWildcard `merge` matchMultiLevelWildcard
       where
         matchComponent =
-          M.lookup x m >>= lookupWith' ( y:|zs) . nodeTree
+          M.lookup x m >>= lookupTail y ys  . nodeTree
         matchSingleLevelWildcard =
-          M.lookup singleLevelWildcard m >>= lookupWith' (y:|zs) . nodeTree
+          M.lookup singleLevelWildcard m >>= lookupTail y ys . nodeTree
         matchMultiLevelWildcard = M.lookup multiLevelWildcard m >>= nodeValue
 
 -- | Match a `Topic` against a `RoutingTree`.
@@ -211,34 +222,40 @@ lookupWith f tf = lookupWith'(topicLevels tf)
 --   indirectly matched by wildcard characters like `+` and `#` as described
 --   in the MQTT specification).
 matchTopic :: RoutingTreeValue a => Topic -> RoutingTree a -> Bool
-matchTopic tf = matchTopic' (topicLevels tf)
+matchTopic tf = matchTopicHead (topicLevels tf)
   where
-    matchTopic' (x:|[]) (RoutingTree m) =
-      match || matchPlus || matchHash
-      -- The '#' is always a terminal node and therefore does not contain subtrees.
-      -- By invariant, a '#' node only exists if it contains a value. For this
-      -- reason it does not need to be checked for a value here, but just for
-      -- existence.
-      -- A '+' node on the other hand may contain subtrees and may not carry a value
-      -- itself. This needs to be checked.
+    -- The '#' is always a terminal node and therefore does not contain subtrees.
+    -- By invariant, a '#' node only exists if it contains a value. For this
+    -- reason it does not need to be checked for a value here, but just for
+    -- existence.
+    -- A '+' node on the other hand may contain subtrees and may not carry a value
+    -- itself. This needs to be checked.
+    matchTopicHead (x:|xs) t@(RoutingTree m)
+      | startsWithDollar x = case xs of
+          []     -> matchExact x m
+          (y:ys) -> fromMaybe False $ matchTopicTail y ys . nodeTree <$> M.lookup x m
+      | otherwise = matchTopicTail x xs t
+    matchTopicTail x [] (RoutingTree m) =
+      matchExact x m  || matchPlus || matchHash
       where
-        matchPlus    = isJust ( nodeValue =<< M.lookup singleLevelWildcard m )
-        matchHash    = M.member multiLevelWildcard m
-        match        = case M.lookup x m of
-          Nothing -> False
-          Just n  -> isJust (nodeValue n)
-                  || let RoutingTree m' = nodeTree n
-                     in  M.member multiLevelWildcard m'
-    matchTopic' (x:|y:zs) (RoutingTree m) =
+        matchPlus = isJust ( nodeValue =<< M.lookup singleLevelWildcard m )
+        matchHash = M.member multiLevelWildcard m
+    matchTopicTail x (y:ys) (RoutingTree m) =
       M.member multiLevelWildcard m || case M.lookup x m of
         -- Same is true for '#' node here. In case no '#' hash node is present it is
         -- first tried to match the exact topic and then to match any '+' node.
         Nothing -> matchPlus
-        Just n  -> matchTopic' (y:|zs) (nodeTree n) || matchPlus
+        Just n  -> matchTopicTail y ys (nodeTree n) || matchPlus
       where
         -- A '+' node matches any topic element.
         matchPlus = fromMaybe False
-                  $ matchTopic' (y:|zs) . nodeTree <$> M.lookup singleLevelWildcard m
+                  $ matchTopicTail y ys . nodeTree <$> M.lookup singleLevelWildcard m
+    -- An exact match is the case if the map contains a node for the key and
+    -- the node is not empty _or_ the node's subtree contains a wildcard key (wildcards)
+    -- always also match the parent node.
+    matchExact x m = case M.lookup x m of
+      Nothing -> False
+      Just n  -> isJust (nodeValue n) || let RoutingTree m' = nodeTree n in  M.member multiLevelWildcard m'
 
 -- | Match a `Filter` against a `RoutingTree`.
 --

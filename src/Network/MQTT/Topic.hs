@@ -23,6 +23,7 @@ module Network.MQTT.Topic
   , levelParser
   , multiLevelWildcard
   , singleLevelWildcard
+  , startsWithDollar
   ) where
 
 import Data.Monoid ((<>))
@@ -151,11 +152,16 @@ multiLevelWildcard  = Level $ BS.pack $ pure hash
 singleLevelWildcard :: Level
 singleLevelWildcard  = Level $ BS.pack $ pure plus
 
-zero, plus, hash, slash :: Word8
-zero  = 0x00
-plus  = 0x2b
-hash  = 0x23
-slash = 0x2f
+startsWithDollar    :: Level -> Bool
+startsWithDollar (Level bs) =
+  not (BS.null bs) && BS.index bs 0 == dollar
+
+zero, plus, hash, slash, dollar :: Word8
+zero   = 0x00
+plus   = 0x2b
+hash   = 0x23
+slash  = 0x2f
+dollar = 0x24
 
 slashBuilder :: BS.Builder
 slashBuilder  = BS.word8 slash
