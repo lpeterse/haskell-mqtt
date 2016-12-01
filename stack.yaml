@@ -6,5 +6,6 @@ packages:
       commit: 142561b7daacc35d1e8ddce22363bea73b8c281e
 extra-deps:
   - socket-0.8.0.0
+  - QuickCheck-2.9.2
 flags: {}
 extra-package-dbs: []

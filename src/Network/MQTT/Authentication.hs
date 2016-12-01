@@ -29,6 +29,7 @@ import           Network.MQTT.Topic   as Topic
 --   `Request`.
 class (Exception (AuthenticationException a), Eq (Principal a), Ord (Principal a), Show (Principal a)) => Authenticator a where
   data Principal a
+  data AuthenticatorConfig a
   -- | This `Exception` may be thrown by any operation within this class.
   --   Operations /must/ only throw this type of exception. Other exceptions
   --   won't be catched and may kill the broker.
@@ -38,6 +39,7 @@ class (Exception (AuthenticationException a), Eq (Principal a), Ord (Principal a
   --   The operation shall return `Nothing` in case the authentication
   --   mechanism is working, but couldn't associate an identity. It shall
   --   throw and `AuthenticationException` in case of other problems.
+  newAuthenticator       :: AuthenticatorConfig a -> IO a
   authenticate           :: a -> ConnectionRequest -> IO (Maybe (Principal a))
   hasPublishPermission   :: a -> Principal a -> Topic.Topic -> IO Bool
   hasSubscribePermission :: a -> Principal a -> Topic.Filter -> IO Bool
