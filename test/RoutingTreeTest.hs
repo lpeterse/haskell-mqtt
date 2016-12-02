@@ -24,6 +24,10 @@ tests = testGroup "RoutingTree"
   , testGroup "empty"
     [ testCase "  null empty" $ assertBool "not null" $ R.null R.empty
     ]
+  , testGroup "size"
+    [ testCase "size empty       == 0"                               $ R.size (R.empty :: R.RoutingTree ()) @?= 0
+    , testCase "size intsetTree1 == 11"                              $ R.size intsetTree1                   @?= 11
+    ]
   , testGroup "singleton"
     [ testCase "  matchTopic \"a\"      $ singleton \"a\"      ()"   $ assertBool ""       $ R.matchTopic "a"     $ R.singleton "a" ()
     , testCase "  matchTopic \"a/b/c\"  $ singleton \"a/b/c\"  ()"   $ assertBool ""       $ R.matchTopic "a/b/c" $ R.singleton "a/b/c" ()
@@ -75,7 +79,11 @@ tests = testGroup "RoutingTree"
     , testCase "lookupWith (IS.union) \"$SYS/a\"   intsetTree1 == Just [0,1,2]" $ R.lookupWith IS.union "$SYS/a"   intsetTree1 @?= Just (IS.fromList [5,6,7])
     , testCase "lookupWith (IS.union) \"$SYS/a/a\" intsetTree1 == Just [0,1,2]" $ R.lookupWith IS.union "$SYS/a/a" intsetTree1 @?= Just (IS.fromList [5,7,8])
     ]
-  , testGroup "insert" [  ]
+  , testGroup "insert"
+    [ testCase "size tree2 == 3"                     $ R.size tree2 @?= 3
+    , testCase "lookupWith IS.union \"a/b\"   tree2" $ R.lookupWith IS.union "a/b"   tree2 @?= Just (IS.fromList [3])
+    , testCase "lookupWith IS.union \"a/b/c\" tree2" $ R.lookupWith IS.union "a/b/c" tree2 @?= Just (IS.fromList [2])
+    ]
   , testGroup "insertWith" [  ]
   , testGroup "map" [  ]
   , testGroup "adjust" [  ]
@@ -95,4 +103,11 @@ intsetTree1
   $ R.insertWith IS.union "$SYS/+"   (IS.singleton 6)
   $ R.insertWith IS.union "$SYS/a/#" (IS.singleton 7)
   $ R.insertWith IS.union "$SYS/+/a" (IS.singleton 8)
+  $! R.empty
+
+tree2 :: R.RoutingTree IS.IntSet
+tree2
+  = R.insert "a/b"    (IS.singleton 3)
+  $ R.insert "a/b/c"  (IS.singleton 2)
+  $ R.insert "a/b/c"  (IS.singleton 1)
   $! R.empty

@@ -18,6 +18,8 @@ module Network.MQTT.RoutingTree (
   , null
   -- ** empty
   , empty
+  -- ** size
+  , size
   -- ** singleton
   , singleton
   -- ** matchTopic
@@ -85,6 +87,11 @@ empty  = RoutingTree mempty
 
 null  :: RoutingTree a -> Bool
 null (RoutingTree m) = M.null m
+
+size  :: RoutingTreeValue a => RoutingTree a -> Int
+size (RoutingTree m) = M.foldl' f 0 m
+  where
+    f accum node = 1 + accum + size (nodeTree node)
 
 singleton :: RoutingTreeValue a => Filter -> a -> RoutingTree a
 singleton tf = singleton' (filterLevels tf)
