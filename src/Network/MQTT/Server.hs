@@ -21,6 +21,7 @@ import           Control.Monad
 import qualified Data.Binary.Get             as SG
 import qualified Data.ByteString             as BS
 import           Data.CaseInsensitive
+import           Data.Int
 import           Data.IORef
 import           Data.Typeable
 import           Network.MQTT.Authentication
@@ -29,8 +30,8 @@ import           Network.MQTT.Message
 import qualified Network.MQTT.Session        as Session
 import qualified Network.Stack.Server        as SS
 import qualified Network.WebSockets          as WS
-import qualified System.Socket               as S
 import qualified System.Log.Logger           as Log
+import qualified System.Socket               as S
 
 instance (Typeable transport) => E.Exception (SS.ServerException (MQTT transport))
 
@@ -75,6 +76,7 @@ instance (SS.StreamServerStack transport) => SS.ServerStack (MQTT transport) whe
     }
   data ServerConfig (MQTT transport) = MqttServerConfig
     { mqttTransportConfig     :: SS.ServerConfig transport
+    , mqttMaxMessageSize      :: Int64
     }
   data ServerConnection (MQTT transport) = MqttServerConnection
     { mqttTransportConnection :: SS.ServerConnection transport
@@ -85,6 +87,7 @@ instance (SS.StreamServerStack transport) => SS.ServerStack (MQTT transport) whe
     }
   data ServerException (MQTT transport)
     = ProtocolViolation String
+    | MessageTooLong
     | ConnectionRefused ConnectionRefusal
     | KeepAliveTimeoutException
     deriving (Eq, Ord, Show, Typeable)
@@ -97,6 +100,7 @@ instance (SS.StreamServerStack transport) => SS.ServerStack (MQTT transport) whe
         <$> pure connection
         <*> newMVar mempty
 
+-- TODO: eventually too strict with message size tracking
 instance (SS.StreamServerStack transport) => SS.MessageServerStack (MQTT transport) where
   type ClientMessage (MQTT transport) = ClientMessage
   type ServerMessage (MQTT transport) = ServerMessage
@@ -104,37 +108,53 @@ instance (SS.StreamServerStack transport) => SS.MessageServerStack (MQTT transpo
     SS.sendStreamBuilder (mqttTransportConnection connection) 8192 . serverMessageBuilder
   sendMessages connection msgs =
     SS.sendStreamBuilder (mqttTransportConnection connection) 8192 $ foldl (\b m-> b `mappend` serverMessageBuilder m) mempty msgs
-  receiveMessage connection =
-    modifyMVar (mqttTransportLeftover connection) (execute . SG.pushChunk decode)
+  receiveMessage connection maxMsgSize =
+    modifyMVar (mqttTransportLeftover connection) (execute 0 . SG.pushChunk decode)
     where
-      fetch  = do
-        bs <- SS.receiveStream (mqttTransportConnection connection) 4096
-        pure $ if BS.null bs then Nothing else Just bs
+      fetch  = SS.receiveStream (mqttTransportConnection connection) 4096
       decode = SG.runGetIncremental clientMessageParser
-      execute (SG.Partial continuation) = execute =<< continuation <$> fetch
-      execute (SG.Fail _ _ failure)     = E.throwIO (ProtocolViolation failure :: SS.ServerException (MQTT transport))
-      execute (SG.Done leftover' _ msg) = pure (leftover', msg)
-  consumeMessages connection consume =
-    modifyMVar_ (mqttTransportLeftover connection) (execute . SG.pushChunk decode)
+      execute received result
+        | received > maxMsgSize = E.throwIO (MessageTooLong :: SS.ServerException (MQTT transport))
+        | otherwise = case result of
+            SG.Partial continuation -> do
+              bs <- fetch
+              if BS.null bs
+                then execute received (continuation Nothing)
+                else execute (received + fromIntegral (BS.length bs)) (continuation $ Just bs)
+            SG.Fail _ _ failure ->
+              E.throwIO (ProtocolViolation failure :: SS.ServerException (MQTT transport))
+            SG.Done leftover' _ msg ->
+              pure (leftover', msg)
+  consumeMessages connection maxMsgSize consume =
+    modifyMVar_ (mqttTransportLeftover connection) (execute 0 . SG.pushChunk decode)
     where
-      fetch  = do
-        bs <- SS.receiveStream (mqttTransportConnection connection) 4096
-        pure $ if BS.null bs then Nothing else Just bs
+      fetch  = SS.receiveStream (mqttTransportConnection connection) 4096
       decode = SG.runGetIncremental clientMessageParser
-      execute (SG.Partial continuation) = execute =<< continuation <$> fetch
-      execute (SG.Fail _ _ failure)     = E.throwIO (ProtocolViolation failure :: SS.ServerException (MQTT transport))
-      execute (SG.Done leftover' _ msg) = do
-        done <- consume msg
-        if done
-          then pure leftover'
-          else execute (SG.pushChunk decode leftover')
+      execute received result
+        | received > maxMsgSize = E.throwIO (MessageTooLong :: SS.ServerException (MQTT transport))
+        | otherwise = case result of
+            SG.Partial continuation -> do
+              bs <- fetch
+              if BS.null bs
+                then execute received (continuation Nothing)
+                else execute (received + fromIntegral (BS.length bs)) (continuation $ Just bs)
+            SG.Fail _ _ failure ->
+              E.throwIO (ProtocolViolation failure :: SS.ServerException (MQTT transport))
+            SG.Done leftover' _ msg -> do
+              done <- consume msg
+              if done
+                then pure leftover'
+                else execute 0 (SG.pushChunk decode leftover')
 
 deriving instance Show (SS.ServerConnectionInfo transport) => Show (SS.ServerConnectionInfo (MQTT transport))
 
-handleConnection :: forall transport auth. (SS.StreamServerStack transport, MqttServerTransportStack transport, Authenticator auth) => Broker.Broker auth -> SS.ServerConnection (MQTT transport) -> SS.ServerConnectionInfo (MQTT transport) -> IO ()
-handleConnection broker conn connInfo = do
+handleConnection :: forall transport auth. (SS.StreamServerStack transport, MqttServerTransportStack transport, Authenticator auth) => Broker.Broker auth -> SS.ServerConfig (MQTT transport) -> SS.ServerConnection (MQTT transport) -> SS.ServerConnectionInfo (MQTT transport) -> IO ()
+handleConnection broker cfg conn connInfo = do
     recentActivity <- newIORef True
-    msg <- SS.receiveMessage conn
+    msg <- SS.receiveMessage conn (mqttMaxMessageSize cfg)
+      `E.catch` \e-> do
+        Log.warningM "Server.connectionRequest" $ show (e :: SS.ServerException (MQTT transport))
+        E.throwIO e
     case msg of
       ClientConnect {} ->
         let sessionErrorHandler e = do
@@ -194,7 +214,7 @@ handleConnection broker conn connInfo = do
         regularInterval = fromIntegral interval *  500000
     handleInput :: RecentActivity -> Session.Session auth -> IO ()
     handleInput recentActivity session =
-      SS.consumeMessages conn $ \packet-> do
+      SS.consumeMessages conn (mqttMaxMessageSize cfg) $ \packet-> do
         writeIORef recentActivity True
         --Log.debugM "Server.connection.handleInput" $ take 50 $ show packet
         case packet of

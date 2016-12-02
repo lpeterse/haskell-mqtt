@@ -85,13 +85,32 @@ class ServerStack a => StreamServerStack a where
   receiveStreamLazy server i = BSL.fromStrict <$> receiveStream server i
   {-# MINIMAL (sendStream|sendStreamLazy), (receiveStream|receiveStreamLazy) #-}
 
+-- | This class is an abstraction for `ServerStack`s that support the
+--   transmission and reception of finite messages.
 class ServerStack a => MessageServerStack a where
   type ClientMessage a
   type ServerMessage a
+  -- | Send a message.
+  --
+  --   - Returns the encoded message size.
   sendMessage      :: ServerConnection a -> ServerMessage a -> IO Int64
+  -- | Send several messages. This might lead to an improvement for very short messages.
+  --
+  --   - Returns the summed size of all encoded messages.
   sendMessages     :: Foldable t => ServerConnection a -> t (ServerMessage a) -> IO Int64
-  receiveMessage   :: ServerConnection a -> IO (ClientMessage a)
-  consumeMessages  :: ServerConnection a -> (ClientMessage a -> IO Bool) -> IO ()
+  -- | Receive a message.
+  --
+  --   - The second parameter determines the maximum encoded message size which
+  --     must not be exceeded by the client or an exception will be thrown.
+  --     Implementations shall track the consumed bytes and shall throw an
+  --     exception as soon as the limit is exceeded even if the message is not
+  --     yet complete. This is important to prevent _denial of service_ attacks.
+  receiveMessage   :: ServerConnection a -> Int64 -> IO (ClientMessage a)
+  -- | Consumes incoming messages with a supplied consumer callback.
+  --
+  --   - The second parameter limits the size of a single encoded message
+  --     (see `receiveMessage`).
+  consumeMessages  :: ServerConnection a -> Int64 -> (ClientMessage a -> IO Bool) -> IO ()
 
 instance (Typeable f, Typeable p, S.Family f, S.Protocol p) => StreamServerStack (S.Socket f S.Stream p) where
   sendStream (SocketServerConnection s) bs = S.sendAll s bs S.msgNoSignal
