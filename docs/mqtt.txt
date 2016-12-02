@@ -10,6 +10,9 @@
 @version 0.1.0.0
 
 
+module Network.MQTT.Client
+
+
 module Network.MQTT.Topic
 
 -- | According to the MQTT specification a topic
@@ -20,109 +23,32 @@ module Network.MQTT.Topic
 --   characters</li>
 --   </ul>
 data Topic
-data TopicFilter
-data TopicFilterLevel
-topicLevels :: Topic -> NonEmpty TopicFilterLevel
+topicLevels :: Topic -> NonEmpty Level
 topicLength :: Topic -> Int
+topicParser :: Parser Topic
 topicBuilder :: Topic -> Builder
-topicFilterLevels :: TopicFilter -> NonEmpty TopicFilterLevel
-parseTopic :: Parser Topic
-parseTopicFilter :: Parser TopicFilter
-parseTopicFilterLevel :: Parser TopicFilterLevel
-multiLevelWildcard :: TopicFilterLevel
-singleLevelWildcard :: TopicFilterLevel
+data Filter
+filterLevels :: Filter -> NonEmpty Level
+filterLength :: Filter -> Int
+filterParser :: Parser Filter
+filterBuilder :: Filter -> Builder
+data Level
+levelParser :: Parser Level
+multiLevelWildcard :: Level
+singleLevelWildcard :: Level
+startsWithDollar :: Level -> Bool
 instance GHC.Classes.Ord Network.MQTT.Topic.Topic
 instance GHC.Classes.Eq Network.MQTT.Topic.Topic
-instance GHC.Classes.Ord Network.MQTT.Topic.TopicFilter
-instance GHC.Classes.Eq Network.MQTT.Topic.TopicFilter
-instance GHC.Classes.Ord Network.MQTT.Topic.TopicFilterLevel
-instance GHC.Classes.Eq Network.MQTT.Topic.TopicFilterLevel
+instance GHC.Classes.Ord Network.MQTT.Topic.Filter
+instance GHC.Classes.Eq Network.MQTT.Topic.Filter
+instance GHC.Classes.Ord Network.MQTT.Topic.Level
+instance GHC.Classes.Eq Network.MQTT.Topic.Level
 instance GHC.Show.Show Network.MQTT.Topic.Topic
-instance GHC.Show.Show Network.MQTT.Topic.TopicFilter
-instance GHC.Show.Show Network.MQTT.Topic.TopicFilterLevel
+instance GHC.Show.Show Network.MQTT.Topic.Filter
+instance GHC.Show.Show Network.MQTT.Topic.Level
 instance Data.String.IsString Network.MQTT.Topic.Topic
-instance Data.String.IsString Network.MQTT.Topic.TopicFilter
-instance Data.String.IsString Network.MQTT.Topic.TopicFilterLevel
-
-
-module Network.MQTT.Message
-type ClientIdentifier = ByteString
-type SessionPresent = Bool
-type CleanSession = Bool
-type Retain = Bool
-type KeepAlive = Word16
-type Username = Text
-type Password = ByteString
-newtype PacketIdentifier
-PacketIdentifier :: Int -> PacketIdentifier
-data QualityOfService
-Qos0 :: QualityOfService
-Qos1 :: QualityOfService
-Qos2 :: QualityOfService
-data ConnectionRefusal
-UnacceptableProtocolVersion :: ConnectionRefusal
-IdentifierRejected :: ConnectionRefusal
-ServerUnavailable :: ConnectionRefusal
-BadUsernameOrPassword :: ConnectionRefusal
-NotAuthorized :: ConnectionRefusal
-data Message
-Message :: !Topic -> !ByteString -> !QualityOfService -> !Retain -> !Duplicate -> Message
-[msgTopic] :: Message -> !Topic
-[msgBody] :: Message -> !ByteString
-[msgQos] :: Message -> !QualityOfService
-[msgRetain] :: Message -> !Retain
-[msgDuplicate] :: Message -> !Duplicate
-data UpstreamMessage
-Connect :: !ClientIdentifier -> !CleanSession -> !KeepAlive -> !(Maybe Message) -> !(Maybe (Username, Maybe Password)) -> UpstreamMessage
-[connectClientIdentifier] :: UpstreamMessage -> !ClientIdentifier
-[connectCleanSession] :: UpstreamMessage -> !CleanSession
-[connectKeepAlive] :: UpstreamMessage -> !KeepAlive
-[connectWill] :: UpstreamMessage -> !(Maybe Message)
-[connectCredentials] :: UpstreamMessage -> !(Maybe (Username, Maybe Password))
-Subscribe :: PacketIdentifier -> [(TopicFilter, QualityOfService)] -> UpstreamMessage
-Unsubscribe :: PacketIdentifier -> [TopicFilter] -> UpstreamMessage
-PingRequest :: UpstreamMessage
-Disconnect :: UpstreamMessage
-buildUpstreamMessage :: UpstreamMessage -> Builder
-parseUpstreamMessage :: Get UpstreamMessage
-data DownstreamMessage
-ConnectAcknowledgement :: !(Either ConnectionRefusal SessionPresent) -> DownstreamMessage
-PingResponse :: DownstreamMessage
-Publish :: !Message -> DownstreamMessage
-Publish' :: {-# UNPACK #-} !PacketIdentifier -> !Message -> DownstreamMessage
-PublishAcknowledgement :: {-# UNPACK #-} !PacketIdentifier -> DownstreamMessage
-PublishReceived :: {-# UNPACK #-} !PacketIdentifier -> DownstreamMessage
-PublishRelease :: {-# UNPACK #-} !PacketIdentifier -> DownstreamMessage
-PublishComplete :: {-# UNPACK #-} !PacketIdentifier -> DownstreamMessage
-SubscribeAcknowledgement :: {-# UNPACK #-} !PacketIdentifier -> [Maybe QualityOfService] -> DownstreamMessage
-UnsubscribeAcknowledgement :: {-# UNPACK #-} !PacketIdentifier -> DownstreamMessage
-buildDownstreamMessage :: DownstreamMessage -> Builder
-parseDownstreamMessage :: Get DownstreamMessage
-pRemainingLength :: Get Int
-bRemainingLength :: Int -> Builder
-pUtf8String :: Get Text
-bUtf8String :: Text -> Builder
-instance GHC.Show.Show Network.MQTT.Message.DownstreamMessage
-instance GHC.Classes.Eq Network.MQTT.Message.DownstreamMessage
-instance GHC.Show.Show Network.MQTT.Message.UpstreamMessage
-instance GHC.Classes.Eq Network.MQTT.Message.UpstreamMessage
-instance GHC.Show.Show Network.MQTT.Message.Message
-instance GHC.Classes.Ord Network.MQTT.Message.Message
-instance GHC.Classes.Eq Network.MQTT.Message.Message
-instance GHC.Enum.Bounded Network.MQTT.Message.ConnectionRefusal
-instance GHC.Enum.Enum Network.MQTT.Message.ConnectionRefusal
-instance GHC.Show.Show Network.MQTT.Message.ConnectionRefusal
-instance GHC.Classes.Ord Network.MQTT.Message.ConnectionRefusal
-instance GHC.Classes.Eq Network.MQTT.Message.ConnectionRefusal
-instance GHC.Show.Show Network.MQTT.Message.QualityOfService
-instance GHC.Classes.Ord Network.MQTT.Message.QualityOfService
-instance GHC.Classes.Eq Network.MQTT.Message.QualityOfService
-instance GHC.Show.Show Network.MQTT.Message.PacketIdentifier
-instance GHC.Classes.Ord Network.MQTT.Message.PacketIdentifier
-instance GHC.Classes.Eq Network.MQTT.Message.PacketIdentifier
-
-
-module Network.MQTT.Client
+instance Data.String.IsString Network.MQTT.Topic.Filter
+instance Data.String.IsString Network.MQTT.Topic.Level
 
 
 module Network.MQTT.RoutingTree
@@ -140,7 +66,7 @@ module Network.MQTT.RoutingTree
 --   and size optimization to avoid unnecessary boxing and case
 --   distinction.
 newtype RoutingTree a
-RoutingTree :: (Map TopicFilterLevel (RoutingTreeNode a)) -> RoutingTree a
+RoutingTree :: (Map Level (RoutingTreeNode a)) -> RoutingTree a
 class RoutingTreeValue a where data RoutingTreeNode a where {
     data family RoutingTreeNode a;
 }
@@ -151,7 +77,8 @@ nodeFromTree :: RoutingTreeValue a => RoutingTree a -> RoutingTreeNode a
 nodeFromTreeAndValue :: RoutingTreeValue a => RoutingTree a -> a -> RoutingTreeNode a
 null :: RoutingTree a -> Bool
 empty :: RoutingTree a
-singleton :: RoutingTreeValue a => TopicFilter -> a -> RoutingTree a
+size :: RoutingTreeValue a => RoutingTree a -> Int
+singleton :: RoutingTreeValue a => Filter -> a -> RoutingTree a
 
 -- | Match a <a>Topic</a> against a <a>RoutingTree</a>.
 --   
@@ -161,7 +88,7 @@ singleton :: RoutingTreeValue a => TopicFilter -> a -> RoutingTree a
 --   <tt>#</tt> as described in the MQTT specification).
 matchTopic :: RoutingTreeValue a => Topic -> RoutingTree a -> Bool
 
--- | Match a <a>TopicFilter</a> against a <a>RoutingTree</a>.
+-- | Match a <a>Filter</a> against a <a>RoutingTree</a>.
 --   
 --   The function returns true iff the tree contains a path that is <i>less
 --   or equally specific</i> than the filter and the terminal node contains
@@ -181,15 +108,17 @@ matchTopic :: RoutingTreeValue a => Topic -> RoutingTree a -> Bool
 --   match (singleton "a") "+"     = False
 --   match (singleton "a") "#"     = False
 --   </pre>
-matchFilter :: RoutingTreeValue a => TopicFilter -> RoutingTree a -> Bool
+matchFilter :: RoutingTreeValue a => Filter -> RoutingTree a -> Bool
 lookupWith :: (RoutingTreeValue a) => (a -> a -> a) -> Topic -> RoutingTree a -> Maybe a
-insert :: RoutingTreeValue a => TopicFilter -> a -> RoutingTree a -> RoutingTree a
-insertWith :: RoutingTreeValue a => (a -> a -> a) -> TopicFilter -> a -> RoutingTree a -> RoutingTree a
+insert :: RoutingTreeValue a => Filter -> a -> RoutingTree a -> RoutingTree a
+insertWith :: RoutingTreeValue a => (a -> a -> a) -> Filter -> a -> RoutingTree a -> RoutingTree a
+insertFoldable :: (RoutingTreeValue a, Foldable t) => t (Filter, a) -> RoutingTree a -> RoutingTree a
 map :: (RoutingTreeValue a, RoutingTreeValue b) => (a -> b) -> RoutingTree a -> RoutingTree b
-adjust :: RoutingTreeValue a => (a -> a) -> TopicFilter -> RoutingTree a -> RoutingTree a
-delete :: RoutingTreeValue a => TopicFilter -> RoutingTree a -> RoutingTree a
+mapMaybe :: (RoutingTreeValue a, RoutingTreeValue b) => (a -> Maybe b) -> RoutingTree a -> RoutingTree b
+adjust :: RoutingTreeValue a => (a -> a) -> Filter -> RoutingTree a -> RoutingTree a
+delete :: RoutingTreeValue a => Filter -> RoutingTree a -> RoutingTree a
 unionWith :: (RoutingTreeValue a) => (a -> a -> a) -> RoutingTree a -> RoutingTree a -> RoutingTree a
-differenceWith :: RoutingTreeValue a => (a -> a -> a) -> RoutingTree a -> RoutingTree a -> RoutingTree a
+differenceWith :: (RoutingTreeValue a, RoutingTreeValue b) => (a -> b -> Maybe a) -> RoutingTree a -> RoutingTree b -> RoutingTree a
 instance (Network.MQTT.RoutingTree.RoutingTreeValue a, GHC.Base.Monoid a) => GHC.Base.Monoid (Network.MQTT.RoutingTree.RoutingTree a)
 instance Network.MQTT.RoutingTree.RoutingTreeValue Data.IntSet.Base.IntSet
 instance Network.MQTT.RoutingTree.RoutingTreeValue (Data.Functor.Identity.Identity a)
@@ -197,118 +126,228 @@ instance Network.MQTT.RoutingTree.RoutingTreeValue ()
 instance Network.MQTT.RoutingTree.RoutingTreeValue GHC.Types.Bool
 
 
-module Network.MQTT.Broker
-type SessionKey = Int
-type Message = ()
-data Broker authenticator
-Broker :: authenticator -> MVar (BrokerState authenticator) -> Broker authenticator
-[brokerAuthenticator] :: Broker authenticator -> authenticator
-[brokerState] :: Broker authenticator -> MVar (BrokerState authenticator)
-data Session authenticator
-Session :: Broker authenticator -> MVar SessionState -> Session authenticator
-[sessionBroker] :: Session authenticator -> Broker authenticator
-[sessionState] :: Session authenticator -> MVar SessionState
-data QosLevel
-Qos0 :: QosLevel
-Qos1 :: QosLevel
-Qos2 :: QosLevel
-data BrokerState authenticator
-BrokerState :: !SessionKey -> !(RoutingTree IntSet) -> !(IntMap (Session authenticator)) -> BrokerState authenticator
-[brokerMaxSessionKey] :: BrokerState authenticator -> !SessionKey
-[brokerSubscriptions] :: BrokerState authenticator -> !(RoutingTree IntSet)
-[brokerSessions] :: BrokerState authenticator -> !(IntMap (Session authenticator))
-data SessionState
-SessionState :: !SessionKey -> !(MVar ()) -> !(RoutingTree (Identity QosLevel)) -> !(BoundedChan (Topic, Message)) -> !(BoundedChan (Topic, Message)) -> !(BoundedChan (Topic, Message)) -> SessionState
-[sessionKey] :: SessionState -> !SessionKey
-[sessionTermination] :: SessionState -> !(MVar ())
-[sessionSubscriptions] :: SessionState -> !(RoutingTree (Identity QosLevel))
-[sessionQueue0] :: SessionState -> !(BoundedChan (Topic, Message))
-[sessionQueue1] :: SessionState -> !(BoundedChan (Topic, Message))
-[sessionQueue2] :: SessionState -> !(BoundedChan (Topic, Message))
-new :: authenticator -> IO (Broker authenticator)
-data SessionConfig
-SessionConfig :: Int -> Int -> Int -> SessionConfig
-[sessionConfigQueue0MaxSize] :: SessionConfig -> Int
-[sessionConfigQueue1MaxSize] :: SessionConfig -> Int
-[sessionConfigQueue2MaxSize] :: SessionConfig -> Int
-instance GHC.Show.Show Network.MQTT.Broker.QosLevel
-instance GHC.Classes.Ord Network.MQTT.Broker.QosLevel
-instance GHC.Classes.Eq Network.MQTT.Broker.QosLevel
+module Network.MQTT.Message
+type ClientIdentifier = Text
+type SessionPresent = Bool
+type CleanSession = Bool
+type Retain = Bool
+type KeepAliveInterval = Word16
+type Username = Text
+newtype Password
+Password :: ByteString -> Password
+type PacketIdentifier = Int
+data QualityOfService
+Qos0 :: QualityOfService
+Qos1 :: QualityOfService
+Qos2 :: QualityOfService
+data ConnectionRefusal
+UnacceptableProtocolVersion :: ConnectionRefusal
+IdentifierRejected :: ConnectionRefusal
+ServerUnavailable :: ConnectionRefusal
+BadUsernameOrPassword :: ConnectionRefusal
+NotAuthorized :: ConnectionRefusal
+data Message
+Message :: !Topic -> !ByteString -> !QualityOfService -> !Retain -> !Duplicate -> Message
+[msgTopic] :: Message -> !Topic
+[msgBody] :: Message -> !ByteString
+[msgQos] :: Message -> !QualityOfService
+[msgRetain] :: Message -> !Retain
+[msgDuplicate] :: Message -> !Duplicate
+data ClientMessage
+ClientConnect :: !ClientIdentifier -> !CleanSession -> !KeepAliveInterval -> !(Maybe Message) -> !(Maybe (Username, Maybe Password)) -> ClientMessage
+[connectClientIdentifier] :: ClientMessage -> !ClientIdentifier
+[connectCleanSession] :: ClientMessage -> !CleanSession
+[connectKeepAlive] :: ClientMessage -> !KeepAliveInterval
+[connectWill] :: ClientMessage -> !(Maybe Message)
+[connectCredentials] :: ClientMessage -> !(Maybe (Username, Maybe Password))
+ClientPublish :: !Message -> ClientMessage
+ClientPublish' :: {-# UNPACK #-} !PacketIdentifier -> !Message -> ClientMessage
+ClientPublishAcknowledged :: {-# UNPACK #-} !PacketIdentifier -> ClientMessage
+ClientPublishReceived :: {-# UNPACK #-} !PacketIdentifier -> ClientMessage
+ClientPublishRelease :: {-# UNPACK #-} !PacketIdentifier -> ClientMessage
+ClientPublishComplete :: {-# UNPACK #-} !PacketIdentifier -> ClientMessage
+ClientSubscribe :: {-# UNPACK #-} !PacketIdentifier -> ![(Filter, QualityOfService)] -> ClientMessage
+ClientUnsubscribe :: {-# UNPACK #-} !PacketIdentifier -> ![Filter] -> ClientMessage
+ClientPingRequest :: ClientMessage
+ClientDisconnect :: ClientMessage
+clientMessageBuilder :: ClientMessage -> Builder
+clientMessageParser :: Get ClientMessage
+data ServerMessage
+ConnectAck :: !(Either ConnectionRefusal SessionPresent) -> ServerMessage
+ServerPublish :: !Message -> ServerMessage
+ServerPublish' :: {-# UNPACK #-} !PacketIdentifier -> !Message -> ServerMessage
+ServerPublishAcknowledged :: {-# UNPACK #-} !PacketIdentifier -> ServerMessage
+ServerPublishReceived :: {-# UNPACK #-} !PacketIdentifier -> ServerMessage
+ServerPublishRelease :: {-# UNPACK #-} !PacketIdentifier -> ServerMessage
+ServerPublishComplete :: {-# UNPACK #-} !PacketIdentifier -> ServerMessage
+ServerSubscribeAcknowledged :: {-# UNPACK #-} !PacketIdentifier -> ![Maybe QualityOfService] -> ServerMessage
+ServerUnsubscribeAcknowledged :: {-# UNPACK #-} !PacketIdentifier -> ServerMessage
+ServerPingResponse :: ServerMessage
+serverMessageBuilder :: ServerMessage -> Builder
+serverMessageParser :: Get ServerMessage
+lengthParser :: Get Int
+lengthBuilder :: Int -> Builder
+utf8Parser :: Get Text
+utf8Builder :: Text -> (Builder, Int)
+instance GHC.Show.Show Network.MQTT.Message.ServerMessage
+instance GHC.Classes.Eq Network.MQTT.Message.ServerMessage
+instance GHC.Show.Show Network.MQTT.Message.ClientMessage
+instance GHC.Show.Show Network.MQTT.Message.Message
+instance GHC.Classes.Ord Network.MQTT.Message.Message
+instance GHC.Classes.Eq Network.MQTT.Message.Message
+instance GHC.Enum.Bounded Network.MQTT.Message.ConnectionRefusal
+instance GHC.Enum.Enum Network.MQTT.Message.ConnectionRefusal
+instance GHC.Show.Show Network.MQTT.Message.ConnectionRefusal
+instance GHC.Classes.Ord Network.MQTT.Message.ConnectionRefusal
+instance GHC.Classes.Eq Network.MQTT.Message.ConnectionRefusal
+instance GHC.Show.Show Network.MQTT.Message.QualityOfService
+instance GHC.Classes.Ord Network.MQTT.Message.QualityOfService
+instance GHC.Classes.Eq Network.MQTT.Message.QualityOfService
+instance GHC.Show.Show Network.MQTT.Message.Password
+
+module Network.MQTT.RetainedMessages
+newtype RetainedTree
+RetainedTree :: (Map Level RetainedNode) -> RetainedTree
+data RetainedNode
+RetainedNode :: RetainedTree -> (Maybe Message) -> RetainedNode
+empty :: RetainedTree
+singleton :: Message -> RetainedTree
+insert :: Message -> RetainedTree -> RetainedTree
+lookupFilter :: Filter -> RetainedTree -> Set Message
 
 
 module Network.MQTT.Authentication
 
--- | An <a>Authenticator</a> is able to determine a <a>Principal</a>'s
---   identity from a <a>Request</a>.
-class (Show (Principal a), Exception (AuthenticationException a)) => Authenticator a where data Principal a data AuthenticationException a where {
+-- | A peer identity optionally associated with connection/session specific
+--   information. newtype Principal = Principal T.Text deriving (Eq, Ord,
+--   Show)
+--   
+--   An <a>Authenticator</a> is able to determine a <a>Principal</a>'s
+--   identity from a <tt>Request</tt>.
+class (Exception (AuthenticationException a), Eq (Principal a), Ord (Principal a), Show (Principal a)) => Authenticator a where data Principal a data AuthenticatorConfig a data AuthenticationException a where {
     data family Principal a;
+    data family AuthenticatorConfig a;
     data family AuthenticationException a;
 }
 
 -- | Try to determine a <a>Principal</a>'s identity from connection
---   <a>Request</a>.
+--   <tt>Request</tt>.
 --   
 --   The operation shall return <a>Nothing</a> in case the authentication
 --   mechanism is working, but couldn't associate an identity. It shall
 --   throw and <a>AuthenticationException</a> in case of other problems.
-authenticate :: (Authenticator a, Request r) => a -> r -> IO (Maybe (Principal a))
+newAuthenticator :: Authenticator a => AuthenticatorConfig a -> IO a
+authenticate :: Authenticator a => a -> ConnectionRequest -> IO (Maybe (Principal a))
+hasPublishPermission :: Authenticator a => a -> Principal a -> Topic -> IO Bool
+hasSubscribePermission :: Authenticator a => a -> Principal a -> Filter -> IO Bool
 
 -- | This class defines how the information gathered from a connection
 --   request looks like. An <a>Authenticator</a> may use whatever
 --   information it finds suitable to authenticate the <a>Principal</a>.
-class Request r where requestSecure = const False requestUsername = const Nothing requestPassword = const Nothing requestHeaders = const [] requestCertificateChain = const Nothing
+data ConnectionRequest
+ConnectionRequest :: Text -> Bool -> Bool -> Maybe (Username, Maybe Password) -> Maybe (ByteString, [(CI ByteString, ByteString)]) -> Maybe CertificateChain -> Maybe ByteString -> ConnectionRequest
+[requestClientIdentifier] :: ConnectionRequest -> Text
+[requestCleanSession] :: ConnectionRequest -> Bool
 
 -- | Is this connection secure in terms of <a>Transport Layer Security</a>?
-requestSecure :: Request r => r -> Bool
+[requestSecure] :: ConnectionRequest -> Bool
 
--- | The username supplied with the MQTT handshake.
-requestUsername :: Request r => r -> Maybe Text
+-- | The username and password supplied with the MQTT handshake.
+[requestCredentials] :: ConnectionRequest -> Maybe (Username, Maybe Password)
 
--- | The password supplied with the MQTT handshake.
-requestPassword :: Request r => r -> Maybe ByteString
-
--- | The HTTP request headers in case the client connected via
+-- | The HTTP request head in case the client connected via
 --   <a>WebSocket</a>.
-requestHeaders :: Request r => r -> [(CI ByteString, ByteString)]
+[requestHttp] :: ConnectionRequest -> Maybe (ByteString, [(CI ByteString, ByteString)])
 
 -- | An <a>X.509 certificate</a> chain supplied by the peer. It can be
 --   assumed that the transport layer implementation already verified that
 --   the peer owns the corresponding private key. The validation of the
 --   certificate claims (including certificate chain checking) <i>must</i>
 --   be performed by the <a>Authenticator</a>.
-requestCertificateChain :: Request r => r -> Maybe CertificateChain
+[requestCertificateChain] :: ConnectionRequest -> Maybe CertificateChain
+[requestRemoteAddress] :: ConnectionRequest -> Maybe ByteString
+instance GHC.Show.Show Network.MQTT.Authentication.ConnectionRequest
 
 
-module Network.MQTT.Authorization
+module Network.MQTT.Session
+type Identifier = Int
+data Session auth
+Session :: !(Principal auth) -> !ClientIdentifier -> !Identifier -> !(MVar (RoutingTree (Identity QualityOfService))) -> !(MVar (IntMap Message)) -> !(MVar ServerQueue) -> !(MVar ()) -> Int -> Session auth
+[sessionPrincipal] :: Session auth -> !(Principal auth)
+[sessionClientIdentifier] :: Session auth -> !ClientIdentifier
+[sessionIdentifier] :: Session auth -> !Identifier
+[sessionSubscriptions] :: Session auth -> !(MVar (RoutingTree (Identity QualityOfService)))
+[sessionIncompleteQos2] :: Session auth -> !(MVar (IntMap Message))
+[sessionQueue] :: Session auth -> !(MVar ServerQueue)
+[sessionQueuePending] :: Session auth -> !(MVar ())
+[sessionQueueLimitQos0] :: Session auth -> Int
+data ServerQueue
+ServerQueue :: !(Seq Int) -> !(Seq Int) -> !(Seq Int) -> !(Seq Int) -> !(Seq (Int, [Maybe QualityOfService])) -> !(Seq Int) -> !(Seq Message) -> !(Seq Message) -> !(Seq Message) -> !(IntMap Message) -> !(IntMap Message) -> !(IntMap Message) -> ServerQueue
+[queuePids] :: ServerQueue -> !(Seq Int)
+[queueAcknowledged] :: ServerQueue -> !(Seq Int)
+[queueReceived] :: ServerQueue -> !(Seq Int)
+[queueCompleted] :: ServerQueue -> !(Seq Int)
+[queueSubscribed] :: ServerQueue -> !(Seq (Int, [Maybe QualityOfService]))
+[queueUnsubscribed] :: ServerQueue -> !(Seq Int)
+[queueQos0] :: ServerQueue -> !(Seq Message)
+[queueQos1] :: ServerQueue -> !(Seq Message)
+[queueQos2] :: ServerQueue -> !(Seq Message)
+[queueUnacknowledged] :: ServerQueue -> !(IntMap Message)
+[queueUnreceived] :: ServerQueue -> !(IntMap Message)
+[queueUncompleted] :: ServerQueue -> !(IntMap Message)
+emptyServerQueue :: Int -> ServerQueue
+notePending :: Session auth -> IO ()
+enqueueMessage :: Session auth -> Message -> IO ()
+enqueueMessages :: Foldable t => Session auth -> t Message -> IO ()
+enqueuePublishAcknowledged :: Session auth -> PacketIdentifier -> IO ()
+enqueuePublishReceived :: Session auth -> PacketIdentifier -> IO ()
+enqueuePublishCompleted :: Session auth -> PacketIdentifier -> IO ()
+enqueueSubscribeAcknowledged :: Session auth -> PacketIdentifier -> [Maybe QualityOfService] -> IO ()
+enqueueUnsubscribeAcknowledged :: Session auth -> PacketIdentifier -> IO ()
 
--- | An <a>Authorizer</a> is able to determine a <a>Principal</a>'s
---   permissions.
-class (Authenticator a, Exception (AuthorizationException a)) => Authorizer a where data AuthorizationException a getPublishPermissions = pure mempty getSubscribePermissions = pure mempty where {
-    data family AuthorizationException a;
-}
+-- | Blocks until messages are available and prefers non-qos0 messages over
+--   qos0 messages.
+dequeue :: Session auth -> IO (Seq ServerMessage)
+dequeueQos0 :: ServerQueue -> (ServerQueue, Seq ServerMessage)
+holdQos2Message :: Session auth -> PacketIdentifier -> Message -> IO ()
+releaseQos2Message :: Session auth -> PacketIdentifier -> IO (Maybe Message)
+dequeueNonQos0 :: ServerQueue -> (ServerQueue, Seq ServerMessage)
+instance GHC.Classes.Eq (Network.MQTT.Session.Session auth)
+instance GHC.Classes.Ord (Network.MQTT.Session.Session auth)
 
--- | Determine the set of <tt>Topic</tt>s a <a>Principal</a> is allowed to
---   publish on.
+
+module Network.MQTT.Broker
+data Broker auth
+Broker :: auth -> MVar RetainedTree -> MVar (BrokerState auth) -> Broker auth
+[brokerAuthenticator] :: Broker auth -> auth
+[brokerRetainedMessages] :: Broker auth -> MVar RetainedTree
+[brokerState] :: Broker auth -> MVar (BrokerState auth)
+data BrokerState auth
+BrokerState :: !Identifier -> !(RoutingTree IntSet) -> !(IntMap (Session auth)) -> !(Map (Principal auth) (Map ClientIdentifier Int)) -> BrokerState auth
+[brokerMaxSessionIdentifier] :: BrokerState auth -> !Identifier
+[brokerSubscriptions] :: BrokerState auth -> !(RoutingTree IntSet)
+[brokerSessions] :: BrokerState auth -> !(IntMap (Session auth))
+[brokerPrincipals] :: BrokerState auth -> !(Map (Principal auth) (Map ClientIdentifier Int))
+new :: Authenticator auth => auth -> IO (Broker auth)
+data SessionConfig
+SessionConfig :: Int -> Int -> Int -> SessionConfig
+[sessionConfigQueue0MaxSize] :: SessionConfig -> Int
+[sessionConfigQueue1MaxSize] :: SessionConfig -> Int
+[sessionConfigQueue2MaxSize] :: SessionConfig -> Int
+defaultSessionConfig :: SessionConfig
+withSession :: (Authenticator auth) => Broker auth -> ConnectionRequest -> IO () -> (AuthenticationException auth -> IO ()) -> (Session auth -> SessionPresent -> Principal auth -> IO ()) -> IO ()
+getSession :: Authenticator auth => Principal auth -> ClientIdentifier -> BrokerState auth -> IO (BrokerState auth, (SessionPresent, Session auth))
+closeSession :: Authenticator auth => Broker auth -> Session auth -> IO ()
+publishDownstream :: Broker auth -> Message -> IO ()
+
+-- | Publish a message on the broker regarding specific permissions of the
+--   session.
 --   
---   Beware that this operation is called on each publication. The
---   implementation is advised to cache the result (i.e. in an
---   <tt>MVar</tt>) and update it from time to time.
-getPublishPermissions :: Authorizer a => Principal a -> IO (RoutingTree ())
-
--- | Determine the set of <tt>Filter</tt>s a <a>Principal</a> is allowed to
---   subscribe. The <a>Principal</a> is implicitly allowed to subscribe all
---   filters that are more specific than those explicitly stated in the
---   <a>RoutingTree</a>.
---   
---   Beware that this operation is called on each subscription. The
---   implementation is advised to cache the result (i.e. in an
---   <tt>MVar</tt>) and update it from time to time.
---   
---   Also note that <tt>Filter</tt>s already subscribed by the client won't
---   be unsubscribed if they are no longer in the current permission set.
---   There is no way specified by MQTT to signal this to the client other
---   than terminating the session.
-getSubscribePermissions :: Authorizer a => Principal a -> IO (RoutingTree ())
+--   QUESTION: Where do qos 1 and 2 messages get acknowledged?
+publishUpstream :: Authenticator auth => Broker auth -> Session auth -> Message -> IO ()
+publishUpstream' :: Broker auth -> Message -> IO ()
+subscribe :: Authenticator auth => Broker auth -> Session auth -> PacketIdentifier -> [(Filter, QualityOfService)] -> IO ()
+unsubscribe :: Broker auth -> Session auth -> PacketIdentifier -> [Filter] -> IO ()
 
 
 module Network.MQTT
@@ -358,123 +397,44 @@ withServer :: ServerStack a => ServerConfig a -> (Server a -> IO b) -> IO b
 --         print result
 --   </pre>
 withConnection :: ServerStack a => Server a -> (ServerConnection a -> ServerConnectionInfo a -> IO b) -> IO (Async b)
-class ServerStack a => StreamServerStack a where sendStream server = sendStreamLazy server . fromStrict sendStreamLazy server = mapM_ (sendStream server) . toChunks receiveStream server = toStrict <$> receiveStreamLazy server receiveStreamLazy server = fromStrict <$> receiveStream server
-sendStream :: StreamServerStack a => ServerConnection a -> ByteString -> IO ()
-sendStreamLazy :: StreamServerStack a => ServerConnection a -> ByteString -> IO ()
-receiveStream :: StreamServerStack a => ServerConnection a -> IO ByteString
-receiveStreamLazy :: StreamServerStack a => ServerConnection a -> IO ByteString
-class ServerStack a => MessageServerStack a where type SendMessage a type ReceiveMessage a where {
-    type family SendMessage a;
-    type family ReceiveMessage a;
+class ServerStack a => StreamServerStack a where sendStream server bs = fromIntegral <$> sendStreamLazy server (fromStrict bs) sendStreamLazy server = foldM (\ sent bs -> sendStream server bs >>= \ sent' -> pure $! sent + fromIntegral sent') 0 . toChunks sendStreamBuilder server chunksize = sendStreamLazy server . toLazyByteStringWith (untrimmedStrategy chunksize chunksize) mempty receiveStream server i = toStrict <$> receiveStreamLazy server i receiveStreamLazy server i = fromStrict <$> receiveStream server i
+sendStream :: StreamServerStack a => ServerConnection a -> ByteString -> IO Int
+sendStreamLazy :: StreamServerStack a => ServerConnection a -> ByteString -> IO Int64
+sendStreamBuilder :: StreamServerStack a => ServerConnection a -> Int -> Builder -> IO Int64
+receiveStream :: StreamServerStack a => ServerConnection a -> Int -> IO ByteString
+receiveStreamLazy :: StreamServerStack a => ServerConnection a -> Int -> IO ByteString
+class ServerStack a => MessageServerStack a where type ClientMessage a type ServerMessage a where {
+    type family ClientMessage a;
+    type family ServerMessage a;
 }
-sendMessage :: MessageServerStack a => ServerConnection a -> SendMessage a -> IO ()
-receiveMessage :: MessageServerStack a => ServerConnection a -> IO (ReceiveMessage a)
-consumeMessages :: MessageServerStack a => ServerConnection a -> (ReceiveMessage a -> IO Bool) -> IO ()
+sendMessage :: MessageServerStack a => ServerConnection a -> ServerMessage a -> IO Int64
+sendMessages :: (MessageServerStack a, Foldable t) => ServerConnection a -> t (ServerMessage a) -> IO Int64
+receiveMessage :: MessageServerStack a => ServerConnection a -> IO (ClientMessage a)
+consumeMessages :: MessageServerStack a => ServerConnection a -> (ClientMessage a -> IO Bool) -> IO ()
 instance GHC.Show.Show (System.Socket.Internal.Socket.SocketAddress f) => GHC.Show.Show (Network.Stack.Server.ServerConnectionInfo (System.Socket.Internal.Socket.Socket f t p))
 instance GHC.Show.Show (Network.Stack.Server.ServerConnectionInfo a) => GHC.Show.Show (Network.Stack.Server.ServerConnectionInfo (Network.Stack.Server.TLS a))
 instance GHC.Show.Show (Network.Stack.Server.ServerConnectionInfo a) => GHC.Show.Show (Network.Stack.Server.ServerConnectionInfo (Network.Stack.Server.WebSocket a))
-instance (Data.Typeable.Internal.Typeable f, Data.Typeable.Internal.Typeable t, Data.Typeable.Internal.Typeable p, Foreign.Storable.Storable (System.Socket.Internal.Socket.SocketAddress f), System.Socket.Internal.Socket.Family f, System.Socket.Internal.Socket.Type t, System.Socket.Internal.Socket.Protocol p) => Network.Stack.Server.StreamServerStack (System.Socket.Internal.Socket.Socket f t p)
+instance (Data.Typeable.Internal.Typeable f, Data.Typeable.Internal.Typeable p, System.Socket.Internal.Socket.Family f, System.Socket.Internal.Socket.Protocol p) => Network.Stack.Server.StreamServerStack (System.Socket.Internal.Socket.Socket f System.Socket.Type.Stream.Stream p)
 instance Network.Stack.Server.StreamServerStack a => Network.Stack.Server.StreamServerStack (Network.Stack.Server.TLS a)
 instance Network.Stack.Server.StreamServerStack a => Network.Stack.Server.StreamServerStack (Network.Stack.Server.WebSocket a)
-instance (Foreign.Storable.Storable (System.Socket.Internal.Socket.SocketAddress f), System.Socket.Internal.Socket.Family f, System.Socket.Internal.Socket.Type t, System.Socket.Internal.Socket.Protocol p, Data.Typeable.Internal.Typeable f, Data.Typeable.Internal.Typeable t, Data.Typeable.Internal.Typeable p) => Network.Stack.Server.ServerStack (System.Socket.Internal.Socket.Socket f t p)
+instance (System.Socket.Internal.Socket.Family f, System.Socket.Internal.Socket.Type t, System.Socket.Internal.Socket.Protocol p, Data.Typeable.Internal.Typeable f, Data.Typeable.Internal.Typeable t, Data.Typeable.Internal.Typeable p) => Network.Stack.Server.ServerStack (System.Socket.Internal.Socket.Socket f t p)
 instance Network.Stack.Server.StreamServerStack a => Network.Stack.Server.ServerStack (Network.Stack.Server.TLS a)
 instance Network.Stack.Server.StreamServerStack a => Network.Stack.Server.ServerStack (Network.Stack.Server.WebSocket a)
 
 
 module Network.MQTT.Server
 data MQTT transport
+type RecentActivity = IORef Bool
+class ServerStack a => MqttServerTransportStack a
+getConnectionRequest :: MqttServerTransportStack a => ServerConnectionInfo a -> IO ConnectionRequest
+handleConnection :: forall transport auth. (StreamServerStack transport, MqttServerTransportStack transport, Authenticator auth) => Broker auth -> ServerConnection (MQTT transport) -> ServerConnectionInfo (MQTT transport) -> IO ()
 instance GHC.Show.Show (Network.Stack.Server.ServerException (Network.MQTT.Server.MQTT transport))
 instance GHC.Classes.Ord (Network.Stack.Server.ServerException (Network.MQTT.Server.MQTT transport))
 instance GHC.Classes.Eq (Network.Stack.Server.ServerException (Network.MQTT.Server.MQTT transport))
-instance GHC.Show.Show (Network.Stack.Server.ServerConnectionInfo a) => GHC.Show.Show (Network.Stack.Server.ServerConnectionInfo (Network.MQTT.Server.MQTT a))
+instance GHC.Show.Show (Network.Stack.Server.ServerConnectionInfo transport) => GHC.Show.Show (Network.Stack.Server.ServerConnectionInfo (Network.MQTT.Server.MQTT transport))
 instance Data.Typeable.Internal.Typeable transport => GHC.Exception.Exception (Network.Stack.Server.ServerException (Network.MQTT.Server.MQTT transport))
+instance (Data.Typeable.Internal.Typeable f, Data.Typeable.Internal.Typeable t, Data.Typeable.Internal.Typeable p, System.Socket.Internal.Socket.Family f, System.Socket.Internal.Socket.Protocol p, System.Socket.Internal.Socket.Type t, System.Socket.Internal.AddressInfo.HasNameInfo f) => Network.MQTT.Server.MqttServerTransportStack (System.Socket.Internal.Socket.Socket f t p)
+instance (Network.Stack.Server.StreamServerStack a, Network.MQTT.Server.MqttServerTransportStack a) => Network.MQTT.Server.MqttServerTransportStack (Network.Stack.Server.WebSocket a)
+instance (Network.Stack.Server.StreamServerStack a, Network.MQTT.Server.MqttServerTransportStack a) => Network.MQTT.Server.MqttServerTransportStack (Network.Stack.Server.TLS a)
 instance Network.Stack.Server.StreamServerStack transport => Network.Stack.Server.ServerStack (Network.MQTT.Server.MQTT transport)
 instance Network.Stack.Server.StreamServerStack transport => Network.Stack.Server.MessageServerStack (Network.MQTT.Server.MQTT transport)
-
-module Network.Transceiver
-class Transceiver a where type Data a type Exception a isTransceiverException _ _ = True where {
-    type family Data a;
-    type family Exception a;
-}
-isTransceiverException :: Transceiver a => a -> Exception a -> Bool
-class Closable a
-close :: Closable a => a -> IO ()
-class Closable a => Creatable a
-create :: Creatable a => IO a
-class (Transceiver a, Closable a) => Connection a where isConnectedException _ _ = False isNotConnectedException _ _ = False isConnectionAbortedException _ _ = False isConnectionRefusedException _ _ = False isConnectionTimeoutException _ _ = False isConnectionResetException _ _ = False
-isConnectedException :: Connection a => a -> Exception a -> Bool
-isNotConnectedException :: Connection a => a -> Exception a -> Bool
-isConnectionAbortedException :: Connection a => a -> Exception a -> Bool
-isConnectionRefusedException :: Connection a => a -> Exception a -> Bool
-isConnectionTimeoutException :: Connection a => a -> Exception a -> Bool
-isConnectionResetException :: Connection a => a -> Exception a -> Bool
-class (Connection a, Eq (Data a), Monoid (Data a)) => StreamConnection a where sendChunks a = mapM__ (sendChunk a) receiveChunks a = singleton <$> receiveChunk a
-sendChunk :: StreamConnection a => a -> Data a -> IO ()
-sendChunks :: (StreamConnection a, Chunks b, Chunk b ~ Data a) => a -> b -> IO ()
-receiveChunk :: StreamConnection a => a -> IO (Data a)
-receiveChunks :: (StreamConnection a, Chunks b, Chunk b ~ Data a) => a -> IO b
-class Addressable a where type Address a where {
-    type family Address a;
-}
-class (Connection a, Addressable a) => Bindable a where isAddressNotAvailableException _ _ = False
-bind :: Bindable a => a -> Address a -> IO ()
-isAddressNotAvailableException :: Bindable a => a -> Exception a -> Bool
-class (Connection a, Addressable a) => Connectable a
-connect :: Connectable a => a -> Address a -> IO ()
-class (Connection (AcceptedConnection a), Addressable (AcceptedConnection a)) => Acceptable a where type AcceptedConnection a where {
-    type family AcceptedConnection a;
-}
-listen :: Acceptable a => a -> Int -> IO ()
-accept :: Acceptable a => a -> IO (AcceptedConnection a, Address (AcceptedConnection a))
-class (Connection a) => DatagramConnection a where type Datagram a where {
-    type family Datagram a;
-}
-sendDatagram :: DatagramConnection a => a -> Datagram a -> IO ()
-receiveDatagram :: DatagramConnection a => a -> IO (Datagram a)
-class Chunks a where type Chunk a where {
-    type family Chunk a;
-}
-mapM__ :: Chunks a => (Chunk a -> IO ()) -> a -> IO ()
-singleton :: Chunks a => Chunk a -> a
-newtype TlsStream
-TlsStream :: Context -> TlsStream
-data SecureStreamServer t
-SecureStreamServer :: ServerParams -> t -> Address t -> SecureStreamServer t
-[serverParams] :: SecureStreamServer t -> ServerParams
-[transport] :: SecureStreamServer t -> t
-[bindAddress] :: SecureStreamServer t -> Address t
-data SecureStreamServerException t
-TlsException :: TLSException -> SecureStreamServerException t
-TlsTransportException :: (Exception t) -> SecureStreamServerException t
-instance Network.Transceiver.Chunks Data.ByteString.Lazy.Internal.ByteString
-instance Network.Transceiver.Chunks [a]
-instance Network.Transceiver.Transceiver (System.Socket.Internal.Socket.Socket f t p)
-instance Network.Transceiver.Closable (System.Socket.Internal.Socket.Socket f t p)
-instance (System.Socket.Internal.Socket.Family f, System.Socket.Internal.Socket.Type t, System.Socket.Internal.Socket.Protocol p) => Network.Transceiver.Creatable (System.Socket.Internal.Socket.Socket f t p)
-instance Network.Transceiver.Addressable (System.Socket.Internal.Socket.Socket f t p)
-instance Network.Transceiver.Connection (System.Socket.Internal.Socket.Socket f t p)
-instance Network.Transceiver.StreamConnection (System.Socket.Internal.Socket.Socket f System.Socket.Type.Stream.Stream p)
-instance Network.Transceiver.Connectable (System.Socket.Internal.Socket.Socket System.Socket.Family.Inet6.Inet6 t p)
-instance Network.Transceiver.Acceptable (System.Socket.Internal.Socket.Socket System.Socket.Family.Inet6.Inet6 t p)
-instance Network.Transceiver.Transceiver Network.Transceiver.TlsStream
-instance Network.Transceiver.Closable Network.Transceiver.TlsStream
-instance Network.Transceiver.Addressable Network.Transceiver.TlsStream
-instance Network.Transceiver.Connection Network.Transceiver.TlsStream
-instance Network.Transceiver.StreamConnection Network.Transceiver.TlsStream
-instance Network.Transceiver.Transceiver t => Network.Transceiver.Transceiver (Network.Transceiver.SecureStreamServer t)
-instance (Network.Transceiver.Acceptable t, Network.Transceiver.Data (Network.Transceiver.AcceptedConnection t) ~ Data.ByteString.Internal.ByteString, Network.Transceiver.AcceptedConnection t ~ t, Network.Transceiver.StreamConnection t) => Network.Transceiver.Acceptable (Network.Transceiver.SecureStreamServer t)
-
-
-module Network.MQTT.IO
-bufferedOutput :: (StreamConnection s, Data s ~ ByteString) => s -> IO UpstreamMessage -> IO (Maybe UpstreamMessage) -> (ByteString -> IO ()) -> IO ()
-
-module Control.Concurrent.Broadcast
-data Broadcast a
-data BroadcastListener a
-newBroadcast :: IO (Broadcast a)
-broadcast :: Broadcast a -> a -> IO ()
-terminate :: Broadcast a -> IO ()
-listen :: Broadcast a -> IO (BroadcastListener a)
-accept :: BroadcastListener a -> IO a
-instance GHC.Show.Show Control.Concurrent.Broadcast.BroadcastTerminatedException
-instance GHC.Exception.Exception Control.Concurrent.Broadcast.BroadcastTerminatedException
