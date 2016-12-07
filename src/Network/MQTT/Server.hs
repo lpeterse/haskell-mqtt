@@ -88,7 +88,7 @@ instance (SS.StreamServerStack transport) => SS.ServerStack (MQTT transport) whe
   data ServerException (MQTT transport)
     = ProtocolViolation String
     | MessageTooLong
-    | ConnectionRefused ConnectionRefusal
+    | ConnectionRejected ConnectionRejectReason
     | KeepAliveTimeoutException
     deriving (Eq, Ord, Show, Typeable)
   withServer config handle =
@@ -159,15 +159,15 @@ handleConnection broker cfg conn connInfo = do
       ClientConnect {} ->
         let sessionErrorHandler e = do
               Log.errorM "Server.connectionRequest" $ show e
-              void $ SS.sendMessage conn (ConnectAck $ Left ServerUnavailable)
+              void $ SS.sendMessage conn (ServerConnectionRejected ServerUnavailable)
             sessionUnauthorizedHandler = do
               Log.warningM "Server.connectionRequest" "Authentication failed."
-              void $ SS.sendMessage conn (ConnectAck $ Left NotAuthorized)
+              void $ SS.sendMessage conn (ServerConnectionRejected NotAuthorized)
             sessionHandler session sessionPresent principal = do
               Log.infoM "Server.connection" $ "Session " ++ show (Session.sessionIdentifier session)
                 ++  ": Associated " ++ show principal
                 ++ (if sessionPresent then " with existing session." else " with new session.")
-              void $ SS.sendMessage conn (ConnectAck $ Right sessionPresent)
+              void $ SS.sendMessage conn (ServerConnectionAccepted sessionPresent)
               foldl1 race_
                 [ handleInput recentActivity session
                 , handleOutput session
@@ -220,12 +220,10 @@ handleConnection broker cfg conn connInfo = do
         case packet of
           ClientConnect {} ->
             E.throwIO (ProtocolViolation "Unexpected CONN packet." :: SS.ServerException (MQTT transport))
-          ClientPublish msg -> do
-            Broker.publishUpstream broker session msg
-            pure False
-          ClientPublish' pid msg -> do
+          ClientPublish pid msg -> do
             case msgQos msg of
-              Qos0 -> pure () -- should not happen (invalid state)
+              Qos0 ->
+                Broker.publishUpstream broker session msg
               Qos1 -> do
                 Broker.publishUpstream broker session msg
                 Session.enqueuePublishAcknowledged session pid

@@ -18,7 +18,7 @@ module Network.MQTT.Message
   , Password (..)
   , PacketIdentifier
   , QualityOfService (..)
-  , ConnectionRefusal (..)
+  , ConnectionRejectReason (..)
   , Message (..)
   , ClientMessage (..)
   , clientMessageBuilder
@@ -35,10 +35,10 @@ module Network.MQTT.Message
 import           Control.Monad
 import qualified Data.Attoparsec.ByteString as A
 import           Data.Bits
+import           Data.Bool
 import qualified Data.ByteString            as BS
 import qualified Data.ByteString.Builder    as BS
 import qualified Data.ByteString.Lazy       as BSL
-import           Data.Maybe
 import           Data.Monoid
 import qualified Data.Binary.Get            as SG
 import qualified Data.Text                  as T
@@ -52,7 +52,7 @@ type Retain           = Bool
 type Duplicate        = Bool
 type KeepAliveInterval = Word16
 type Username         = T.Text
-newtype Password      = Password BS.ByteString
+newtype Password      = Password BS.ByteString deriving (Eq)
 type ClientIdentifier = T.Text
 type PacketIdentifier = Int
 
@@ -65,7 +65,7 @@ data QualityOfService
   | Qos2
   deriving (Eq, Ord, Show)
 
-data ConnectionRefusal
+data ConnectionRejectReason
    = UnacceptableProtocolVersion
    | IdentifierRejected
    | ServerUnavailable
@@ -90,8 +90,7 @@ data ClientMessage
      , connectWill             :: !(Maybe Message)
      , connectCredentials      :: !(Maybe (Username, Maybe Password))
      }
-   | ClientPublish                                                !Message
-   | ClientPublish'              {-# UNPACK #-} !PacketIdentifier !Message
+   | ClientPublish               {-# UNPACK #-} !PacketIdentifier !Message
    | ClientPublishAcknowledged   {-# UNPACK #-} !PacketIdentifier
    | ClientPublishReceived       {-# UNPACK #-} !PacketIdentifier
    | ClientPublishRelease        {-# UNPACK #-} !PacketIdentifier
@@ -100,12 +99,12 @@ data ClientMessage
    | ClientUnsubscribe           {-# UNPACK #-} !PacketIdentifier ![TF.Filter]
    | ClientPingRequest
    | ClientDisconnect
-   deriving (Show)
+   deriving (Eq, Show)
 
 data ServerMessage
-   = ConnectAck !(Either ConnectionRefusal SessionPresent)
-   | ServerPublish                                                         !Message
-   | ServerPublish'                       {-# UNPACK #-} !PacketIdentifier !Message
+   = ServerConnectionAccepted                            !SessionPresent
+   | ServerConnectionRejected                            !ConnectionRejectReason
+   | ServerPublish                        {-# UNPACK #-} !PacketIdentifier !Message
    | ServerPublishAcknowledged            {-# UNPACK #-} !PacketIdentifier
    | ServerPublishReceived                {-# UNPACK #-} !PacketIdentifier
    | ServerPublishRelease                 {-# UNPACK #-} !PacketIdentifier
@@ -119,7 +118,7 @@ clientMessageParser :: SG.Get ClientMessage
 clientMessageParser =
   SG.lookAhead SG.getWord8 >>= \h-> case h .&. 0xf0 of
     0x10 -> connectParser
-    0x30 -> publishParser      ClientPublish ClientPublish'
+    0x30 -> publishParser      ClientPublish
     0x40 -> acknowledgedParser ClientPublishAcknowledged
     0x50 -> acknowledgedParser ClientPublishReceived
     0x60 -> acknowledgedParser ClientPublishRelease
@@ -134,7 +133,7 @@ serverMessageParser :: SG.Get ServerMessage
 serverMessageParser =
   SG.lookAhead SG.getWord8 >>= \h-> case h .&. 0xf0 of
     0x20 -> connectAcknowledgedParser
-    0x30 -> publishParser      ServerPublish ServerPublish'
+    0x30 -> publishParser      ServerPublish
     0x40 -> acknowledgedParser ServerPublishAcknowledged
     0x50 -> acknowledgedParser ServerPublishReceived
     0x60 -> acknowledgedParser ServerPublishRelease
@@ -180,17 +179,17 @@ connectParser = do
 connectAcknowledgedParser :: SG.Get ServerMessage
 connectAcknowledgedParser = do
   x <- SG.getWord32be
-  ConnectAck <$> case x .&. 0xff of
-    0 -> pure $ Right (x .&. 0x0100 /= 0)
-    1 -> pure $ Left UnacceptableProtocolVersion
-    2 -> pure $ Left IdentifierRejected
-    3 -> pure $ Left ServerUnavailable
-    4 -> pure $ Left BadUsernameOrPassword
-    5 -> pure $ Left NotAuthorized
-    _ -> fail "serverConnectAcknowledgedParser: Invalid (reserved) return code."
+  case x .&. 0xff of
+    0 -> pure $ ServerConnectionAccepted (x .&. 0x0100 /= 0)
+    1 -> pure $ ServerConnectionRejected UnacceptableProtocolVersion
+    2 -> pure $ ServerConnectionRejected IdentifierRejected
+    3 -> pure $ ServerConnectionRejected ServerUnavailable
+    4 -> pure $ ServerConnectionRejected BadUsernameOrPassword
+    5 -> pure $ ServerConnectionRejected NotAuthorized
+    _ -> fail "serverCnnectAcknowledgedParser: Invalid (reserved) return code."
 
-publishParser :: (Message -> a) -> (PacketIdentifier -> Message -> a) -> SG.Get a
-publishParser publish publish' = do
+publishParser :: (PacketIdentifier -> Message -> a) -> SG.Get a
+publishParser publish = do
   hflags <- SG.getWord8
   let dup = hflags .&. 0x08 /= 0 -- duplicate flag
   let ret = hflags .&. 0x01 /= 0 -- retain flag
@@ -200,7 +199,7 @@ publishParser publish publish' = do
   if  qosBits == 0x00
     then do
       body <- SG.getLazyByteString $ fromIntegral ( len - topicLen )
-      pure $ publish Message {
+      pure $ publish (-1) Message {
             msgTopic     = topic
           , msgBody      = body
           , msgQos       = Qos0
@@ -211,7 +210,7 @@ publishParser publish publish' = do
       let qos = if qosBits == 0x02 then Qos1 else Qos2
       pid  <- fromIntegral <$> SG.getWord16be
       body <- SG.getLazyByteString $ fromIntegral ( len - topicLen - 2 )
-      pure $ publish' pid Message {
+      pure $ publish pid Message {
           msgTopic     = topic
         , msgBody      = body
         , msgQos       = qos
@@ -333,10 +332,8 @@ clientMessageBuilder (ClientConnect cid cleanSession keepAlive will credentials)
             x3   = BS.word16BE (fromIntegral plen)
             x4   = BS.byteString p
         in (x1 <> x2 <> x3 <> x4, 4 + ulen + plen, 0xc0)
-clientMessageBuilder (ClientPublish msg) =
-  publishBuilder Nothing msg
-clientMessageBuilder (ClientPublish' pid msg) =
-  publishBuilder (Just pid) msg
+clientMessageBuilder (ClientPublish pid msg) =
+  publishBuilder pid msg
 clientMessageBuilder (ClientPublishAcknowledged p) =
   BS.word32BE $ fromIntegral $ 0x40020000 .|. p
 clientMessageBuilder (ClientPublishReceived p) =
@@ -373,14 +370,18 @@ clientMessageBuilder ClientDisconnect =
   BS.word16BE 0xe000
 
 serverMessageBuilder :: ServerMessage -> BS.Builder
-serverMessageBuilder (ConnectAck crs) =
-  BS.word32BE $ 0x20020000 .|. case crs of
-    Left cr -> fromIntegral $ fromEnum cr + 1
-    Right s -> if s then 0x0100 else 0
-serverMessageBuilder (ServerPublish msg) =
-  publishBuilder Nothing msg
-serverMessageBuilder (ServerPublish' pid msg) =
-  publishBuilder (Just pid) msg
+serverMessageBuilder (ServerConnectionAccepted sessionPresent)
+  | sessionPresent   = BS.word32BE 0x20020100
+  | otherwise        = BS.word32BE 0x20020000
+serverMessageBuilder (ServerConnectionRejected reason) =
+  BS.word32BE $ case reason of
+    UnacceptableProtocolVersion -> 0x20020001
+    IdentifierRejected          -> 0x20020002
+    ServerUnavailable           -> 0x20020003
+    BadUsernameOrPassword       -> 0x20020004
+    NotAuthorized               -> 0x20020005
+serverMessageBuilder (ServerPublish pid msg) =
+  publishBuilder pid msg
 serverMessageBuilder (ServerPublishAcknowledged p) =
   BS.word32BE $ fromIntegral $ 0x40020000 .|. p
 serverMessageBuilder (ServerPublishReceived p) =
@@ -402,26 +403,26 @@ serverMessageBuilder (ServerUnsubscribeAcknowledged p) =
 serverMessageBuilder ServerPingResponse =
   BS.word16BE 0xd000
 
-publishBuilder :: Maybe PacketIdentifier -> Message -> BS.Builder
-publishBuilder mpid msg
-  | len < 128 =
-      BS.word32BE (fromIntegral h)
-      <> topicBuilder
-      <> BS.lazyByteString (msgBody msg)
-  | otherwise =
-      BS.word8 ( if msgRetain msg then 0x31 else 0x30 )
-      <> lengthBuilder len
-      <> BS.word16BE (fromIntegral topicLen)
-      <> topicBuilder
-      <> fromMaybe mempty (BS.word16BE . fromIntegral <$> mpid)
-      <> BS.lazyByteString (msgBody msg)
+publishBuilder :: PacketIdentifier -> Message -> BS.Builder
+publishBuilder pid msg =
+  BS.word8 h
+  <> lengthBuilder len
+  <> BS.word16BE (fromIntegral topicLen)
+  <> topicBuilder
+  <> bool (BS.word16BE $ fromIntegral pid) mempty (msgQos msg == Qos0)
+  <> BS.lazyByteString (msgBody msg)
   where
     topicLen     = TF.topicLength  (msgTopic msg)
     topicBuilder = TF.topicBuilder (msgTopic msg)
     len          = 2 + topicLen + fromIntegral (BSL.length $ msgBody msg)
-    h            = (if msgRetain msg then 0x31000000 else 0x30000000)
-                .|. len `unsafeShiftL` 16
-                .|. topicLen
+                 + bool 2 0 (msgQos msg == Qos0)
+    h            = 0x30
+                .|. bool 0x00 0x01 (msgRetain msg)
+                .|. bool 0x00 0x08 (msgDuplicate msg)
+                .|. case msgQos msg of
+                      Qos0 -> 0x00
+                      Qos1 -> 0x02
+                      Qos2 -> 0x04
 
 topicParser :: SG.Get (TF.Topic, Int)
 topicParser = do

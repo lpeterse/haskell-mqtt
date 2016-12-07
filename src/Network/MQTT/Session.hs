@@ -147,7 +147,7 @@ dequeue session = do
 
 dequeueQos0    :: ServerQueue -> (ServerQueue, Seq.Seq ServerMessage)
 dequeueQos0 queue =
-  ( queue { queueQos0 = mempty }, fmap ServerPublish (queueQos0 queue) )
+  ( queue { queueQos0 = mempty }, fmap (ServerPublish (-1)) (queueQos0 queue) )
 
 holdQos2Message :: Session auth -> PacketIdentifier -> Message -> IO ()
 holdQos2Message session pid msg =
@@ -194,7 +194,7 @@ dequeueNonQos0
                         , queueUnacknowledged = foldr (uncurry IM.insert) (queueUnacknowledged q)
                                                       (Seq.zipWith (,) pids' msgs')
                         }
-                    , s <> Seq.zipWith ServerPublish' pids' msgs' )
+                    , s <> Seq.zipWith ServerPublish pids' msgs' )
       where
         pids                    = queuePids q
         msgs                    = queueQos1 q
@@ -208,7 +208,7 @@ dequeueNonQos0
                         , queueUnreceived  = foldr (uncurry IM.insert) (queueUnreceived q)
                                                    (Seq.zipWith (,) pids' msgs')
                         }
-                      , s <> Seq.zipWith ServerPublish' pids' msgs' )
+                      , s <> Seq.zipWith ServerPublish pids' msgs' )
       where
         pids                    = queuePids q
         msgs                    = queueQos2 q

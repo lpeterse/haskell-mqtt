@@ -81,17 +81,20 @@ benchmark binary
     text
 
 test-suite test
-  default-language:
-    Haskell2010
   type:
     exitcode-stdio-1.0
+  default-language:
+    Haskell2010
+  ghc-options:
+    -Wall -fno-warn-orphans
   hs-source-dirs:
     test
   main-is:
-    test.hs
+    Main.hs
   other-modules:
     RoutingTreeTest,
-    TopicTest
+    TopicTest,
+    EncodingTest
   build-depends:
       base >= 4.8 && < 5
     , binary
