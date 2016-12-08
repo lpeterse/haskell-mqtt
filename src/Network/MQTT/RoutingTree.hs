@@ -334,43 +334,39 @@ instance RoutingTreeValue IS.IntSet where
   nodeValue (IntSetRoutingTreeNode _ v) | nodeNull v = Nothing
                                         | otherwise = Just v
   nodeFromTree t                        = IntSetRoutingTreeNode t mempty
-  nodeFromTreeAndValue                  = IntSetRoutingTreeNode
+  nodeFromTreeAndValue t v              = IntSetRoutingTreeNode t v
 
 instance RoutingTreeValue (Identity a) where
-  data RoutingTreeNode (Identity a)
-    = TreeNode          !(RoutingTree (Identity a))
-    | TreeNodeWithValue !(RoutingTree (Identity a)) !(Identity a)
-  node t Nothing  = TreeNode t
-  node t (Just v) = TreeNodeWithValue t v
-  nodeNull                          = const False
-  nodeTree  (TreeNode          t  ) = t
-  nodeTree  (TreeNodeWithValue t _) = t
-  nodeValue (TreeNode          _  ) = Nothing
-  nodeValue (TreeNodeWithValue _ v) = Just v
-  nodeFromTree                      = TreeNode
-  nodeFromTreeAndValue              = TreeNodeWithValue
+  data RoutingTreeNode (Identity a) = IdentityNode !(RoutingTree (Identity a)) !(Maybe (Identity a))
+  node t n@Nothing              = IdentityNode t n
+  node t n@(Just v)             = v `seq` IdentityNode t n 
+  nodeNull                      = const False
+  nodeTree  (IdentityNode t _)  = t
+  nodeValue (IdentityNode _ mv) = mv
+  nodeFromTree t                = IdentityNode t Nothing
+  nodeFromTreeAndValue t v      = IdentityNode t $! Just $! v
 
 instance RoutingTreeValue () where
   data RoutingTreeNode () = UnitNode {-# UNPACK #-} !Int !(RoutingTree ())
-  node t Nothing = UnitNode 0 t
-  node t _       = UnitNode 1 t
-  nodeNull                     = const False
-  nodeTree  (UnitNode _ t)     = t
+  node t Nothing           = UnitNode 0 t
+  node t _                 = UnitNode 1 t
+  nodeNull                 = const False
+  nodeTree  (UnitNode _ t) = t
   nodeValue (UnitNode 0 _) = Nothing
   nodeValue (UnitNode _ _) = Just ()
-  nodeFromTree                 = UnitNode 0
-  nodeFromTreeAndValue t _     = UnitNode 1 t
+  nodeFromTree             = UnitNode 0
+  nodeFromTreeAndValue t _ = UnitNode 1 t
 
 instance RoutingTreeValue Bool where
   data RoutingTreeNode Bool = BoolNode {-# UNPACK #-} !Int !(RoutingTree Bool)
-  node t Nothing      = BoolNode 0 t
-  node t (Just False) = BoolNode 1 t
-  node t (Just True)  = BoolNode 2 t
+  node t Nothing               = BoolNode 0 t
+  node t (Just False)          = BoolNode 1 t
+  node t (Just True)           = BoolNode 2 t
   nodeNull                     = const False
   nodeTree  (BoolNode _ t)     = t
-  nodeValue (BoolNode 1 _) = Just False
-  nodeValue (BoolNode 2 _) = Just True
-  nodeValue (BoolNode _ _) = Nothing
+  nodeValue (BoolNode 1 _)     = Just False
+  nodeValue (BoolNode 2 _)     = Just True
+  nodeValue (BoolNode _ _)     = Nothing
   nodeFromTree                 = BoolNode 0
   nodeFromTreeAndValue t False = BoolNode 1 t
   nodeFromTreeAndValue t True  = BoolNode 2 t
