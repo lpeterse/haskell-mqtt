@@ -155,7 +155,7 @@ publishDownstream broker msg = do
       pure $! RM.insert msg rm
   let topic = msgTopic msg
   st <- readMVar (brokerState broker)
-  forM_ (IS.elems $ fromMaybe IS.empty $ R.lookupWith IS.union topic $ brokerSubscriptions st) $ \key->
+  forM_ (IS.elems $ R.lookup topic $ brokerSubscriptions st) $ \key->
     case IM.lookup (key :: Int) (brokerSessions st) of
       Nothing      ->
         putStrLn "WARNING: dead session reference"

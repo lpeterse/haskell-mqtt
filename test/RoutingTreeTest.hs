@@ -71,19 +71,19 @@ tests = testGroup "RoutingTree"
     , testCase "  matchFiler \"a/b/#\"  $ singleton \"#\"      ()"   $ assertBool ""       $ R.matchFilter "a/b/#" $ R.singleton "#"   ()
     , testCase "! matchFiler \"a/+/c\"  $ singleton \"a/b/c\"  ()"   $ assertBool "" $ not $ R.matchFilter "a/+/c" $ R.singleton "a/b/c" ()
     ]
-  , testGroup "lookupWith"
-    [ testCase "lookupWith (IS.union) \"a\"        tree1 == Just [0,1,2]" $ R.lookupWith IS.union "a"        tree1 @?= Just (IS.fromList [0,1,2,4])
-    , testCase "lookupWith (IS.union) \"b\"        tree1 == Just [0,1,2]" $ R.lookupWith IS.union "b"        tree1 @?= Just (IS.fromList [0,1])
-    , testCase "lookupWith (IS.union) \"a/a\"      tree1 == Just [0,1,2]" $ R.lookupWith IS.union "a/a"      tree1 @?= Just (IS.fromList [0,3,4])
-    , testCase "lookupWith (IS.union) \"a/a/a\"    tree1 == Just [0,1,2]" $ R.lookupWith IS.union "a/a/a"    tree1 @?= Just (IS.fromList [0,4])
-    , testCase "lookupWith (IS.union) \"$SYS\"     tree1 == Just [0,1,2]" $ R.lookupWith IS.union "$SYS"     tree1 @?= Nothing
-    , testCase "lookupWith (IS.union) \"$SYS/a\"   tree1 == Just [0,1,2]" $ R.lookupWith IS.union "$SYS/a"   tree1 @?= Just (IS.fromList [5,6,7])
-    , testCase "lookupWith (IS.union) \"$SYS/a/a\" tree1 == Just [0,1,2]" $ R.lookupWith IS.union "$SYS/a/a" tree1 @?= Just (IS.fromList [5,7,8])
+  , testGroup "lookup"
+    [ testCase "lookup \"a\"        tree1 == [0,1,2,4]" $ R.lookup "a"        tree1 @?= IS.fromList [0,1,2,4]
+    , testCase "lookup \"b\"        tree1 == [0,1]"     $ R.lookup "b"        tree1 @?= IS.fromList [0,1]
+    , testCase "lookup \"a/a\"      tree1 == [0,3,4]"   $ R.lookup "a/a"      tree1 @?= IS.fromList [0,3,4]
+    , testCase "lookup \"a/a/a\"    tree1 == [0,4]"     $ R.lookup "a/a/a"    tree1 @?= IS.fromList [0,4]
+    , testCase "lookup \"$SYS\"     tree1 == []"        $ R.lookup "$SYS"     tree1 @?= IS.fromList []
+    , testCase "lookup \"$SYS/a\"   tree1 == [5,6,7]"   $ R.lookup "$SYS/a"   tree1 @?= IS.fromList [5,6,7]
+    , testCase "lookup \"$SYS/a/a\" tree1 == [5,7,8]"   $ R.lookup "$SYS/a/a" tree1 @?= IS.fromList [5,7,8]
     ]
   , testGroup "insert"
-    [ testCase "size tree2 == 3"                     $ R.size tree2 @?= 3
-    , testCase "lookupWith IS.union \"a/b\"   tree2" $ R.lookupWith IS.union "a/b"   tree2 @?= Just (IS.fromList [3])
-    , testCase "lookupWith IS.union \"a/b/c\" tree2" $ R.lookupWith IS.union "a/b/c" tree2 @?= Just (IS.fromList [2])
+    [ testCase "size tree2                == 3"         $ R.size tree2              @?= 3
+    , testCase "lookup \"a/b\"      tree2 == [3]"       $ R.lookup "a/b"      tree2 @?= IS.fromList [3]
+    , testCase "lookup \"a/b/c\"    tree2 == [2]"       $ R.lookup "a/b/c"    tree2 @?= IS.fromList [2]
     ]
   , testGroup "insertWith" [  ]
   , testGroup "map" [  ]

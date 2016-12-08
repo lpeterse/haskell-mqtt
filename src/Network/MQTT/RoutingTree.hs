@@ -1,6 +1,7 @@
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE TypeFamilies      #-}
+{-# LANGUAGE LambdaCase        #-}
 --------------------------------------------------------------------------------
 -- |
 -- Module      :  Network.MQTT.RoutingTree
@@ -26,8 +27,8 @@ module Network.MQTT.RoutingTree (
   , matchTopic
   -- ** matchFilter
   , matchFilter
-  -- ** lookupWith
-  , lookupWith
+  -- ** lookup
+  , lookup
   -- ** insert
   , insert
   -- ** insertWith
@@ -52,10 +53,10 @@ import           Data.Functor.Identity
 import qualified Data.IntSet           as IS
 import           Data.List.NonEmpty    (NonEmpty (..))
 import qualified Data.Map              as M
-import           Data.Maybe hiding (mapMaybe)
+import           Data.Maybe            hiding (mapMaybe)
 import           Data.Monoid
 import           Network.MQTT.Topic
-import           Prelude               hiding (map, null)
+import           Prelude               hiding (map, null, lookup)
 
 -- | The `RoutingTree` is a map-like data structure designed to hold elements
 --   that can efficiently be queried according to the matching rules specified
@@ -68,7 +69,7 @@ import           Prelude               hiding (map, null)
 --   (i.e. an empty set) the `RoutingTreeValue` is a class defining the data
 --   family `RoutingTreeNode`. This is a performance and size optimization to
 --   avoid unnecessary boxing and case distinction.
-newtype RoutingTree a = RoutingTree (M.Map Level (RoutingTreeNode a))
+newtype RoutingTree a = RoutingTree { branches :: M.Map Level (RoutingTreeNode a) }
 
 class RoutingTreeValue a where
   data RoutingTreeNode a
@@ -191,13 +192,11 @@ differenceWith f (RoutingTree m1) (RoutingTree m2) = RoutingTree (M.differenceWi
     k t (Just v) | null t && nodeNull v = Nothing
                  | otherwise            = Just (nodeFromTreeAndValue t v)
 
-lookupWith :: (RoutingTreeValue a) => (a -> a -> a) -> Topic -> RoutingTree a -> Maybe a
-lookupWith f tf = lookupHead (topicLevels tf)
+-- | Collect all values of nodes that match a given topic (according to the
+--   matching rules specified by the MQTT protocol).
+lookup :: (RoutingTreeValue a, Monoid a) => Topic -> RoutingTree a -> a
+lookup tf = fromMaybe mempty . lookupHead (topicLevels tf)
   where
-    merge (Just v1) (Just v2) = Just (f v1 v2)
-    merge (Just v1) _         = Just v1
-    merge _         (Just v2) = Just v2
-    merge _         _         = Nothing
     -- If the first level starts with $ then it must not be matched against + and #.
     lookupHead (x:|xs) t@(RoutingTree m)
       | startsWithDollar x = case xs of
@@ -205,22 +204,22 @@ lookupWith f tf = lookupHead (topicLevels tf)
           (y:ys) -> M.lookup x m >>= lookupTail y ys . nodeTree
       | otherwise = lookupTail x xs t
     lookupTail x [] (RoutingTree m) =
-      matchComponent `merge` matchSingleLevelWildcard `merge` matchMultiLevelWildcard
+      matchSingleLevelWildcard <> matchMultiLevelWildcard <> matchComponent
       where
-        matchComponent = case M.lookup x m of
-          Nothing -> Nothing
-          Just n  -> let RoutingTree m' = nodeTree n; v' = nodeValue n
-                 in  fromMaybe v' $ merge v' . nodeValue <$> M.lookup multiLevelWildcard m'
         matchSingleLevelWildcard = M.lookup singleLevelWildcard m >>= nodeValue
         matchMultiLevelWildcard  = M.lookup multiLevelWildcard  m >>= nodeValue
+        matchComponent           = M.lookup x                   m >>= \n->
+          case M.lookup multiLevelWildcard $ branches $ nodeTree n of
+            -- component match, but no additional multiLevelWildcard below
+            Nothing -> nodeValue n
+            -- component match and multiLevelWildcard match below
+            Just n' -> nodeValue n <> nodeValue n'
     lookupTail x (y:ys) (RoutingTree m) =
-      matchComponent `merge` matchSingleLevelWildcard `merge` matchMultiLevelWildcard
+      matchSingleLevelWildcard <> matchMultiLevelWildcard <> matchComponent
       where
-        matchComponent =
-          M.lookup x m >>= lookupTail y ys  . nodeTree
-        matchSingleLevelWildcard =
-          M.lookup singleLevelWildcard m >>= lookupTail y ys . nodeTree
-        matchMultiLevelWildcard = M.lookup multiLevelWildcard m >>= nodeValue
+        matchSingleLevelWildcard = M.lookup singleLevelWildcard m >>= lookupTail y ys . nodeTree
+        matchMultiLevelWildcard  = M.lookup multiLevelWildcard  m >>= nodeValue
+        matchComponent           = M.lookup                   x m >>= lookupTail y ys . nodeTree
 
 -- | Match a `Topic` against a `RoutingTree`.
 --
@@ -304,14 +303,12 @@ matchFilter tf = matchFilter' (filterLevels tf)
         matchSingleLevelWildcard = fromMaybe False $ matchFilter' (y:|zs) . nodeTree <$> M.lookup singleLevelWildcard m
         matchExact               = fromMaybe False $ matchFilter' (y:|zs) . nodeTree <$> M.lookup x m
 
-
 --------------------------------------------------------------------------------
 -- Specialised nodeTree implemenations using data families
 --------------------------------------------------------------------------------
 
 instance RoutingTreeValue IS.IntSet where
-  data RoutingTreeNode IS.IntSet
-    = IntSetRoutingTreeNode !(RoutingTree IS.IntSet) !IS.IntSet
+  data RoutingTreeNode IS.IntSet = IntSetRoutingTreeNode !(RoutingTree IS.IntSet) !IS.IntSet
   nodeNull                              = IS.null
   nodeTree (IntSetRoutingTreeNode t _)  = t
   nodeValue (IntSetRoutingTreeNode _ v) | nodeNull v = Nothing
@@ -323,13 +320,13 @@ instance RoutingTreeValue (Identity a) where
   data RoutingTreeNode (Identity a)
     = TreeNode          !(RoutingTree (Identity a))
     | TreeNodeWithValue !(RoutingTree (Identity a)) !(Identity a)
-  nodeNull                             = const False
-  nodeTree  (TreeNode          t  )    = t
-  nodeTree  (TreeNodeWithValue t _)    = t
-  nodeValue (TreeNode          _  )    = Nothing
-  nodeValue (TreeNodeWithValue _ v)    = Just v
-  nodeFromTree                         = TreeNode
-  nodeFromTreeAndValue                 = TreeNodeWithValue
+  nodeNull                          = const False
+  nodeTree  (TreeNode          t  ) = t
+  nodeTree  (TreeNodeWithValue t _) = t
+  nodeValue (TreeNode          _  ) = Nothing
+  nodeValue (TreeNodeWithValue _ v) = Just v
+  nodeFromTree                      = TreeNode
+  nodeFromTreeAndValue              = TreeNodeWithValue
 
 instance RoutingTreeValue () where
   data RoutingTreeNode () = UnitNode {-# UNPACK #-} !Int !(RoutingTree ())
