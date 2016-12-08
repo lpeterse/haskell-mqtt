@@ -1,7 +1,7 @@
+{-# LANGUAGE FlexibleContexts  #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE TypeFamilies      #-}
-{-# LANGUAGE LambdaCase        #-}
 --------------------------------------------------------------------------------
 -- |
 -- Module      :  Network.MQTT.RoutingTree
@@ -43,20 +43,24 @@ module Network.MQTT.RoutingTree (
   , adjust
   -- ** delete
   , delete
+  -- ** union
+  , union
   -- ** unionWith
   , unionWith
   -- ** differenceWith
   , differenceWith
   ) where
 
+import           Control.Applicative   ((<|>))
 import           Data.Functor.Identity
 import qualified Data.IntSet           as IS
 import           Data.List.NonEmpty    (NonEmpty (..))
 import qualified Data.Map              as M
 import           Data.Maybe            hiding (mapMaybe)
 import           Data.Monoid
+import qualified Data.List              as L
 import           Network.MQTT.Topic
-import           Prelude               hiding (map, null, lookup)
+import           Prelude               hiding (lookup, map, null)
 
 -- | The `RoutingTree` is a map-like data structure designed to hold elements
 --   that can efficiently be queried according to the matching rules specified
@@ -73,6 +77,7 @@ newtype RoutingTree a = RoutingTree { branches :: M.Map Level (RoutingTreeNode a
 
 class RoutingTreeValue a where
   data RoutingTreeNode a
+  node                 :: RoutingTree a -> Maybe a -> RoutingTreeNode a
   nodeNull             :: a -> Bool
   nodeTree             :: RoutingTreeNode a -> RoutingTree a
   nodeValue            :: RoutingTreeNode a -> Maybe a
@@ -82,6 +87,17 @@ class RoutingTreeValue a where
 instance (RoutingTreeValue a, Monoid a) => Monoid (RoutingTree a) where
   mempty  = empty
   mappend = unionWith mappend
+
+instance (RoutingTreeValue a, Eq a) => Eq (RoutingTree a) where
+  RoutingTree m1 == RoutingTree m2 =
+    M.size m1 == M.size m2 && and (zipWith f (M.toAscList m1) (M.toAscList m2))
+    where
+      f (l1,n1) (l2,n2) = l1 == l2 && nodeValue n1 == nodeValue n2 && nodeTree n1 == nodeTree n2
+
+instance (RoutingTreeValue a, Show a) => Show (RoutingTree a) where
+  show (RoutingTree m) = "RoutingTree [" ++ L.intercalate ", " (fmap f $ M.toAscList m) ++ "]"
+    where
+      f (l,n) = "(" ++ show l ++ ", Node (" ++ show (nodeValue n) ++ ") (" ++ show (nodeTree n) ++ ")"
 
 empty :: RoutingTree a
 empty  = RoutingTree mempty
@@ -171,14 +187,17 @@ mapMaybe f (RoutingTree m) = RoutingTree $ fmap g m
         Nothing -> nodeFromTree t
         Just b  -> nodeFromTreeAndValue t b
 
+union     :: (RoutingTreeValue a, Monoid a) => RoutingTree a -> RoutingTree a -> RoutingTree a
+union (RoutingTree m1) (RoutingTree m2) = RoutingTree (M.unionWith g m1 m2)
+  where
+    g n1 n2 = node (union (nodeTree n1) (nodeTree n2)) (nodeValue n1 <> nodeValue n2)
+
 unionWith :: (RoutingTreeValue a) => (a -> a -> a) -> RoutingTree a -> RoutingTree a -> RoutingTree a
 unionWith f (RoutingTree m1) (RoutingTree m2) = RoutingTree (M.unionWith g m1 m2)
   where
-    merge t (Just v1) (Just v2) = nodeFromTreeAndValue t (f v1 v2)
-    merge t (Just v1)  _        = nodeFromTreeAndValue t v1
-    merge t  _        (Just v2) = nodeFromTreeAndValue t v2
-    merge t  _         _        = nodeFromTree         t
-    g n1 n2 = merge (unionWith f (nodeTree n1) (nodeTree n2)) (nodeValue n1) (nodeValue n2)
+    g n1 n2 = node (unionWith f (nodeTree n1) (nodeTree n2)) (nodeValue n1 `merge` nodeValue n2)
+    merge (Just v1) (Just v2) = Just (f v1 v2)
+    merge      mv1       mv2  = mv1 <|> mv2
 
 differenceWith :: (RoutingTreeValue a, RoutingTreeValue b) => (a -> b -> Maybe a) -> RoutingTree a -> RoutingTree b -> RoutingTree a
 differenceWith f (RoutingTree m1) (RoutingTree m2) = RoutingTree (M.differenceWith g m1 m2)
@@ -309,6 +328,7 @@ matchFilter tf = matchFilter' (filterLevels tf)
 
 instance RoutingTreeValue IS.IntSet where
   data RoutingTreeNode IS.IntSet = IntSetRoutingTreeNode !(RoutingTree IS.IntSet) !IS.IntSet
+  node t                                = IntSetRoutingTreeNode t . fromMaybe mempty
   nodeNull                              = IS.null
   nodeTree (IntSetRoutingTreeNode t _)  = t
   nodeValue (IntSetRoutingTreeNode _ v) | nodeNull v = Nothing
@@ -320,6 +340,8 @@ instance RoutingTreeValue (Identity a) where
   data RoutingTreeNode (Identity a)
     = TreeNode          !(RoutingTree (Identity a))
     | TreeNodeWithValue !(RoutingTree (Identity a)) !(Identity a)
+  node t Nothing  = TreeNode t
+  node t (Just v) = TreeNodeWithValue t v
   nodeNull                          = const False
   nodeTree  (TreeNode          t  ) = t
   nodeTree  (TreeNodeWithValue t _) = t
@@ -330,20 +352,25 @@ instance RoutingTreeValue (Identity a) where
 
 instance RoutingTreeValue () where
   data RoutingTreeNode () = UnitNode {-# UNPACK #-} !Int !(RoutingTree ())
+  node t Nothing = UnitNode 0 t
+  node t _       = UnitNode 1 t
   nodeNull                     = const False
   nodeTree  (UnitNode _ t)     = t
-  nodeValue (UnitNode 0 _)     = Nothing
-  nodeValue (UnitNode _ _)     = Just ()
+  nodeValue (UnitNode 0 _) = Nothing
+  nodeValue (UnitNode _ _) = Just ()
   nodeFromTree                 = UnitNode 0
   nodeFromTreeAndValue t _     = UnitNode 1 t
 
 instance RoutingTreeValue Bool where
   data RoutingTreeNode Bool = BoolNode {-# UNPACK #-} !Int !(RoutingTree Bool)
+  node t Nothing      = BoolNode 0 t
+  node t (Just False) = BoolNode 1 t
+  node t (Just True)  = BoolNode 2 t
   nodeNull                     = const False
   nodeTree  (BoolNode _ t)     = t
-  nodeValue (BoolNode 0 _)     = Just False
-  nodeValue (BoolNode 1 _)     = Just True
-  nodeValue (BoolNode _ _)     = Nothing
-  nodeFromTree                 = BoolNode (-1)
-  nodeFromTreeAndValue t False = BoolNode 0 t
-  nodeFromTreeAndValue t True  = BoolNode 1 t
+  nodeValue (BoolNode 1 _) = Just False
+  nodeValue (BoolNode 2 _) = Just True
+  nodeValue (BoolNode _ _) = Nothing
+  nodeFromTree                 = BoolNode 0
+  nodeFromTreeAndValue t False = BoolNode 1 t
+  nodeFromTreeAndValue t True  = BoolNode 2 t

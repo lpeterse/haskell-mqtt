@@ -85,13 +85,21 @@ tests = testGroup "RoutingTree"
     , testCase "lookup \"a/b\"      tree2 == [3]"       $ R.lookup "a/b"      tree2 @?= IS.fromList [3]
     , testCase "lookup \"a/b/c\"    tree2 == [2]"       $ R.lookup "a/b/c"    tree2 @?= IS.fromList [2]
     ]
-  , testGroup "insertWith" [  ]
-  , testGroup "map" [  ]
-  , testGroup "mapMaybe" [
-
+  , testGroup "insertWith" [
+      testCase "parameter order (new, old)" $ ( R.lookup "a" $ R.insertWith const "a" (IS.singleton 2) $ R.singleton "a" (IS.singleton 1) ) @?= IS.fromList [2]
     ]
-  , testGroup "adjust" [  ]
-  , testGroup "delete" [  ]
+  , testGroup "map" [ ]
+  , testGroup "mapMaybe" [ ]
+  , testGroup "adjust" [ ]
+  , testGroup "delete" [ ]
+  , testGroup "union" [
+      testCase "structurally distinct trees with shared prefix"
+        $ (R.singleton "a/b/y" $ IS.singleton 1) `R.union` (R.singleton "a/b/x" $ IS.singleton 2)
+        @?= R.insertFoldable [("a/b/y", IS.singleton 1), ("a/b/x", IS.singleton 2)] R.empty
+    , testCase "structurally equal trees with distinct values"
+        $ (R.singleton "a/b/x" $ IS.singleton 1) `R.union` (R.singleton "a/b/x" $ IS.singleton 2)
+        @?= R.singleton "a/b/x" (IS.fromList [1,2])
+    ]
   , testGroup "unionWith" [  ]
   , testGroup "differenceWith" [  ]
   ]
