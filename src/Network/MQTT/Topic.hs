@@ -98,14 +98,14 @@ topicParser = (<|> fail "invalid topic") $ Topic <$> do
 topicBuilder :: Topic -> BS.Builder
 topicBuilder (Topic (Level x:|xs)) =
   foldl'
-    (\acc (Level l)-> acc <> slashBuilder <> BS.shortByteString l)
+    (\acc (Level l)-> acc <> BS.word8 slash <> BS.shortByteString l)
     (BS.shortByteString x) xs
 {-# INLINE topicBuilder #-}
 
 filterBuilder :: Filter -> BS.Builder
 filterBuilder (Filter (Level x:|xs)) =
   foldl'
-    (\acc (Level l)-> acc <> slashBuilder <> BS.shortByteString l)
+    (\acc (Level l)-> acc <> BS.word8 slash <> BS.shortByteString l)
     (BS.shortByteString x) xs
 {-# INLINE filterBuilder #-}
 
@@ -162,6 +162,3 @@ plus   = 0x2b
 hash   = 0x23
 slash  = 0x2f
 dollar = 0x24
-
-slashBuilder :: BS.Builder
-slashBuilder  = BS.word8 slash

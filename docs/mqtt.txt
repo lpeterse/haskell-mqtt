@@ -66,10 +66,12 @@ module Network.MQTT.RoutingTree
 --   and size optimization to avoid unnecessary boxing and case
 --   distinction.
 newtype RoutingTree a
-RoutingTree :: (Map Level (RoutingTreeNode a)) -> RoutingTree a
+RoutingTree :: Map Level (RoutingTreeNode a) -> RoutingTree a
+[branches] :: RoutingTree a -> Map Level (RoutingTreeNode a)
 class RoutingTreeValue a where data RoutingTreeNode a where {
     data family RoutingTreeNode a;
 }
+node :: RoutingTreeValue a => RoutingTree a -> Maybe a -> RoutingTreeNode a
 nodeNull :: RoutingTreeValue a => a -> Bool
 nodeTree :: RoutingTreeValue a => RoutingTreeNode a -> RoutingTree a
 nodeValue :: RoutingTreeValue a => RoutingTreeNode a -> Maybe a
@@ -109,7 +111,10 @@ matchTopic :: RoutingTreeValue a => Topic -> RoutingTree a -> Bool
 --   match (singleton "a") "#"     = False
 --   </pre>
 matchFilter :: RoutingTreeValue a => Filter -> RoutingTree a -> Bool
-lookupWith :: (RoutingTreeValue a) => (a -> a -> a) -> Topic -> RoutingTree a -> Maybe a
+
+-- | Collect all values of nodes that match a given topic (according to the
+--   matching rules specified by the MQTT protocol).
+lookup :: (RoutingTreeValue a, Monoid a) => Topic -> RoutingTree a -> a
 insert :: RoutingTreeValue a => Filter -> a -> RoutingTree a -> RoutingTree a
 insertWith :: RoutingTreeValue a => (a -> a -> a) -> Filter -> a -> RoutingTree a -> RoutingTree a
 insertFoldable :: (RoutingTreeValue a, Foldable t) => t (Filter, a) -> RoutingTree a -> RoutingTree a
@@ -117,9 +122,12 @@ map :: (RoutingTreeValue a, RoutingTreeValue b) => (a -> b) -> RoutingTree a -> 
 mapMaybe :: (RoutingTreeValue a, RoutingTreeValue b) => (a -> Maybe b) -> RoutingTree a -> RoutingTree b
 adjust :: RoutingTreeValue a => (a -> a) -> Filter -> RoutingTree a -> RoutingTree a
 delete :: RoutingTreeValue a => Filter -> RoutingTree a -> RoutingTree a
+union :: (RoutingTreeValue a, Monoid a) => RoutingTree a -> RoutingTree a -> RoutingTree a
 unionWith :: (RoutingTreeValue a) => (a -> a -> a) -> RoutingTree a -> RoutingTree a -> RoutingTree a
 differenceWith :: (RoutingTreeValue a, RoutingTreeValue b) => (a -> b -> Maybe a) -> RoutingTree a -> RoutingTree b -> RoutingTree a
 instance (Network.MQTT.RoutingTree.RoutingTreeValue a, GHC.Base.Monoid a) => GHC.Base.Monoid (Network.MQTT.RoutingTree.RoutingTree a)
+instance (Network.MQTT.RoutingTree.RoutingTreeValue a, GHC.Classes.Eq a) => GHC.Classes.Eq (Network.MQTT.RoutingTree.RoutingTree a)
+instance (Network.MQTT.RoutingTree.RoutingTreeValue a, GHC.Show.Show a) => GHC.Show.Show (Network.MQTT.RoutingTree.RoutingTree a)
 instance Network.MQTT.RoutingTree.RoutingTreeValue Data.IntSet.Base.IntSet
 instance Network.MQTT.RoutingTree.RoutingTreeValue (Data.Functor.Identity.Identity a)
 instance Network.MQTT.RoutingTree.RoutingTreeValue ()
@@ -140,12 +148,12 @@ data QualityOfService
 Qos0 :: QualityOfService
 Qos1 :: QualityOfService
 Qos2 :: QualityOfService
-data ConnectionRefusal
-UnacceptableProtocolVersion :: ConnectionRefusal
-IdentifierRejected :: ConnectionRefusal
-ServerUnavailable :: ConnectionRefusal
-BadUsernameOrPassword :: ConnectionRefusal
-NotAuthorized :: ConnectionRefusal
+data ConnectionRejectReason
+UnacceptableProtocolVersion :: ConnectionRejectReason
+IdentifierRejected :: ConnectionRejectReason
+ServerUnavailable :: ConnectionRejectReason
+BadUsernameOrPassword :: ConnectionRejectReason
+NotAuthorized :: ConnectionRejectReason
 data Message
 Message :: !Topic -> !ByteString -> !QualityOfService -> !Retain -> !Duplicate -> Message
 [msgTopic] :: Message -> !Topic
@@ -160,8 +168,7 @@ ClientConnect :: !ClientIdentifier -> !CleanSession -> !KeepAliveInterval -> !(M
 [connectKeepAlive] :: ClientMessage -> !KeepAliveInterval
 [connectWill] :: ClientMessage -> !(Maybe Message)
 [connectCredentials] :: ClientMessage -> !(Maybe (Username, Maybe Password))
-ClientPublish :: !Message -> ClientMessage
-ClientPublish' :: {-# UNPACK #-} !PacketIdentifier -> !Message -> ClientMessage
+ClientPublish :: {-# UNPACK #-} !PacketIdentifier -> !Message -> ClientMessage
 ClientPublishAcknowledged :: {-# UNPACK #-} !PacketIdentifier -> ClientMessage
 ClientPublishReceived :: {-# UNPACK #-} !PacketIdentifier -> ClientMessage
 ClientPublishRelease :: {-# UNPACK #-} !PacketIdentifier -> ClientMessage
@@ -173,9 +180,9 @@ ClientDisconnect :: ClientMessage
 clientMessageBuilder :: ClientMessage -> Builder
 clientMessageParser :: Get ClientMessage
 data ServerMessage
-ConnectAck :: !(Either ConnectionRefusal SessionPresent) -> ServerMessage
-ServerPublish :: !Message -> ServerMessage
-ServerPublish' :: {-# UNPACK #-} !PacketIdentifier -> !Message -> ServerMessage
+ServerConnectionAccepted :: !SessionPresent -> ServerMessage
+ServerConnectionRejected :: !ConnectionRejectReason -> ServerMessage
+ServerPublish :: {-# UNPACK #-} !PacketIdentifier -> !Message -> ServerMessage
 ServerPublishAcknowledged :: {-# UNPACK #-} !PacketIdentifier -> ServerMessage
 ServerPublishReceived :: {-# UNPACK #-} !PacketIdentifier -> ServerMessage
 ServerPublishRelease :: {-# UNPACK #-} !PacketIdentifier -> ServerMessage
@@ -192,17 +199,19 @@ utf8Builder :: Text -> (Builder, Int)
 instance GHC.Show.Show Network.MQTT.Message.ServerMessage
 instance GHC.Classes.Eq Network.MQTT.Message.ServerMessage
 instance GHC.Show.Show Network.MQTT.Message.ClientMessage
+instance GHC.Classes.Eq Network.MQTT.Message.ClientMessage
 instance GHC.Show.Show Network.MQTT.Message.Message
 instance GHC.Classes.Ord Network.MQTT.Message.Message
 instance GHC.Classes.Eq Network.MQTT.Message.Message
-instance GHC.Enum.Bounded Network.MQTT.Message.ConnectionRefusal
-instance GHC.Enum.Enum Network.MQTT.Message.ConnectionRefusal
-instance GHC.Show.Show Network.MQTT.Message.ConnectionRefusal
-instance GHC.Classes.Ord Network.MQTT.Message.ConnectionRefusal
-instance GHC.Classes.Eq Network.MQTT.Message.ConnectionRefusal
+instance GHC.Enum.Bounded Network.MQTT.Message.ConnectionRejectReason
+instance GHC.Enum.Enum Network.MQTT.Message.ConnectionRejectReason
+instance GHC.Show.Show Network.MQTT.Message.ConnectionRejectReason
+instance GHC.Classes.Ord Network.MQTT.Message.ConnectionRejectReason
+instance GHC.Classes.Eq Network.MQTT.Message.ConnectionRejectReason
 instance GHC.Show.Show Network.MQTT.Message.QualityOfService
 instance GHC.Classes.Ord Network.MQTT.Message.QualityOfService
 instance GHC.Classes.Eq Network.MQTT.Message.QualityOfService
+instance GHC.Classes.Eq Network.MQTT.Message.Password
 instance GHC.Show.Show Network.MQTT.Message.Password
 
 module Network.MQTT.RetainedMessages
@@ -403,14 +412,48 @@ sendStreamLazy :: StreamServerStack a => ServerConnection a -> ByteString -> IO 
 sendStreamBuilder :: StreamServerStack a => ServerConnection a -> Int -> Builder -> IO Int64
 receiveStream :: StreamServerStack a => ServerConnection a -> Int -> IO ByteString
 receiveStreamLazy :: StreamServerStack a => ServerConnection a -> Int -> IO ByteString
+
+-- | This class is an abstraction for <a>ServerStack</a>s that support the
+--   transmission and reception of finite messages.
 class ServerStack a => MessageServerStack a where type ClientMessage a type ServerMessage a where {
     type family ClientMessage a;
     type family ServerMessage a;
 }
+
+-- | Send a message.
+--   
+--   <ul>
+--   <li>Returns the encoded message size.</li>
+--   </ul>
 sendMessage :: MessageServerStack a => ServerConnection a -> ServerMessage a -> IO Int64
+
+-- | Send several messages. This might lead to an improvement for very
+--   short messages.
+--   
+--   <ul>
+--   <li>Returns the summed size of all encoded messages.</li>
+--   </ul>
 sendMessages :: (MessageServerStack a, Foldable t) => ServerConnection a -> t (ServerMessage a) -> IO Int64
-receiveMessage :: MessageServerStack a => ServerConnection a -> IO (ClientMessage a)
-consumeMessages :: MessageServerStack a => ServerConnection a -> (ClientMessage a -> IO Bool) -> IO ()
+
+-- | Receive a message.
+--   
+--   <ul>
+--   <li>The second parameter determines the maximum encoded message size
+--   which must not be exceeded by the client or an exception will be
+--   thrown. Implementations shall track the consumed bytes and shall throw
+--   an exception as soon as the limit is exceeded even if the message is
+--   not yet complete. This is important to prevent _denial of service_
+--   attacks.</li>
+--   </ul>
+receiveMessage :: MessageServerStack a => ServerConnection a -> Int64 -> IO (ClientMessage a)
+
+-- | Consumes incoming messages with a supplied consumer callback.
+--   
+--   <ul>
+--   <li>The second parameter limits the size of a single encoded message
+--   (see <a>receiveMessage</a>).</li>
+--   </ul>
+consumeMessages :: MessageServerStack a => ServerConnection a -> Int64 -> (ClientMessage a -> IO Bool) -> IO ()
 instance GHC.Show.Show (System.Socket.Internal.Socket.SocketAddress f) => GHC.Show.Show (Network.Stack.Server.ServerConnectionInfo (System.Socket.Internal.Socket.Socket f t p))
 instance GHC.Show.Show (Network.Stack.Server.ServerConnectionInfo a) => GHC.Show.Show (Network.Stack.Server.ServerConnectionInfo (Network.Stack.Server.TLS a))
 instance GHC.Show.Show (Network.Stack.Server.ServerConnectionInfo a) => GHC.Show.Show (Network.Stack.Server.ServerConnectionInfo (Network.Stack.Server.WebSocket a))
@@ -427,7 +470,7 @@ data MQTT transport
 type RecentActivity = IORef Bool
 class ServerStack a => MqttServerTransportStack a
 getConnectionRequest :: MqttServerTransportStack a => ServerConnectionInfo a -> IO ConnectionRequest
-handleConnection :: forall transport auth. (StreamServerStack transport, MqttServerTransportStack transport, Authenticator auth) => Broker auth -> ServerConnection (MQTT transport) -> ServerConnectionInfo (MQTT transport) -> IO ()
+handleConnection :: forall transport auth. (StreamServerStack transport, MqttServerTransportStack transport, Authenticator auth) => Broker auth -> ServerConfig (MQTT transport) -> ServerConnection (MQTT transport) -> ServerConnectionInfo (MQTT transport) -> IO ()
 instance GHC.Show.Show (Network.Stack.Server.ServerException (Network.MQTT.Server.MQTT transport))
 instance GHC.Classes.Ord (Network.Stack.Server.ServerException (Network.MQTT.Server.MQTT transport))
 instance GHC.Classes.Eq (Network.Stack.Server.ServerException (Network.MQTT.Server.MQTT transport))
