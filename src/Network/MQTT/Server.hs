@@ -150,45 +150,49 @@ deriving instance Show (SS.ServerConnectionInfo transport) => Show (SS.ServerCon
 
 handleConnection :: forall transport auth. (SS.StreamServerStack transport, MqttServerTransportStack transport, Authenticator auth) => Broker.Broker auth -> SS.ServerConfig (MQTT transport) -> SS.ServerConnection (MQTT transport) -> SS.ServerConnectionInfo (MQTT transport) -> IO ()
 handleConnection broker cfg conn connInfo = do
-    recentActivity <- newIORef True
-    msg <- SS.receiveMessage conn (mqttMaxMessageSize cfg)
-      `E.catch` \e-> do
-        Log.warningM "Server.connectionRequest" $ show (e :: SS.ServerException (MQTT transport))
-        E.throwIO e
-    case msg of
-      ClientConnect {} ->
-        let sessionErrorHandler e = do
-              Log.errorM "Server.connectionRequest" $ show e
-              void $ SS.sendMessage conn (ServerConnectionRejected ServerUnavailable)
-            sessionUnauthorizedHandler = do
-              Log.warningM "Server.connectionRequest" "Authentication failed."
-              void $ SS.sendMessage conn (ServerConnectionRejected NotAuthorized)
-            sessionHandler session sessionPresent principal = do
-              Log.infoM "Server.connection" $ "Session " ++ show (Session.sessionIdentifier session)
-                ++  ": Associated " ++ show principal
-                ++ (if sessionPresent then " with existing session." else " with new session.")
-              void $ SS.sendMessage conn (ServerConnectionAccepted sessionPresent)
-              foldl1 race_
-                [ handleInput recentActivity session
-                , handleOutput session
-                , keepAlive recentActivity (connectKeepAlive msg) session
-                ] `E.catch` (\e-> do
-                  Log.warningM "Server.connection" $"Session " ++ show (Session.sessionIdentifier session)
-                    ++ ": Connection terminated with exception: " ++ show (e :: E.SomeException)
-                  E.throwIO e
-                )
-              Log.infoM "Server.connection" $
-                "Session " ++ show (Session.sessionIdentifier session) ++ ": Graceful disconnect."
-          in do
-            req <- getConnectionRequest (mqttTransportServerConnectionInfo connInfo)
-            let request = req {
-                requestClientIdentifier = connectClientIdentifier msg
-              , requestCleanSession     = connectCleanSession msg
-              , requestCredentials      = connectCredentials msg
-              }
-            Log.infoM "Server.connectionRequest" $ show request
-            Broker.withSession broker request sessionUnauthorizedHandler sessionErrorHandler sessionHandler
-      _ -> E.throwIO (ProtocolViolation "Expected CONN packet." :: SS.ServerException (MQTT transport))
+  recentActivity <- newIORef True
+  req <- getConnectionRequest (mqttTransportServerConnectionInfo connInfo)
+  msg <- SS.receiveMessage conn (mqttMaxMessageSize cfg)
+  case msg of
+    ClientConnectUnsupported -> do
+      Log.warningM "Server.connection" $ "Connection from "
+        ++ show (requestRemoteAddress req) ++ " rejected: UnacceptableProtocolVersion"
+      void $ SS.sendMessage conn (ServerConnectionRejected UnacceptableProtocolVersion)
+      -- Communication ends here gracefully. The caller shall close the connection.
+    ClientConnect {} -> do
+      let -- | This one is called when the authenticator decided to reject the request.
+          sessionRejectHandler reason = do
+            Log.warningM "Server.connection" $ "Connection rejected: " ++ show reason
+            void $ SS.sendMessage conn (ServerConnectionRejected reason)
+            -- Communication ends here gracefully. The caller shall close the connection.
+
+          -- | This part is where the threads for a connection are created
+          --   (one for input, one for output and one watchdog thread).
+          sessionAcceptHandler session sessionPresent principal = do
+            Log.infoM "Server.connection" $ "Connection accepted: Associated "
+              ++ show principal ++ (if sessionPresent then " with existing session "
+              ++ show (Session.sessionIdentifier session) ++  "." else " with new session.")
+            void $ SS.sendMessage conn (ServerConnectionAccepted sessionPresent)
+            foldl1 race_
+              [ handleInput recentActivity session
+              , handleOutput session
+              , keepAlive recentActivity (connectKeepAlive msg) session
+              ] `E.catch` (\e-> do
+                Log.warningM "Server.connection" $"Session " ++ show (Session.sessionIdentifier session)
+                  ++ ": Connection terminated with exception: " ++ show (e :: E.SomeException)
+                E.throwIO e
+              )
+            Log.infoM "Server.connection" $
+              "Session " ++ show (Session.sessionIdentifier session) ++ ": Graceful disconnect."
+          -- Extend the request object with information gathered from the connect packet.
+          request = req {
+              requestClientIdentifier = connectClientIdentifier msg
+            , requestCleanSession     = connectCleanSession msg
+            , requestCredentials      = connectCredentials msg
+            }
+      Log.infoM "Server.connection" $ "Connection request: " ++ show request
+      Broker.withSession broker request sessionRejectHandler sessionAcceptHandler
+    _ -> pure () -- TODO: Don't parse not-CONN packets in the first place!
   where
     -- The keep alive thread wakes up every `keepAlive/2` seconds.
     -- When it detects no recent activity, it sleeps one more full `keepAlive`

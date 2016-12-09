@@ -40,6 +40,12 @@ instance Eq (Session auth) where
 instance Ord (Session auth) where
   compare s1 s2 = compare (sessionIdentifier s1) (sessionIdentifier s2)
 
+instance (Authenticator auth) => Show (Session auth) where
+  show session =
+    "Session { identifier = " ++ show (sessionIdentifier session)
+    ++ ", principal = " ++ show (sessionPrincipal session)
+    ++ ", client = " ++ show (sessionClientIdentifier session) ++ " }"
+
 data ServerQueue
   = ServerQueue
   { queuePids           :: !(Seq.Seq Int)

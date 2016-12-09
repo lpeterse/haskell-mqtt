@@ -1,5 +1,6 @@
-{-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE TupleSections     #-}
+{-# LANGUAGE OverloadedStrings   #-}
+{-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TupleSections       #-}
 --------------------------------------------------------------------------------
 -- |
 -- Module      :  Network.MQTT.Broker
@@ -9,28 +10,37 @@
 -- Maintainer  :  info@lars-petersen.net
 -- Stability   :  experimental
 --------------------------------------------------------------------------------
-module Network.MQTT.Broker where
+module Network.MQTT.Broker
+  ( Broker ()
+  , new
+  , publishDownstream
+  , publishUpstream
+  , publishUpstream'
+  , subscribe
+  , unsubscribe
+  , withSession
+  ) where
 
 import           Control.Concurrent.MVar
 import           Control.Exception
 import           Control.Monad
 import           Data.Functor.Identity
-import qualified Data.IntMap                 as IM
-import qualified Data.IntSet                 as IS
-import qualified Data.Map                    as M
+import qualified Data.IntMap                   as IM
+import qualified Data.IntSet                   as IS
+import qualified Data.Map                      as M
 import           Data.Maybe
-import           Network.MQTT.Authentication (AuthenticationException,
-                                              Authenticator,
-                                              ConnectionRequest (..), Principal,
-                                              authenticate,
-                                              hasPublishPermission,
-                                              hasSubscribePermission)
+import           Network.MQTT.Authentication   (AuthenticationException,
+                                                Authenticator,
+                                                ConnectionRequest (..),
+                                                Principal, authenticate,
+                                                hasPublishPermission,
+                                                hasSubscribePermission)
 import           Network.MQTT.Message
-import qualified Network.MQTT.RoutingTree    as R
-import qualified Network.MQTT.Session        as Session
-import           Network.MQTT.Topic
 import qualified Network.MQTT.RetainedMessages as RM
-import qualified System.Log.Logger           as Log
+import qualified Network.MQTT.RoutingTree      as R
+import qualified Network.MQTT.Session          as Session
+import           Network.MQTT.Topic
+import qualified System.Log.Logger             as Log
 
 data Broker auth  = Broker {
     brokerAuthenticator    :: auth
@@ -61,27 +71,17 @@ new authenticator = do
     , brokerState            = st
     }
 
-data SessionConfig
-   = SessionConfig
-     { sessionConfigQueue0MaxSize :: Int
-     , sessionConfigQueue1MaxSize :: Int
-     , sessionConfigQueue2MaxSize :: Int
-     }
-
-defaultSessionConfig :: SessionConfig
-defaultSessionConfig = SessionConfig 100 100 100
-
-withSession :: (Authenticator auth) => Broker auth -> ConnectionRequest -> IO () -> (AuthenticationException auth -> IO ()) -> (Session.Session auth -> SessionPresent -> Principal auth -> IO ()) -> IO ()
-withSession broker request sessionRejectHandler sessionErrorHandler sessionHandler = do
-  emp <- try $ authenticate (brokerAuthenticator broker) request
+withSession :: forall auth. (Authenticator auth) => Broker auth -> ConnectionRequest -> (ConnectionRejectReason -> IO ()) -> (Session.Session auth -> SessionPresent -> Principal auth -> IO ()) -> IO ()
+withSession broker request sessionRejectHandler sessionAcceptHandler = do
+  emp <- try $ authenticate (brokerAuthenticator broker) request :: IO (Either (AuthenticationException auth) (Maybe (Principal auth)))
   case emp of
-    Left e -> sessionErrorHandler e
+    Left _ -> sessionRejectHandler ServerUnavailable
     Right mp -> case mp of
-      Nothing -> sessionRejectHandler
+      Nothing -> sessionRejectHandler NotAuthorized
       Just principal -> bracket
         ( modifyMVar (brokerState broker) $ getSession principal (requestClientIdentifier request) )
         (\(_present, session)-> when (requestCleanSession request) (closeSession broker session) )
-        (\(present, session)-> sessionHandler session present principal )
+        (\(present, session)-> sessionAcceptHandler session present principal )
 
 getSession :: Authenticator auth => Principal auth -> ClientIdentifier -> BrokerState auth -> IO (BrokerState auth, (SessionPresent, Session.Session auth))
 getSession principal cid st =

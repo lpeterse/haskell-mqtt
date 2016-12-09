@@ -2,10 +2,7 @@
 module TopicTest ( tests ) where
 
 import qualified Data.Attoparsec.ByteString as A
-import qualified Data.ByteString.Short      as BS
 import           Data.List.NonEmpty         (NonEmpty (..))
-import           Data.Monoid
-import qualified Data.Text                  as T
 import           Network.MQTT.Topic
 import           Test.Tasty
 import           Test.Tasty.HUnit

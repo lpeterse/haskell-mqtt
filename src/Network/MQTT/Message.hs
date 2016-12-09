@@ -1,4 +1,4 @@
-{-# LANGUAGE TupleSections #-}
+{-# LANGUAGE TupleSections, LambdaCase #-}
 --------------------------------------------------------------------------------
 -- |
 -- Module      :  Network.MQTT.Message
@@ -90,6 +90,7 @@ data ClientMessage
      , connectWill             :: !(Maybe Message)
      , connectCredentials      :: !(Maybe (Username, Maybe Password))
      }
+   | ClientConnectUnsupported
    | ClientPublish               {-# UNPACK #-} !PacketIdentifier !Message
    | ClientPublishAcknowledged   {-# UNPACK #-} !PacketIdentifier
    | ClientPublishReceived       {-# UNPACK #-} !PacketIdentifier
@@ -150,31 +151,40 @@ connectParser = do
     fail "clientConnectParser: The header flags are reserved and MUST be set to 0."
   void lengthParser -- the remaining length is redundant in this packet type
   y <- SG.getWord64be -- get the next 8 bytes all at once and not byte per byte
-  when (y .&. 0xffffffffffffff00 /= 0x00044d5154540400) $
-    fail "clientConnectParser: Unexpected protocol initialization."
-  let cleanSession = y .&. 0x02 /= 0
-  keepAlive <- SG.getWord16be
-  cid       <- utf8Parser
-  will      <- if y .&. 0x04 == 0
-    then pure Nothing
-    else Just <$> do
-      topic      <- fst <$> topicParser
-      bodyLen    <- fromIntegral <$> SG.getWord16be
-      body       <- SG.getLazyByteString bodyLen
-      qos        <- case y .&. 0x18 of
-        0x00 -> pure Qos0
-        0x08 -> pure Qos1
-        0x10 -> pure Qos2
-        _    -> fail "clientConnectParser: Violation of [MQTT-3.1.2-14]."
-      pure $ Message topic body qos ( y .&. 0x20 /= 0 ) False
-  cred  <- if y .&. 0x80 == 0
-    then pure Nothing
-    else Just <$> ( (,)
-      <$> utf8Parser
-      <*> if y .&. 0x40 == 0
-            then pure Nothing
-            else Just . Password <$> (SG.getByteString . fromIntegral =<< SG.getWord16be) )
-  pure ( ClientConnect cid cleanSession keepAlive will cred )
+  case y .&. 0xffffffffffffff00 of
+    0x00044d5154540400 -> do
+      let cleanSession = y .&. 0x02 /= 0
+      keepAlive <- SG.getWord16be
+      cid       <- utf8Parser
+      will      <- if y .&. 0x04 == 0
+        then pure Nothing
+        else Just <$> do
+          topic      <- fst <$> topicParser
+          bodyLen    <- fromIntegral <$> SG.getWord16be
+          body       <- SG.getLazyByteString bodyLen
+          qos        <- case y .&. 0x18 of
+            0x00 -> pure Qos0
+            0x08 -> pure Qos1
+            0x10 -> pure Qos2
+            _    -> fail "clientConnectParser: Violation of [MQTT-3.1.2-14]."
+          pure $ Message topic body qos ( y .&. 0x20 /= 0 ) False
+      cred  <- if y .&. 0x80 == 0
+        then pure Nothing
+        else Just <$> ( (,)
+          <$> utf8Parser
+          <*> if y .&. 0x40 == 0
+                then pure Nothing
+                else Just . Password <$> (SG.getByteString . fromIntegral =<< SG.getWord16be) )
+      pure ( ClientConnect cid cleanSession keepAlive will cred )
+    -- This is the prefix of the version 3 protocol.
+    -- We just assume that this is version 3 and return immediately.
+    -- The caller shall send return code 0x01 (unacceptable protocol).
+    0x00064d5149736400 -> pure ClientConnectUnsupported
+    -- This case is different from the previous as it is either not
+    -- MQTT or a newer protocol version we don't know (yet).
+    -- The caller shall close the connection immediately without
+    -- sending any data in this case.
+    _ -> fail "clientConnectParser: Unexpected protocol initialization."
 
 connectAcknowledgedParser :: SG.Get ServerMessage
 connectAcknowledgedParser = do
@@ -332,6 +342,8 @@ clientMessageBuilder (ClientConnect cid cleanSession keepAlive will credentials)
             x3   = BS.word16BE (fromIntegral plen)
             x4   = BS.byteString p
         in (x1 <> x2 <> x3 <> x4, 4 + ulen + plen, 0xc0)
+clientMessageBuilder ClientConnectUnsupported =
+  BS.word8 10 <> lengthBuilder 38 <> BS.word64BE 0x00064d514973647063
 clientMessageBuilder (ClientPublish pid msg) =
   publishBuilder pid msg
 clientMessageBuilder (ClientPublishAcknowledged p) =

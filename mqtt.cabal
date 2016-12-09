@@ -92,9 +92,10 @@ test-suite test
   main-is:
     Main.hs
   other-modules:
+    BrokerTest,
+    EncodingTest,
     RoutingTreeTest,
-    TopicTest,
-    EncodingTest
+    TopicTest
   build-depends:
       base >= 4.8 && < 5
     , binary

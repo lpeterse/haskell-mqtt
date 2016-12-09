@@ -20,7 +20,6 @@ import qualified Data.X509            as X509
 import           Network.MQTT.Message
 import           Network.MQTT.Topic   as Topic
 
-
 -- | A peer identity optionally associated with connection/session
 --   specific information.
 --newtype Principal = Principal T.Text deriving (Eq, Ord, Show)
@@ -41,7 +40,7 @@ class (Exception (AuthenticationException a), Eq (Principal a), Ord (Principal a
   --   throw and `AuthenticationException` in case of other problems.
   newAuthenticator       :: AuthenticatorConfig a -> IO a
   authenticate           :: a -> ConnectionRequest -> IO (Maybe (Principal a))
-  hasPublishPermission   :: a -> Principal a -> Topic.Topic -> IO Bool
+  hasPublishPermission   :: a -> Principal a -> Topic.Topic  -> IO Bool
   hasSubscribePermission :: a -> Principal a -> Topic.Filter -> IO Bool
 
 -- | This class defines how the information gathered from a
