@@ -100,7 +100,14 @@ tests = testGroup "RoutingTree"
         $ (R.singleton "a/b/x" $ IS.singleton 1) `R.union` (R.singleton "a/b/x" $ IS.singleton 2)
         @?= R.singleton "a/b/x" (IS.fromList [1,2])
     ]
-  , testGroup "unionWith" [  ]
+  , testGroup "unionWith" [
+      testCase "structurally distinct trees with shared prefix"
+        $ R.unionWith IS.union (R.singleton "a/b/y" $ IS.singleton 1) (R.singleton "a/b/x" $ IS.singleton 2)
+        @?= R.insertFoldable [("a/b/y", IS.singleton 1), ("a/b/x", IS.singleton 2)] R.empty
+    , testCase "structurally equal trees with distinct values"
+        $ R.unionWith IS.union (R.singleton "a/b/x" $ IS.singleton 1) (R.singleton "a/b/x" $ IS.singleton 2)
+        @?= R.singleton "a/b/x" (IS.fromList [1,2])
+    ]
   , testGroup "differenceWith" [  ]
   ]
 

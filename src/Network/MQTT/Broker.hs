@@ -19,6 +19,7 @@ module Network.MQTT.Broker
   , subscribe
   , unsubscribe
   , withSession
+  , getSubscriptions
   ) where
 
 import           Control.Concurrent.MVar
@@ -217,3 +218,6 @@ unsubscribe broker session pid filters =
   where
     unsubBrokerTree  = R.insertFoldable
       ( fmap (,Identity $ Session.sessionIdentifier session) filters ) R.empty
+
+getSubscriptions :: Broker auth -> IO (R.RoutingTree IS.IntSet)
+getSubscriptions broker = brokerSubscriptions <$> readMVar (brokerState broker)

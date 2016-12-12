@@ -6,11 +6,16 @@ module BrokerTest ( getTestTree ) where
 import           Control.Exception
 import           Control.Concurrent.MVar
 import           Data.Typeable
+import qualified Data.Sequence as Seq
+import Data.Monoid
+import Control.Applicative
 
 import           Network.MQTT.Message
 import           Network.MQTT.Authentication
 import qualified Network.MQTT.Broker as Broker
 import qualified Network.MQTT.Topic as Topic
+import qualified Network.MQTT.Session as Session
+import qualified Network.MQTT.Message as Message
 
 import           Test.Tasty
 import           Test.Tasty.HUnit
@@ -64,6 +69,22 @@ getTestTree =
       --     tryReadMVar m1 >>= \x-> Nothing              @?= x
       --     tryReadMVar m2 >>= \x-> Nothing              @?= x
       ]
+    , testGroup "Subscriptions"
+      [ testCase "subscribe the same filter from 2 different sessions" $ do
+          broker <- Broker.new $ TestAuthenticator $ authenticatorConfigAllAccess
+          let req1 = connectionRequest { requestClientIdentifier = "1" }
+              req2 = connectionRequest { requestClientIdentifier = "2" }
+              msg  = Message.Message "a/b" "" Qos0 False False
+          Broker.withSession broker req1 (const $ pure ()) $ \session1 _ _->
+            Broker.withSession broker req2 (const $ pure ()) $ \session2 _ _-> do
+              Broker.subscribe broker session1 42 [("a/b", Qos0)]
+              Broker.subscribe broker session2 47 [("a/b", Qos0)]
+              Broker.publishDownstream broker msg
+              queue1 <- (<>) <$> Session.dequeue session1 <*> Session.dequeue session1
+              queue2 <- (<>) <$> Session.dequeue session2 <*> Session.dequeue session2
+              queue1 @?= Seq.fromList [ ServerSubscribeAcknowledged 42 [Just Qos0], ServerPublish (-1) msg]
+              queue2 @?= Seq.fromList [ ServerSubscribeAcknowledged 47 [Just Qos0], ServerPublish (-1) msg]
+      ]
     ]
 
 authenticatorConfig :: AuthenticatorConfig TestAuthenticator
@@ -71,6 +92,13 @@ authenticatorConfig  = TestAuthenticatorConfig
   { cfgAuthenticate           = const (pure Nothing)
   , cfgHasPublishPermission   = \_ _-> pure False
   , cfgHasSubscribePermission = \_ _-> pure False
+  }
+
+authenticatorConfigAllAccess :: AuthenticatorConfig TestAuthenticator
+authenticatorConfigAllAccess = TestAuthenticatorConfig
+  { cfgAuthenticate           = const (pure $ Just TestPrincipal)
+  , cfgHasPublishPermission   = \_ _-> pure True
+  , cfgHasSubscribePermission = \_ _-> pure True
   }
 
 connectionRequest :: ConnectionRequest
