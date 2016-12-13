@@ -95,7 +95,7 @@ instance (RoutingTreeValue a, Eq a) => Eq (RoutingTree a) where
       f (l1,n1) (l2,n2) = l1 == l2 && nodeValue n1 == nodeValue n2 && nodeTree n1 == nodeTree n2
 
 instance (RoutingTreeValue a, Show a) => Show (RoutingTree a) where
-  show (RoutingTree m) = "RoutingTree [" ++ L.intercalate ", " (fmap f $ M.toAscList m) ++ "]"
+  show (RoutingTree m) = "RoutingTree [" ++ L.intercalate ", " (f <$> M.toAscList m) ++ "]"
     where
       f (l,n) = "(" ++ show l ++ ", Node (" ++ show (nodeValue n) ++ ") (" ++ show (nodeTree n) ++ ")"
 
@@ -108,7 +108,7 @@ null (RoutingTree m) = M.null m
 size  :: RoutingTreeValue a => RoutingTree a -> Int
 size (RoutingTree m) = M.foldl' f 0 m
   where
-    f accum node = 1 + accum + size (nodeTree node)
+    f accum n = 1 + accum + size (nodeTree n)
 
 singleton :: RoutingTreeValue a => Filter -> a -> RoutingTree a
 singleton tf = singleton' (filterLevels tf)
@@ -190,7 +190,7 @@ mapMaybe f (RoutingTree m) = RoutingTree $ fmap g m
 union     :: (RoutingTreeValue a, Monoid a) => RoutingTree a -> RoutingTree a -> RoutingTree a
 union (RoutingTree m1) (RoutingTree m2) = RoutingTree (M.unionWith g m1 m2)
   where
-    g n1 n2 = node (union (nodeTree n1) (nodeTree n2)) (nodeValue n1 <> nodeValue n2)
+    g n1 n2 = node (nodeTree n1 `union` nodeTree n2) (nodeValue n1 <> nodeValue n2)
 
 unionWith :: (RoutingTreeValue a) => (a -> a -> a) -> RoutingTree a -> RoutingTree a -> RoutingTree a
 unionWith f (RoutingTree m1) (RoutingTree m2) = RoutingTree (M.unionWith g m1 m2)
@@ -339,7 +339,7 @@ instance RoutingTreeValue IS.IntSet where
 instance RoutingTreeValue (Identity a) where
   data RoutingTreeNode (Identity a) = IdentityNode !(RoutingTree (Identity a)) !(Maybe (Identity a))
   node t n@Nothing              = IdentityNode t n
-  node t n@(Just v)             = v `seq` IdentityNode t n 
+  node t n@(Just v)             = v `seq` IdentityNode t n
   nodeNull                      = const False
   nodeTree  (IdentityNode t _)  = t
   nodeValue (IdentityNode _ mv) = mv

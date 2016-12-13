@@ -25,7 +25,6 @@ import qualified Data.ByteString.Lazy          as BSL
 import           Data.Int
 import           Data.Typeable
 import qualified Data.X509                     as X509
-import           Foreign.Storable
 import qualified Network.TLS                   as TLS
 import qualified Network.WebSockets            as WS
 import qualified Network.WebSockets.Stream     as WS
@@ -155,7 +154,6 @@ instance (S.Family f, S.Type t, S.Protocol p, Typeable f, Typeable t, Typeable p
       async (handle (SocketServerConnection connection) (SocketServerConnectionInfo addr) `E.finally` S.close connection)
 
 instance (StreamServerStack a) => ServerStack (TLS a) where
-  --type ServerMessage (TLS a) = BS.ByteString
   data Server (TLS a) = TlsServer
     { tlsTransportServer            :: Server a
     , tlsServerConfig               :: ServerConfig (TLS a)
@@ -203,7 +201,6 @@ instance (StreamServerStack a) => ServerStack (TLS a) where
       pure x
 
 instance (StreamServerStack a) => ServerStack (WebSocket a) where
-  --type ServerMessage (WebSocket a) = BS.ByteString
   data Server (WebSocket a) = WebSocketServer
     { wsTransportServer            :: Server a
     }

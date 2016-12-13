@@ -3,19 +3,19 @@
 {-# LANGUAGE TypeFamilies      #-}
 module BrokerTest ( getTestTree ) where
 
-import           Control.Exception
+import           Control.Applicative
 import           Control.Concurrent.MVar
+import           Control.Exception
+import           Data.Monoid
+import qualified Data.Sequence               as Seq
 import           Data.Typeable
-import qualified Data.Sequence as Seq
-import Data.Monoid
-import Control.Applicative
 
-import           Network.MQTT.Message
 import           Network.MQTT.Authentication
-import qualified Network.MQTT.Broker as Broker
-import qualified Network.MQTT.Topic as Topic
-import qualified Network.MQTT.Session as Session
-import qualified Network.MQTT.Message as Message
+import qualified Network.MQTT.Broker         as Broker
+import           Network.MQTT.Message
+import qualified Network.MQTT.Message        as Message
+import qualified Network.MQTT.Session        as Session
+import qualified Network.MQTT.Topic          as Topic
 
 import           Test.Tasty
 import           Test.Tasty.HUnit
@@ -100,6 +100,23 @@ getTestTree =
             Broker.subscribe broker session1 23 [("topic", Qos0)]
             queue1 <- (<>) <$> Session.dequeue session1 <*> Session.dequeue session1
             queue1 @?= Seq.fromList [ ServerSubscribeAcknowledged 23 [Just Qos0] ]
+
+      ]
+    , testGroup "Quality of Service"
+      [ testCase "transmit a Qos1 message and process acknowledgement" $ do
+          let msg = Message.Message "topic" "body" Qos1 False False
+              pid = 0
+          broker <- Broker.new $ TestAuthenticator authenticatorConfigAllAccess
+          Broker.withSession broker connectionRequest (const $ pure ()) $ \session _ _-> do
+            pids1 <- Session.getFreePacketIdentifiers session
+            Session.enqueueMessage session msg
+            queue <- Session.dequeue session
+            pids2 <- Session.getFreePacketIdentifiers session
+            Session.processPublishAcknowledged session pid
+            pids3 <- Session.getFreePacketIdentifiers session
+            assertEqual "A packet identifiers shall be in use after the message has been dequeued." (Seq.drop 1 pids1) pids2
+            assertEqual "The packet identifier shall have been returned after the message has been acknowledged." pids1 pids3
+            assertEqual "The dequeued packets."  (Seq.fromList [ ServerPublish pid msg ]) queue
       ]
     ]
 

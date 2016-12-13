@@ -20,7 +20,6 @@ import qualified Control.Exception           as E
 import           Control.Monad
 import qualified Data.Binary.Get             as SG
 import qualified Data.ByteString             as BS
-import           Data.CaseInsensitive
 import           Data.Int
 import           Data.IORef
 import           Data.Typeable
@@ -224,25 +223,22 @@ handleConnection broker cfg conn connInfo = do
         case packet of
           ClientConnect {} ->
             E.throwIO (ProtocolViolation "Unexpected CONN packet." :: SS.ServerException (MQTT transport))
+          ClientConnectUnsupported ->
+            E.throwIO (ProtocolViolation "Unexpected CONN packet (of unsupported protocol version)." :: SS.ServerException (MQTT transport))
           ClientPublish pid msg -> do
-            case msgQos msg of
-              Qos0 ->
-                Broker.publishUpstream broker session msg
-              Qos1 -> do
-                Broker.publishUpstream broker session msg
-                Session.enqueuePublishAcknowledged session pid
-              Qos2 -> do
-                Session.holdQos2Message session pid msg
-                Session.enqueuePublishReceived session pid
+            Session.processPublish session pid msg (Broker.publishUpstream broker session)
+            pure False
+          ClientPublishAcknowledged pid -> do
+            Session.processPublishAcknowledged session pid
+            pure False
+          ClientPublishReceived pid -> do
+            Session.processPublishReceived session pid
             pure False
           ClientPublishRelease pid -> do
-            mmsg <- Session.releaseQos2Message session pid
-            case mmsg of
-              Nothing ->
-                pure ()
-              Just msg -> do
-                Broker.publishUpstream broker session msg
-                Session.enqueuePublishCompleted session pid
+            Session.processPublishRelease session pid (Broker.publishUpstream broker session)
+            pure False
+          ClientPublishComplete pid -> do
+            Session.processPublishComplete session pid
             pure False
           ClientSubscribe pid filters -> do
             Broker.subscribe broker session pid filters

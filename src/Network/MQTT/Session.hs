@@ -14,6 +14,7 @@ module Network.MQTT.Session where
 import           Control.Concurrent.MVar
 import           Control.Monad
 import           Data.Functor.Identity
+import qualified Data.IntSet              as IS
 import qualified Data.IntMap              as IM
 import           Data.Monoid
 import qualified Data.Sequence            as Seq
@@ -24,14 +25,13 @@ import           Network.MQTT.Authentication
 type Identifier = Int
 
 data Session auth = Session
-  { sessionPrincipal        :: !(Principal auth)
-  , sessionClientIdentifier :: !ClientIdentifier
-  , sessionIdentifier       :: !Identifier
-  , sessionSubscriptions    :: !(MVar (R.RoutingTree (Identity QualityOfService)))
-  , sessionIncompleteQos2   :: !(MVar (IM.IntMap Message))
-  , sessionQueue            :: !(MVar ServerQueue)
-  , sessionQueuePending     :: !(MVar ())
-  , sessionQueueLimitQos0   :: Int
+  { sessionPrincipal           :: !(Principal auth)
+  , sessionClientIdentifier    :: !ClientIdentifier
+  , sessionIdentifier          :: !Identifier
+  , sessionSubscriptions       :: !(MVar (R.RoutingTree (Identity QualityOfService)))
+  , sessionQueue               :: !(MVar ServerQueue)
+  , sessionQueuePending        :: !(MVar ())
+  , sessionQueueLimitQos0      :: Int
   }
 
 instance Eq (Session auth) where
@@ -51,15 +51,17 @@ data ServerQueue
   { queuePids           :: !(Seq.Seq Int)
   , queueAcknowledged   :: !(Seq.Seq Int)
   , queueReceived       :: !(Seq.Seq Int)
-  , queueCompleted      :: !(Seq.Seq Int)
+  , queueRelease        :: !(Seq.Seq Int)
+  , queueComplete       :: !(Seq.Seq Int)
   , queueSubscribed     :: !(Seq.Seq (Int, [Maybe QualityOfService]))
   , queueUnsubscribed   :: !(Seq.Seq Int)
   , queueQos0           :: !(Seq.Seq Message)
   , queueQos1           :: !(Seq.Seq Message)
   , queueQos2           :: !(Seq.Seq Message)
-  , queueUnacknowledged :: !(IM.IntMap Message)
-  , queueUnreceived     :: !(IM.IntMap Message)
-  , queueUncompleted    :: !(IM.IntMap Message)
+  , notAcknowledged     :: !(IM.IntMap Message) -- | We sent a `Qos1` message and have not yet received the @PUBACK@.
+  , notReceived         :: !(IM.IntMap Message) -- | We sent a `Qos2` message and have not yet received the @PUBREC@.
+  , notReleased         :: !(IM.IntMap Message) -- | We received as `Qos2` message, sent the @PUBREC@ and wait for the @PUBREL@.
+  , notComplete         :: !IS.IntSet           -- | We sent a @PUBREL@ and have not yet received the @PUBCOMP@.
   }
 
 emptyServerQueue :: Int -> ServerQueue
@@ -67,20 +69,23 @@ emptyServerQueue i = ServerQueue
   { queuePids = Seq.fromList [0..min i 65535]
   , queueAcknowledged = mempty
   , queueReceived = mempty
-  , queueCompleted = mempty
+  , queueRelease = mempty
+  , queueComplete = mempty
   , queueSubscribed = mempty
   , queueUnsubscribed = mempty
   , queueQos0 = mempty
   , queueQos1 = mempty
   , queueQos2 = mempty
-  , queueUnacknowledged = mempty
-  , queueUnreceived = mempty
-  , queueUncompleted = mempty
+  , notAcknowledged = mempty
+  , notReceived = mempty
+  , notReleased = mempty
+  , notComplete = mempty
   }
 
 notePending   :: Session auth -> IO ()
 notePending    = void . flip tryPutMVar () . sessionQueuePending
 
+-- | This enqueues a message for transmission to the client. This operation does not block.
 enqueueMessage :: Session auth -> Message -> IO ()
 enqueueMessage session msg = do
   modifyMVar_ (sessionQueue session) $ \queue->
@@ -88,30 +93,13 @@ enqueueMessage session msg = do
       Qos0 -> queue { queueQos0 = Seq.take (sessionQueueLimitQos0 session) $ queueQos0 queue Seq.|> msg }
       Qos1 -> queue { queueQos1 = queueQos1 queue Seq.|> msg }
       Qos2 -> queue { queueQos1 = queueQos1 queue Seq.|> msg }
+  -- IMPORTANT: Notify the sending thread that something has been enqueued!
   notePending session
 
 -- TODO: make more efficient
 enqueueMessages :: Foldable t => Session auth -> t Message -> IO ()
 enqueueMessages session msgs =
   forM_ msgs (enqueueMessage session)
-
-enqueuePublishAcknowledged :: Session auth -> PacketIdentifier -> IO ()
-enqueuePublishAcknowledged session pid = do
-  modifyMVar_ (sessionQueue session) $ \queue->
-    pure $! queue { queueAcknowledged = queueAcknowledged queue Seq.|> pid }
-  notePending session
-
-enqueuePublishReceived :: Session auth -> PacketIdentifier -> IO ()
-enqueuePublishReceived session pid = do
-  modifyMVar_ (sessionQueue session) $ \queue->
-    pure $! queue { queueReceived = queueReceived queue Seq.|> pid }
-  notePending session
-
-enqueuePublishCompleted :: Session auth -> PacketIdentifier -> IO ()
-enqueuePublishCompleted session pid = do
-  modifyMVar_ (sessionQueue session) $ \queue->
-    pure $! queue { queueCompleted = queueCompleted queue Seq.|> pid }
-  notePending session
 
 enqueueSubscribeAcknowledged :: Session auth -> PacketIdentifier -> [Maybe QualityOfService] -> IO ()
 enqueueSubscribeAcknowledged session pid mqoss = do
@@ -155,17 +143,97 @@ dequeueQos0    :: ServerQueue -> (ServerQueue, Seq.Seq ServerMessage)
 dequeueQos0 queue =
   ( queue { queueQos0 = mempty }, fmap (ServerPublish (-1)) (queueQos0 queue) )
 
-holdQos2Message :: Session auth -> PacketIdentifier -> Message -> IO ()
-holdQos2Message session pid msg =
-  modifyMVar_ (sessionIncompleteQos2 session) $ \im->
-    pure $! IM.insert pid msg im
+-- | Process a @PUB@ message received from the peer.
+--
+--   Different handling depending on message qos.
+processPublish :: Session auth -> PacketIdentifier -> Message -> (Message -> IO ()) -> IO ()
+processPublish session pid msg forward =
+  case msgQos msg of
+    Qos0 ->
+      forward msg
+    Qos1 -> do
+      forward msg
+      modifyMVar_ (sessionQueue session) $ \q-> pure $! q {
+          queueAcknowledged = queueAcknowledged q Seq.|> pid
+        }
+      notePending session
+    Qos2 -> do
+      modifyMVar_ (sessionQueue session) $ \q-> pure $! q {
+          queueReceived = queueReceived q Seq.|> pid
+        , notReleased   = IM.insert pid msg (notReleased q)
+        }
+      notePending session
 
-releaseQos2Message :: Session auth -> PacketIdentifier -> IO (Maybe Message)
-releaseQos2Message session pid =
-  modifyMVar (sessionIncompleteQos2 session) $ \im->
-    case IM.lookup pid im of
-      Nothing  -> pure (im, Nothing)
-      Just msg -> pure (IM.delete pid im, Just msg)
+-- | Note that a Qos1 message has been received by the peer.
+--
+--   This shall be called when a @PUBACK@ has been received by the peer.
+--   We release the message from our buffer and the transaction is then complete.
+processPublishAcknowledged :: Session auth -> PacketIdentifier -> IO ()
+processPublishAcknowledged session pid = do
+  modifyMVar_ (sessionQueue session) $ \q-> pure $! q {
+      -- The packet identifier is now free for reuse.
+      queuePids       = pid Seq.<| queuePids q
+    , notAcknowledged = IM.delete pid (notAcknowledged q)
+    }
+  notePending session
+
+-- | Note that a Qos2 message has been received by the peer.
+--
+--   This shall be called when a @PUBREC@ has been received from the peer.
+--   This is the completion of the second step in a 4-way handshake.
+--   The state changes from _not received_ to _not completed_.
+--   We will send a @PUBREL@ to the client and expect a @PUBCOMP@ in return.
+processPublishReceived :: Session auth -> PacketIdentifier -> IO ()
+processPublishReceived session pid = do
+  modifyMVar_ (sessionQueue session) $ \q->
+    pure $! q {
+      notReceived  = IM.delete pid (notReceived q)
+    , notComplete  = IS.insert pid (notComplete q)
+    , queueRelease = queueRelease q Seq.|> pid
+    }
+  notePending session
+
+-- | Release a `Qos2` message.
+--
+--   This shall be called when @PUBREL@ has been received from the peer.
+--   It enqueues an outgoing @PUBCOMP@.
+--   The message is only released if the handler returned without exception.
+--   The handler is only executed if there still is a message (it is a valid scenario
+--   that it might already have been released).
+processPublishRelease :: Session auth -> PacketIdentifier -> (Message -> IO ()) -> IO ()
+processPublishRelease session pid upstream = do
+  modifyMVar_ (sessionQueue session) $ \q->
+    case IM.lookup pid (notReleased q) of
+      Nothing  ->
+        pure q
+      Just msg -> do
+        upstream msg
+        pure $! q { notReleased   = IM.delete pid (notReleased q)
+                  , queueComplete = queueComplete q Seq.|> pid
+                  }
+  notePending session
+
+-- | Complete the transmission of a Qos2 message.
+--
+--   This shall be called when a @PUBCOMP@ has been received from the peer
+--   to finally free the packet identifier.
+processPublishComplete :: Session auth -> PacketIdentifier -> IO ()
+processPublishComplete session pid = do
+  modifyMVar_ (sessionQueue session) $ \q-> pure $! q {
+      -- The packet identifier is now free for reuse.
+      queuePids   = queuePids q Seq.|> pid
+    , notComplete = IS.delete pid (notComplete q)
+    }
+  -- Although we did not enqueue something it might still be the case
+  -- that we have unsent data that couldn't be sent by now because no more
+  -- packet identifiers were available.
+  -- In case the output queues are actually empty, the thread will check
+  -- them once and immediately sleep again.
+  notePending session
+
+getFreePacketIdentifiers :: Session auth -> IO (Seq.Seq PacketIdentifier)
+getFreePacketIdentifiers session =
+  queuePids <$> readMVar (sessionQueue session)
 
 dequeueNonQos0 :: ServerQueue -> (ServerQueue, Seq.Seq ServerMessage)
 dequeueNonQos0
@@ -185,8 +253,8 @@ dequeueNonQos0
       | Seq.null (queueReceived q) = qs
       | otherwise = ( q { queueReceived = mempty }, s <> fmap ServerPublishReceived (queueReceived q) )
     dequeueCompleted qs@(q,s)
-      | Seq.null (queueCompleted q) = qs
-      | otherwise = ( q { queueCompleted = mempty }, s <> fmap ServerPublishComplete (queueCompleted q) )
+      | Seq.null (queueComplete q) = qs
+      | otherwise = ( q { queueComplete = mempty }, s <> fmap ServerPublishComplete (queueComplete q) )
     dequeueSubscribed qs@(q,s)
       | Seq.null (queueSubscribed q) = qs
       | otherwise = ( q { queueSubscribed = mempty }, s <> fmap (uncurry ServerSubscribeAcknowledged) (queueSubscribed q) )
@@ -197,7 +265,7 @@ dequeueNonQos0
       | Seq.null msgs = qs
       | otherwise = ( q { queuePids           = pids''
                         , queueQos1           = msgs''
-                        , queueUnacknowledged = foldr (uncurry IM.insert) (queueUnacknowledged q)
+                        , notAcknowledged     = foldr (uncurry IM.insert) (notAcknowledged q)
                                                       (Seq.zipWith (,) pids' msgs')
                         }
                     , s <> Seq.zipWith ServerPublish pids' msgs' )
@@ -211,7 +279,7 @@ dequeueNonQos0
       | Seq.null msgs = qs
       | otherwise = ( q { queuePids        = pids''
                         , queueQos2        = msgs''
-                        , queueUnreceived  = foldr (uncurry IM.insert) (queueUnreceived q)
+                        , notReceived      = foldr (uncurry IM.insert) (notReceived q)
                                                    (Seq.zipWith (,) pids' msgs')
                         }
                       , s <> Seq.zipWith ServerPublish pids' msgs' )

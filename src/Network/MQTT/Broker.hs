@@ -103,7 +103,6 @@ getSession principal cid st =
   where
     --createSession :: IO (BrokerState auth, Session.Session)
     createSession = do
-      incompleteQos2 <- newMVar IM.empty
       subscriptions <- newMVar R.empty
       queue <- newMVar (Session.emptyServerQueue 1000)
       queuePending <- newEmptyMVar
@@ -112,7 +111,6 @@ getSession principal cid st =
            { Session.sessionIdentifier       = newSessionIdentifier
            , Session.sessionClientIdentifier = cid
            , Session.sessionPrincipal        = principal
-           , Session.sessionIncompleteQos2   = incompleteQos2
            , Session.sessionSubscriptions    = subscriptions
            , Session.sessionQueue            = queue
            , Session.sessionQueuePending     = queuePending
