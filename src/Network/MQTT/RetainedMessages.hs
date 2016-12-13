@@ -1,19 +1,47 @@
 {-# LANGUAGE OverloadedStrings #-}
 module Network.MQTT.RetainedMessages where
 
+import           Control.Concurrent.MVar
 import           Control.Applicative  hiding (empty)
+import qualified Data.ByteString.Lazy as BSL
 import           Data.List.NonEmpty   (NonEmpty (..))
 import qualified Data.Map             as M
 import           Data.Maybe
 import qualified Data.Set             as S
 import qualified Network.MQTT.Message as Message
 import qualified Network.MQTT.Topic   as Topic
+import Prelude hiding (null)
 
-newtype RetainedTree = RetainedTree (M.Map Topic.Level RetainedNode)
-data    RetainedNode = RetainedNode RetainedTree (Maybe Message.Message)
+newtype RetainedStore = RetainedStore { unstore :: MVar RetainedTree }
+newtype RetainedTree  = RetainedTree  { untree :: M.Map Topic.Level RetainedNode }
+data    RetainedNode  = RetainedNode !RetainedTree !(Maybe Message.Message)
+
+new    :: IO RetainedStore
+new     = RetainedStore <$> newMVar empty
+
+store  :: Message.Message -> RetainedStore -> IO ()
+store msg (RetainedStore mvar)
+  | Message.msgRetain msg = modifyMVar_ mvar $ \tree->
+      pure $! if BSL.null (Message.msgBody msg)
+        then delete msg tree
+        else insert msg tree
+  | otherwise = pure ()
+
+retrieve :: Topic.Filter -> RetainedStore -> IO (S.Set Message.Message)
+retrieve filtr (RetainedStore mvar) =
+  lookupFilter filtr <$> readMVar mvar
 
 empty  :: RetainedTree
 empty   = RetainedTree mempty
+
+null   :: RetainedTree -> Bool
+null    = M.null . untree
+
+insert :: Message.Message -> RetainedTree -> RetainedTree
+insert msg = union (singleton msg)
+
+delete :: Message.Message -> RetainedTree -> RetainedTree
+delete msg = difference (singleton msg)
 
 singleton :: Message.Message -> RetainedTree
 singleton msg =
@@ -23,16 +51,26 @@ singleton msg =
     node []     = RetainedNode empty (Just msg)
     node (x:xs) = RetainedNode (RetainedTree $ M.singleton x $ node xs) Nothing
 
--- FIXME: probably not correct.
-insert :: Message.Message -> RetainedTree-> RetainedTree
-insert msg (RetainedTree m) =
-  let l :| ls = Topic.topicLevels (Message.msgTopic msg)
-  in RetainedTree $ M.insertWith' merge l (node ls) m
-  where
-    node []     = RetainedNode empty (Just msg)
-    node (x:xs) = RetainedNode (RetainedTree $ M.singleton x $ node xs) Nothing
-    merge (RetainedNode (RetainedTree tree1) msg1) (RetainedNode (RetainedTree tree2) msg2) =
-      RetainedNode (RetainedTree $ M.unionWith merge tree1 tree2) (msg2 <|> msg1)
+-- | The expression `union t1 t2` takes the left-biased union of `t1` and `t2`.
+union :: RetainedTree -> RetainedTree -> RetainedTree
+union (RetainedTree m1) (RetainedTree m2) =
+  RetainedTree $ M.unionWith merge m1 m2
+    where
+      merge (RetainedNode t1 mm1) (RetainedNode t2 mm2) =
+        RetainedNode (t1 `union` t2) (mm1 <|> mm2)
+
+difference :: RetainedTree -> RetainedTree -> RetainedTree
+difference (RetainedTree m1) (RetainedTree m2) =
+  RetainedTree $ M.differenceWith diff m1 m2
+    where
+      diff (RetainedNode t1 mm1) (RetainedNode t2 mm2)
+        | null t3 && isNothing mm3 = Nothing
+        | otherwise                = Just (RetainedNode t3 mm3)
+        where
+          t3 = difference t1 t2
+          mm3 = case mm2 of
+            Just _  -> Nothing
+            Nothing -> mm1
 
 lookupFilter :: Topic.Filter -> RetainedTree -> S.Set Message.Message
 lookupFilter filtr t =

@@ -45,7 +45,7 @@ import qualified System.Log.Logger             as Log
 
 data Broker auth  = Broker {
     brokerAuthenticator    :: auth
-  , brokerRetainedMessages :: MVar RM.RetainedTree
+  , brokerRetainedStore    :: RM.RetainedStore
   , brokerState            :: MVar (BrokerState auth)
   }
 
@@ -59,7 +59,7 @@ data BrokerState auth
 
 new :: Authenticator auth => auth -> IO (Broker auth)
 new authenticator = do
-  rm <- newMVar RM.empty
+  rm <- RM.new
   st <-newMVar BrokerState
     { brokerMaxSessionIdentifier = 0
     , brokerSubscriptions        = mempty
@@ -67,9 +67,9 @@ new authenticator = do
     , brokerPrincipals           = mempty
     }
   pure Broker {
-      brokerAuthenticator    = authenticator
-    , brokerRetainedMessages = rm
-    , brokerState            = st
+      brokerAuthenticator = authenticator
+    , brokerRetainedStore = rm
+    , brokerState         = st
     }
 
 withSession :: forall auth. (Authenticator auth) => Broker auth -> ConnectionRequest -> (ConnectionRejectReason -> IO ()) -> (Session.Session auth -> SessionPresent -> Principal auth -> IO ()) -> IO ()
@@ -149,11 +149,7 @@ closeSession broker session =
 
 publishDownstream :: Broker auth -> Message -> IO ()
 publishDownstream broker msg = do
-  -- Log.debugM "Broker.publishDownstream" $ show msg
-  when (msgRetain msg) $ do
-    Log.debugM "Broker.publishDownstream" "retain"
-    modifyMVar_ (brokerRetainedMessages broker) $ \rm->
-      pure $! RM.insert msg rm
+  RM.store msg (brokerRetainedStore broker)
   let topic = msgTopic msg
   st <- readMVar (brokerState broker)
   forM_ (IS.elems $ R.lookup topic $ brokerSubscriptions st) $ \key->
@@ -192,10 +188,9 @@ subscribe broker session pid filters = do
         ( pure . R.unionWith max qosTree )
       pure $ bst { brokerSubscriptions = R.unionWith IS.union (brokerSubscriptions bst) sidTree }
     Session.enqueueSubscribeAcknowledged session pid (fmap snd checkedFilters)
-    rm <- readMVar (brokerRetainedMessages broker)
     -- TODO: downgrade qos
     forM_ subscribeFilters $ \(filtr,_qos)->
-       Session.enqueueMessages session $ RM.lookupFilter filtr rm
+       Session.enqueueMessages session =<< RM.retrieve filtr (brokerRetainedStore broker)
   where
     checkPermission (filtr, qos) = do
       isPermitted <- hasSubscribePermission (brokerAuthenticator broker) (Session.sessionPrincipal session) filtr
