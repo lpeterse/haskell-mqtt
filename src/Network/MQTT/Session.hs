@@ -13,6 +13,7 @@ module Network.MQTT.Session where
 
 import           Control.Concurrent.MVar
 import           Control.Monad
+import           Data.Bool
 import           Data.Functor.Identity
 import qualified Data.IntSet              as IS
 import qualified Data.IntMap              as IM
@@ -66,20 +67,20 @@ data ServerQueue
 
 emptyServerQueue :: Int -> ServerQueue
 emptyServerQueue i = ServerQueue
-  { queuePids = Seq.fromList [0..min i 65535]
+  { queuePids         = Seq.fromList [0..min i 65535]
   , queueAcknowledged = mempty
-  , queueReceived = mempty
-  , queueRelease = mempty
-  , queueComplete = mempty
-  , queueSubscribed = mempty
+  , queueReceived     = mempty
+  , queueRelease      = mempty
+  , queueComplete     = mempty
+  , queueSubscribed   = mempty
   , queueUnsubscribed = mempty
-  , queueQos0 = mempty
-  , queueQos1 = mempty
-  , queueQos2 = mempty
-  , notAcknowledged = mempty
-  , notReceived = mempty
-  , notReleased = mempty
-  , notComplete = mempty
+  , queueQos0         = mempty
+  , queueQos1         = mempty
+  , queueQos2         = mempty
+  , notAcknowledged   = mempty
+  , notReceived       = mempty
+  , notReleased       = mempty
+  , notComplete       = mempty
   }
 
 notePending   :: Session auth -> IO ()
@@ -92,7 +93,7 @@ enqueueMessage session msg = do
     pure $! case msgQos msg of
       Qos0 -> queue { queueQos0 = Seq.take (sessionQueueLimitQos0 session) $ queueQos0 queue Seq.|> msg }
       Qos1 -> queue { queueQos1 = queueQos1 queue Seq.|> msg }
-      Qos2 -> queue { queueQos1 = queueQos1 queue Seq.|> msg }
+      Qos2 -> queue { queueQos2 = queueQos2 queue Seq.|> msg }
   -- IMPORTANT: Notify the sending thread that something has been enqueued!
   notePending session
 
@@ -171,10 +172,11 @@ processPublish session pid msg forward =
 processPublishAcknowledged :: Session auth -> PacketIdentifier -> IO ()
 processPublishAcknowledged session pid = do
   modifyMVar_ (sessionQueue session) $ \q-> pure $! q {
-      -- The packet identifier is now free for reuse.
-      queuePids       = pid Seq.<| queuePids q
+      -- The packet identifier is free for reuse only if it actually was in the set of notAcknowledged messages.
+      queuePids = bool (queuePids q) (pid Seq.<| queuePids q) (IM.member pid (notAcknowledged q))
     , notAcknowledged = IM.delete pid (notAcknowledged q)
     }
+  -- See code of `processPublishComplete` for explanation.
   notePending session
 
 -- | Note that a Qos2 message has been received by the peer.
@@ -221,7 +223,7 @@ processPublishComplete :: Session auth -> PacketIdentifier -> IO ()
 processPublishComplete session pid = do
   modifyMVar_ (sessionQueue session) $ \q-> pure $! q {
       -- The packet identifier is now free for reuse.
-      queuePids   = queuePids q Seq.|> pid
+      queuePids   = pid Seq.<| queuePids q
     , notComplete = IS.delete pid (notComplete q)
     }
   -- Although we did not enqueue something it might still be the case
@@ -241,6 +243,7 @@ dequeueNonQos0
   . dequeueQos2
   . dequeueAcknowledged
   . dequeueReceived
+  . dequeueRelease
   . dequeueCompleted
   . dequeueSubscribed
   . dequeueUnsubscribed
@@ -252,6 +255,9 @@ dequeueNonQos0
     dequeueReceived qs@(q,s)
       | Seq.null (queueReceived q) = qs
       | otherwise = ( q { queueReceived = mempty }, s <> fmap ServerPublishReceived (queueReceived q) )
+    dequeueRelease qs@(q,s)
+      | Seq.null (queueRelease q) = qs
+      | otherwise = ( q { queueRelease = mempty }, s <> fmap ServerPublishRelease (queueRelease q) )
     dequeueCompleted qs@(q,s)
       | Seq.null (queueComplete q) = qs
       | otherwise = ( q { queueComplete = mempty }, s <> fmap ServerPublishComplete (queueComplete q) )

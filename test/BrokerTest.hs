@@ -114,9 +114,29 @@ getTestTree =
             pids2 <- Session.getFreePacketIdentifiers session
             Session.processPublishAcknowledged session pid
             pids3 <- Session.getFreePacketIdentifiers session
-            assertEqual "A packet identifiers shall be in use after the message has been dequeued." (Seq.drop 1 pids1) pids2
+            assertEqual "One packet identifier shall be in use after `dequeue`." (Seq.drop 1 pids1) pids2
             assertEqual "The packet identifier shall have been returned after the message has been acknowledged." pids1 pids3
-            assertEqual "The dequeued packets."  (Seq.fromList [ ServerPublish pid msg ]) queue
+            assertEqual "The packet is expected in the output queue." (Seq.fromList [ ServerPublish 0 msg ]) queue
+
+      , testCase "transmit a Qos2 message and process confirmations" $ do
+          let msg = Message.Message "topic" "body" Qos2 False False
+              pid = 0
+          broker <- Broker.new $ TestAuthenticator authenticatorConfigAllAccess
+          Broker.withSession broker connectionRequest (const $ pure ()) $ \session _ _-> do
+            pids1 <- Session.getFreePacketIdentifiers session
+            Session.enqueueMessage session msg
+            queue2 <- Session.dequeue session
+            pids2 <- Session.getFreePacketIdentifiers session
+            assertEqual "One packet identifier shall be in use after `dequeue`." (Seq.drop 1 pids1) pids2
+            assertEqual "A PUB packet is expected in the output queue." (Seq.fromList [ ServerPublish 0 msg ]) queue2
+            Session.processPublishReceived session pid
+            queue3 <- Session.dequeue session
+            pids3 <- Session.getFreePacketIdentifiers session
+            assertEqual "The packet identifier shall still be in use." (Seq.drop 1 pids1) pids3
+            assertEqual "A PUBREL packet is expected in the output queue." (Seq.fromList [ ServerPublishRelease 0 ]) queue3
+            Session.processPublishComplete session pid
+            pids4 <- Session.getFreePacketIdentifiers session
+            assertEqual "The packet identifier shall have been returned after the transaction has been completed." pids1 pids4
       ]
     ]
 
