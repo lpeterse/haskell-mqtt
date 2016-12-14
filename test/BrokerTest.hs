@@ -3,7 +3,6 @@
 {-# LANGUAGE TypeFamilies      #-}
 module BrokerTest ( getTestTree ) where
 
-import           Control.Applicative
 import           Control.Concurrent.MVar
 import           Control.Exception
 import           Data.Monoid
@@ -117,6 +116,21 @@ getTestTree =
             assertEqual "One packet identifier shall be in use after `dequeue`." (Seq.drop 1 pids1) pids2
             assertEqual "The packet identifier shall have been returned after the message has been acknowledged." pids1 pids3
             assertEqual "The packet is expected in the output queue." (Seq.fromList [ ServerPublish 0 msg ]) queue
+
+      , testCase "transmit a Qos1 message and retransmit after connection failure" $ do
+          let req = connectionRequest { requestCleanSession = False }
+              msg = Message.Message "topic" "body" Qos1 False False
+              pid = 0
+          broker <- Broker.new $ TestAuthenticator authenticatorConfigAllAccess
+          Broker.withSession broker req (const $ pure ()) $ \session present _-> do
+            assertEqual "The session shall not be present." False present
+            Session.enqueueMessage session msg
+            queue <- Session.dequeue session
+            assertEqual "The message shall be in the output queue." (Seq.fromList [ ServerPublish pid msg]) queue
+          Broker.withSession broker req (const $ pure ()) $ \session present _-> do
+            assertEqual "The session shall be present." True present
+            queue <- Session.dequeue session
+            assertEqual "The message shall again be in the output queue, but marked as duplicate." (Seq.fromList [ ServerPublish pid $ msg { msgDuplicate = True }]) queue
 
       , testCase "transmit a Qos2 message and process confirmations" $ do
           let msg = Message.Message "topic" "body" Qos2 False False

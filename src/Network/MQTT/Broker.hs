@@ -91,7 +91,9 @@ getSession principal cid st =
       Just sid ->
         case IM.lookup sid (brokerSessions st) of
           -- Resuming an existing session..
-          Just session -> pure (st, (True, session))
+          Just session -> do
+            Session.reset session
+            pure (st, (True, session))
           -- Orphaned session id. This is illegal state.
           Nothing -> do
             Log.warningM "Broker.getSession" $ "Illegal state: Found orphanded session id " ++ show sid ++ "."

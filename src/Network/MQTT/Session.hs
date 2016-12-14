@@ -1,5 +1,6 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE TupleSections     #-}
+{-# LANGUAGE MultiWayIf        #-}
 --------------------------------------------------------------------------------
 -- |
 -- Module      :  Network.MQTT.Session
@@ -50,12 +51,7 @@ instance (Authenticator auth) => Show (Session auth) where
 data ServerQueue
   = ServerQueue
   { queuePids           :: !(Seq.Seq Int)
-  , queueAcknowledged   :: !(Seq.Seq Int)
-  , queueReceived       :: !(Seq.Seq Int)
-  , queueRelease        :: !(Seq.Seq Int)
-  , queueComplete       :: !(Seq.Seq Int)
-  , queueSubscribed     :: !(Seq.Seq (Int, [Maybe QualityOfService]))
-  , queueUnsubscribed   :: !(Seq.Seq Int)
+  , outputBuffer        :: !(Seq.Seq ServerMessage)
   , queueQos0           :: !(Seq.Seq Message)
   , queueQos1           :: !(Seq.Seq Message)
   , queueQos2           :: !(Seq.Seq Message)
@@ -68,12 +64,7 @@ data ServerQueue
 emptyServerQueue :: Int -> ServerQueue
 emptyServerQueue i = ServerQueue
   { queuePids         = Seq.fromList [0..min i 65535]
-  , queueAcknowledged = mempty
-  , queueReceived     = mempty
-  , queueRelease      = mempty
-  , queueComplete     = mempty
-  , queueSubscribed   = mempty
-  , queueUnsubscribed = mempty
+  , outputBuffer      = mempty
   , queueQos0         = mempty
   , queueQos1         = mempty
   , queueQos2         = mempty
@@ -82,6 +73,14 @@ emptyServerQueue i = ServerQueue
   , notReleased       = mempty
   , notComplete       = mempty
   }
+
+-- | Reset the session state after a reconnect.
+--
+--   * All output buffers will be cleared.
+--   * Output buffers will be filled with retransmissions.
+reset :: Session auth -> IO ()
+reset session =
+  modifyMVar_ (sessionQueue session) (\q-> pure $! resetQueue q)
 
 notePending   :: Session auth -> IO ()
 notePending    = void . flip tryPutMVar () . sessionQueuePending
@@ -105,13 +104,13 @@ enqueueMessages session msgs =
 enqueueSubscribeAcknowledged :: Session auth -> PacketIdentifier -> [Maybe QualityOfService] -> IO ()
 enqueueSubscribeAcknowledged session pid mqoss = do
   modifyMVar_ (sessionQueue session) $ \queue->
-    pure $! queue { queueSubscribed = queueSubscribed queue Seq.|> (pid, mqoss) }
+    pure $! queue { outputBuffer = outputBuffer queue Seq.|> ServerSubscribeAcknowledged pid mqoss }
   notePending session
 
 enqueueUnsubscribeAcknowledged :: Session auth -> PacketIdentifier -> IO ()
 enqueueUnsubscribeAcknowledged session pid = do
   modifyMVar_ (sessionQueue session) $ \queue->
-    pure $! queue { queueUnsubscribed = queueUnsubscribed queue Seq.|> pid}
+    pure $! queue { outputBuffer = outputBuffer queue Seq.|> ServerUnsubscribeAcknowledged pid}
   notePending session
 
 -- | Blocks until messages are available and prefers non-qos0 messages over
@@ -120,14 +119,10 @@ dequeue :: Session auth -> IO (Seq.Seq ServerMessage)
 dequeue session = do
   waitPending
   modifyMVar (sessionQueue session) $ \queue-> do
-    let qs@(_, nonQos0Msgs) = dequeueNonQos0 queue
-    if Seq.null nonQos0Msgs
-      then do
-        let qs'@(_, qos0Msgs) = dequeueQos0 queue
-        if Seq.null qos0Msgs
-          then clearPending >> pure (queue, mempty)
-          else pure qs'
-      else pure qs
+    let q = normalizeQueue queue
+    if | not (Seq.null $ outputBuffer q) -> pure (q { outputBuffer = mempty }, outputBuffer q)
+       | not (Seq.null $ queueQos0    q) -> pure (q { queueQos0    = mempty }, fmap (ServerPublish (-1)) (queueQos0 q))
+       | otherwise                       -> clearPending >> pure (q, mempty)
   where
     -- | Blocks until some other thread puts `()` into the `pending` variable.
     -- A filled `pending` variable implies the output queue is non-empty in
@@ -155,12 +150,12 @@ processPublish session pid msg forward =
     Qos1 -> do
       forward msg
       modifyMVar_ (sessionQueue session) $ \q-> pure $! q {
-          queueAcknowledged = queueAcknowledged q Seq.|> pid
+          outputBuffer = outputBuffer q Seq.|> ServerPublishAcknowledged pid
         }
       notePending session
     Qos2 -> do
       modifyMVar_ (sessionQueue session) $ \q-> pure $! q {
-          queueReceived = queueReceived q Seq.|> pid
+          outputBuffer = outputBuffer q Seq.|> ServerPublishReceived pid
         , notReleased   = IM.insert pid msg (notReleased q)
         }
       notePending session
@@ -191,7 +186,7 @@ processPublishReceived session pid = do
     pure $! q {
       notReceived  = IM.delete pid (notReceived q)
     , notComplete  = IS.insert pid (notComplete q)
-    , queueRelease = queueRelease q Seq.|> pid
+    , outputBuffer = outputBuffer q Seq.|> ServerPublishRelease pid
     }
   notePending session
 
@@ -210,8 +205,8 @@ processPublishRelease session pid upstream = do
         pure q
       Just msg -> do
         upstream msg
-        pure $! q { notReleased   = IM.delete pid (notReleased q)
-                  , queueComplete = queueComplete q Seq.|> pid
+        pure $! q { notReleased  = IM.delete pid (notReleased q)
+                  , outputBuffer = outputBuffer q Seq.|> ServerPublishComplete pid
                   }
   notePending session
 
@@ -237,61 +232,48 @@ getFreePacketIdentifiers :: Session auth -> IO (Seq.Seq PacketIdentifier)
 getFreePacketIdentifiers session =
   queuePids <$> readMVar (sessionQueue session)
 
-dequeueNonQos0 :: ServerQueue -> (ServerQueue, Seq.Seq ServerMessage)
-dequeueNonQos0
-  = dequeueQos1
-  . dequeueQos2
-  . dequeueAcknowledged
-  . dequeueReceived
-  . dequeueRelease
-  . dequeueCompleted
-  . dequeueSubscribed
-  . dequeueUnsubscribed
-  . (, mempty)
+resetQueue :: ServerQueue -> ServerQueue
+resetQueue q = q {
+    outputBuffer = (rePublishQos1 . rePublishQos2 . reReleaseQos2) mempty
+  }
   where
-    dequeueAcknowledged qs@(q,s)
-      | Seq.null (queueAcknowledged q) = qs
-      | otherwise = ( q { queueAcknowledged = mempty }, s <> fmap ServerPublishAcknowledged (queueAcknowledged q) )
-    dequeueReceived qs@(q,s)
-      | Seq.null (queueReceived q) = qs
-      | otherwise = ( q { queueReceived = mempty }, s <> fmap ServerPublishReceived (queueReceived q) )
-    dequeueRelease qs@(q,s)
-      | Seq.null (queueRelease q) = qs
-      | otherwise = ( q { queueRelease = mempty }, s <> fmap ServerPublishRelease (queueRelease q) )
-    dequeueCompleted qs@(q,s)
-      | Seq.null (queueComplete q) = qs
-      | otherwise = ( q { queueComplete = mempty }, s <> fmap ServerPublishComplete (queueComplete q) )
-    dequeueSubscribed qs@(q,s)
-      | Seq.null (queueSubscribed q) = qs
-      | otherwise = ( q { queueSubscribed = mempty }, s <> fmap (uncurry ServerSubscribeAcknowledged) (queueSubscribed q) )
-    dequeueUnsubscribed qs@(q,s)
-      | Seq.null (queueUnsubscribed q) = qs
-      | otherwise = ( q { queueUnsubscribed = mempty }, s <> fmap ServerUnsubscribeAcknowledged (queueUnsubscribed q) )
-    dequeueQos1 qs@(q,s)
-      | Seq.null msgs = qs
-      | otherwise = ( q { queuePids           = pids''
-                        , queueQos1           = msgs''
-                        , notAcknowledged     = foldr (uncurry IM.insert) (notAcknowledged q)
-                                                      (Seq.zipWith (,) pids' msgs')
-                        }
-                    , s <> Seq.zipWith ServerPublish pids' msgs' )
+    rePublishQos1 s = IM.foldlWithKey (\s' pid msg-> s' Seq.|> ServerPublish         pid msg { msgDuplicate = True }) s (notAcknowledged q)
+    rePublishQos2 s = IM.foldlWithKey (\s' pid msg-> s' Seq.|> ServerPublish         pid msg)                         s (notReceived     q)
+    reReleaseQos2 s = IS.foldl        (\s' pid->     s' Seq.|> ServerPublishRelease  pid)                             s (notComplete     q)
+
+
+-- | This function fills the output buffer with as many messages
+--   as possible (this is limited by the available packet identifiers).
+normalizeQueue :: ServerQueue -> ServerQueue
+normalizeQueue = takeQos1 . takeQos2
+  where
+    takeQos1 q
+      | Seq.null msgs     = q
+      | otherwise         = q
+        { outputBuffer    = outputBuffer q <> Seq.zipWith ServerPublish pids' msgs'
+        , queuePids       = pids''
+        , queueQos1       = msgs''
+        , notAcknowledged = foldr (uncurry IM.insert) (notAcknowledged q)
+                                  (Seq.zipWith (,) pids' msgs')
+        }
       where
-        pids                    = queuePids q
-        msgs                    = queueQos1 q
-        n                       = min (Seq.length pids) (Seq.length msgs)
-        (pids', pids'')         = Seq.splitAt n pids
-        (msgs', msgs'')         = Seq.splitAt n msgs
-    dequeueQos2 qs@(q,s)
-      | Seq.null msgs = qs
-      | otherwise = ( q { queuePids        = pids''
-                        , queueQos2        = msgs''
-                        , notReceived      = foldr (uncurry IM.insert) (notReceived q)
-                                                   (Seq.zipWith (,) pids' msgs')
-                        }
-                      , s <> Seq.zipWith ServerPublish pids' msgs' )
+        pids              = queuePids q
+        msgs              = queueQos1 q
+        n                 = min (Seq.length pids) (Seq.length msgs)
+        (pids', pids'')   = Seq.splitAt n pids
+        (msgs', msgs'')   = Seq.splitAt n msgs
+    takeQos2 q
+      | Seq.null msgs     = q
+      | otherwise         = q
+        { outputBuffer    = outputBuffer q <> Seq.zipWith ServerPublish pids' msgs'
+        , queuePids       = pids''
+        , queueQos2       = msgs''
+        , notReceived     = foldr (uncurry IM.insert) (notReceived q)
+                                  (Seq.zipWith (,) pids' msgs')
+        }
       where
-        pids                    = queuePids q
-        msgs                    = queueQos2 q
-        n                       = min (Seq.length pids) (Seq.length msgs)
-        (pids', pids'')         = Seq.splitAt n pids
-        (msgs', msgs'')         = Seq.splitAt n msgs
+        pids              = queuePids q
+        msgs              = queueQos2 q
+        n                 = min (Seq.length pids) (Seq.length msgs)
+        (pids', pids'')   = Seq.splitAt n pids
+        (msgs', msgs'')   = Seq.splitAt n msgs
