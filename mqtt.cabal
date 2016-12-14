@@ -31,7 +31,8 @@ library
                        Network.MQTT.Topic,
                        Network.MQTT.RoutingTree,
                        Network.MQTT.Server,
-                       Network.MQTT.Session
+                       Network.MQTT.Session,
+                       Network.MQTT.QualityOfService
   build-depends:       async,
                        attoparsec,
                        base >=4.8 && <5,

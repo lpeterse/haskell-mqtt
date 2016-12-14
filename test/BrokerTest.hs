@@ -15,6 +15,7 @@ import           Network.MQTT.Message
 import qualified Network.MQTT.Message        as Message
 import qualified Network.MQTT.Session        as Session
 import qualified Network.MQTT.Topic          as Topic
+import qualified Network.MQTT.RoutingTree    as R
 
 import           Test.Tasty
 import           Test.Tasty.HUnit
@@ -99,9 +100,9 @@ getTestTree =
             Broker.subscribe broker session1 23 [("topic", Qos0)]
             queue1 <- (<>) <$> Session.dequeue session1 <*> Session.dequeue session1
             queue1 @?= Seq.fromList [ ServerSubscribeAcknowledged 23 [Just Qos0] ]
-
       ]
     , testGroup "Quality of Service"
+
       [ testCase "transmit a Qos1 message and process acknowledgement" $ do
           let msg = Message.Message "topic" "body" Qos1 False False
               pid = 0
@@ -116,6 +117,21 @@ getTestTree =
             assertEqual "One packet identifier shall be in use after `dequeue`." (Seq.drop 1 pids1) pids2
             assertEqual "The packet identifier shall have been returned after the message has been acknowledged." pids1 pids3
             assertEqual "The packet is expected in the output queue." (Seq.fromList [ ServerPublish 0 msg ]) queue
+
+      , testCase "receive a Qos1 message and send acknowledgement" $ do
+          let msg = Message.Message "topic" "body" Qos1 False False
+              pid = 0
+          broker <- Broker.new $ TestAuthenticator authenticatorConfigAllAccess
+          Broker.withSession broker connectionRequest (const $ pure ()) $ \session _ _-> do
+            Broker.subscribe broker session pid [("topic", Qos0)]
+            queue1 <- Session.dequeue session
+            assertEqual "A subscribe acknowledgement shall be in the output queue." (Seq.fromList [ ServerSubscribeAcknowledged pid [Just Qos0] ]) queue1
+            Session.processPublish session pid msg (Broker.publishDownstream broker)
+            queue2 <- Session.dequeue session
+            Session.getSubscriptions session >>= print . R.findMaxBounded "topic"
+            assertEqual "A publish acknowledgment and the (downgraded) message itself shall be in the output queue." (Seq.fromList [ ServerPublishAcknowledged pid ]) queue2
+            queue3 <- Session.dequeue session
+            assertEqual "The downgraded message queue shall be in the output queue." (Seq.fromList [ ServerPublish (-1) msg {msgQos = Qos0} ]) queue3
 
       , testCase "transmit a Qos1 message and retransmit after connection failure" $ do
           let req = connectionRequest { requestCleanSession = False }
@@ -151,6 +167,29 @@ getTestTree =
             Session.processPublishComplete session pid
             pids4 <- Session.getFreePacketIdentifiers session
             assertEqual "The packet identifier shall have been returned after the transaction has been completed." pids1 pids4
+
+      , testCase "transmit a Qos2 message and handle retransmissions on connection failure" $ do
+          let req = connectionRequest { requestCleanSession = False }
+              msg = Message.Message "topic" "body" Qos2 False False
+              pid = 0
+          broker <- Broker.new $ TestAuthenticator authenticatorConfigAllAccess
+          Broker.withSession broker req (const $ pure ()) $ \session _ _-> do
+            Session.enqueueMessage session msg
+            queue <- Session.dequeue session
+            assertEqual "The message shall be in the output queue." (Seq.fromList [ ServerPublish 0 msg ]) queue
+          Broker.withSession broker req (const $ pure ()) $ \session _ _-> do
+            queue <- Session.dequeue session
+            assertEqual "The message shall be in the output queue (again)." (Seq.fromList [ ServerPublish 0 msg ]) queue
+            Session.processPublishReceived session pid
+            queue' <- Session.dequeue session
+            assertEqual "The release command shall be in the output queue." (Seq.fromList [ ServerPublishRelease 0 ]) queue'
+          Broker.withSession broker req (const $ pure ()) $ \session _ _-> do
+            queue <- Session.dequeue session
+            assertEqual "The release command shall be in the output queue (again)." (Seq.fromList [ ServerPublishRelease 0 ]) queue
+            Session.processPublishComplete session pid
+          Broker.withSession broker req (const $ pure ()) $ \session _ _-> do
+            queue <- Session.dequeue session
+            assertEqual "The output queue shall be empty." mempty queue
       ]
     ]
 

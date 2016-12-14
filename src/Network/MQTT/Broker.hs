@@ -156,7 +156,7 @@ publishDownstream broker msg = do
     case IM.lookup (key :: Int) (brokerSessions st) of
       Nothing      ->
         putStrLn "WARNING: dead session reference"
-      Just session -> Session.enqueueMessage session msg
+      Just session -> Session.publishMessage session msg
 
 -- | Publish a message on the broker regarding specific permissions of the session.
 --
@@ -176,7 +176,7 @@ publishUpstream'  = publishDownstream
 subscribe :: Authenticator auth => Broker auth -> Session.Session auth -> PacketIdentifier -> [(Filter, QualityOfService)] -> IO ()
 subscribe broker session pid filters = do
   checkedFilters <- mapM checkPermission filters
-  let subscribeFilters = mapMaybe (\(filtr,mqos)-> (filtr,) . Identity <$> mqos) checkedFilters
+  let subscribeFilters = mapMaybe (\(filtr,mqos)->(filtr,) <$> mqos) checkedFilters
       qosTree = R.insertFoldable subscribeFilters R.empty
       sidTree = R.map (const $ IS.singleton $ Session.sessionIdentifier session) qosTree
   -- Force the `qosTree` in order to lock the broker as little as possible.
@@ -188,9 +188,8 @@ subscribe broker session pid filters = do
         ( pure . R.unionWith max qosTree )
       pure $ bst { brokerSubscriptions = R.unionWith IS.union (brokerSubscriptions bst) sidTree }
     Session.enqueueSubscribeAcknowledged session pid (fmap snd checkedFilters)
-    -- TODO: downgrade qos
-    forM_ subscribeFilters $ \(filtr,_qos)->
-       Session.enqueueMessages session =<< RM.retrieve filtr (brokerRetainedStore broker)
+    forM_ checkedFilters $ \(filtr,_qos)->
+       Session.publishMessages session =<< RM.retrieve filtr (brokerRetainedStore broker)
   where
     checkPermission (filtr, qos) = do
       isPermitted <- hasSubscribePermission (brokerAuthenticator broker) (Session.sessionPrincipal session) filtr

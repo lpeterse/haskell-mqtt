@@ -253,6 +253,7 @@ handleConnection broker cfg conn connInfo = do
           ClientDisconnect ->
             pure True
     handleOutput session = forever $ do
-      -- The `dequeue` operation is blocking until messages get available.
+      -- The `waitPending` operation is blocking until messages get available.
+      Session.waitPending session
       msgs <- Session.dequeue session
       SS.sendMessages conn msgs

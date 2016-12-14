@@ -15,7 +15,6 @@ module Network.MQTT.Session where
 import           Control.Concurrent.MVar
 import           Control.Monad
 import           Data.Bool
-import           Data.Functor.Identity
 import qualified Data.IntSet              as IS
 import qualified Data.IntMap              as IM
 import           Data.Monoid
@@ -30,7 +29,7 @@ data Session auth = Session
   { sessionPrincipal           :: !(Principal auth)
   , sessionClientIdentifier    :: !ClientIdentifier
   , sessionIdentifier          :: !Identifier
-  , sessionSubscriptions       :: !(MVar (R.RoutingTree (Identity QualityOfService)))
+  , sessionSubscriptions       :: !(MVar (R.RoutingTree QualityOfService))
   , sessionQueue               :: !(MVar ServerQueue)
   , sessionQueuePending        :: !(MVar ())
   , sessionQueueLimitQos0      :: Int
@@ -85,6 +84,20 @@ reset session =
 notePending   :: Session auth -> IO ()
 notePending    = void . flip tryPutMVar () . sessionQueuePending
 
+waitPending   :: Session auth -> IO ()
+waitPending    = void . readMVar . sessionQueuePending
+
+publishMessage :: Session auth -> Message -> IO ()
+publishMessage session msg = do
+  subscriptions <- readMVar (sessionSubscriptions session)
+  case R.findMaxBounded (msgTopic msg) subscriptions of
+    Nothing  -> pure ()
+    Just qos -> enqueueMessage session msg { msgQos = qos }
+
+publishMessages :: Foldable t => Session auth -> t Message -> IO ()
+publishMessages session msgs =
+  forM_ msgs (publishMessage session)
+
 -- | This enqueues a message for transmission to the client. This operation does not block.
 enqueueMessage :: Session auth -> Message -> IO ()
 enqueueMessage session msg = do
@@ -116,19 +129,13 @@ enqueueUnsubscribeAcknowledged session pid = do
 -- | Blocks until messages are available and prefers non-qos0 messages over
 --  qos0 messages.
 dequeue :: Session auth -> IO (Seq.Seq ServerMessage)
-dequeue session = do
-  waitPending
+dequeue session =
   modifyMVar (sessionQueue session) $ \queue-> do
     let q = normalizeQueue queue
     if | not (Seq.null $ outputBuffer q) -> pure (q { outputBuffer = mempty }, outputBuffer q)
        | not (Seq.null $ queueQos0    q) -> pure (q { queueQos0    = mempty }, fmap (ServerPublish (-1)) (queueQos0 q))
        | otherwise                       -> clearPending >> pure (q, mempty)
   where
-    -- | Blocks until some other thread puts `()` into the `pending` variable.
-    -- A filled `pending` variable implies the output queue is non-empty in
-    -- case there is only one consumer thread.
-    waitPending :: IO ()
-    waitPending  = void $ readMVar $ sessionQueuePending session
     -- | In case all queues are empty, we need to clear the `pending` variable.
     -- ATTENTION: An implementation error would cause the `dequeue` operation
     -- to rush right through the blocking call leading to enourmous CPU usage.
@@ -227,6 +234,10 @@ processPublishComplete session pid = do
   -- In case the output queues are actually empty, the thread will check
   -- them once and immediately sleep again.
   notePending session
+
+getSubscriptions :: Session auth -> IO (R.RoutingTree QualityOfService)
+getSubscriptions session =
+  readMVar (sessionSubscriptions session)
 
 getFreePacketIdentifiers :: Session auth -> IO (Seq.Seq PacketIdentifier)
 getFreePacketIdentifiers session =

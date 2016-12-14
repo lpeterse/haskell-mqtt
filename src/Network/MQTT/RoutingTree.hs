@@ -29,6 +29,8 @@ module Network.MQTT.RoutingTree (
   , matchFilter
   -- ** lookup
   , lookup
+  -- ** findMaxBounded
+  , findMaxBounded
   -- ** insert
   , insert
   -- ** insertWith
@@ -239,6 +241,37 @@ lookup tf = fromMaybe mempty . lookupHead (topicLevels tf)
         matchSingleLevelWildcard = M.lookup singleLevelWildcard m >>= lookupTail y ys . nodeTree
         matchMultiLevelWildcard  = M.lookup multiLevelWildcard  m >>= nodeValue
         matchComponent           = M.lookup                   x m >>= lookupTail y ys . nodeTree
+
+findMaxBounded :: (RoutingTreeValue a, Ord a, Bounded a) => Topic -> RoutingTree a -> Maybe a
+findMaxBounded topic = findHead (topicLevels topic)
+  where
+    findHead (x:|xs) t@(RoutingTree m)
+      | startsWithDollar x = case xs of
+          []     -> M.lookup x m >>= nodeValue
+          (y:ys) -> M.lookup x m >>= findTail y ys . nodeTree
+      | otherwise = findTail x xs t
+    findTail x [] (RoutingTree m) =
+      matchSingleLevelWildcard `maxBounded` matchMultiLevelWildcard `maxBounded` matchComponent
+      where
+        matchSingleLevelWildcard = M.lookup singleLevelWildcard m >>= nodeValue
+        matchMultiLevelWildcard  = M.lookup multiLevelWildcard  m >>= nodeValue
+        matchComponent           = M.lookup x                   m >>= \n->
+          case M.lookup multiLevelWildcard $ branches $ nodeTree n of
+            -- component match, but no additional multiLevelWildcard below
+            Nothing -> nodeValue n
+            -- component match and multiLevelWildcard match below
+            Just n' -> nodeValue n `maxBounded` nodeValue n'
+    findTail x (y:ys) (RoutingTree m) =
+      matchSingleLevelWildcard `maxBounded` matchMultiLevelWildcard `maxBounded` matchComponent
+      where
+        matchSingleLevelWildcard = M.lookup singleLevelWildcard m >>= findTail y ys . nodeTree
+        matchMultiLevelWildcard  = M.lookup multiLevelWildcard  m >>= nodeValue
+        matchComponent           = M.lookup                   x m >>= findTail y ys . nodeTree
+
+    maxBounded :: (Ord a, Bounded a) => Maybe a -> Maybe a -> Maybe a
+    maxBounded a b
+      | a == Just maxBound = a
+      | otherwise          = max a b
 
 -- | Match a `Topic` against a `RoutingTree`.
 --

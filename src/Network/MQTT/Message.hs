@@ -45,6 +45,7 @@ import qualified Data.Text                  as T
 import qualified Data.Text.Encoding         as T
 import           Data.Word
 import qualified Network.MQTT.Topic         as TF
+import           Network.MQTT.QualityOfService
 
 type SessionPresent   = Bool
 type CleanSession     = Bool
@@ -58,12 +59,6 @@ type PacketIdentifier = Int
 
 instance Show Password where
   show = const "*********"
-
-data QualityOfService
-  = Qos0
-  | Qos1
-  | Qos2
-  deriving (Eq, Ord, Show)
 
 data ConnectionRejectReason
    = UnacceptableProtocolVersion
