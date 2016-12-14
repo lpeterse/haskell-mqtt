@@ -13,6 +13,7 @@ module Network.MQTT.Message
   , SessionPresent
   , CleanSession
   , Retain
+  , Duplicate
   , KeepAliveInterval
   , Username
   , Password (..)
@@ -74,7 +75,6 @@ data Message
    , msgBody      :: !BSL.ByteString
    , msgQos       :: !QualityOfService
    , msgRetain    :: !Retain
-   , msgDuplicate :: !Duplicate
    } deriving (Eq, Ord, Show)
 
 data ClientMessage
@@ -86,7 +86,7 @@ data ClientMessage
      , connectCredentials      :: !(Maybe (Username, Maybe Password))
      }
    | ClientConnectUnsupported
-   | ClientPublish               {-# UNPACK #-} !PacketIdentifier !Message
+   | ClientPublish               {-# UNPACK #-} !PacketIdentifier !Duplicate !Message
    | ClientPublishAcknowledged   {-# UNPACK #-} !PacketIdentifier
    | ClientPublishReceived       {-# UNPACK #-} !PacketIdentifier
    | ClientPublishRelease        {-# UNPACK #-} !PacketIdentifier
@@ -100,7 +100,7 @@ data ClientMessage
 data ServerMessage
    = ServerConnectionAccepted                            !SessionPresent
    | ServerConnectionRejected                            !ConnectionRejectReason
-   | ServerPublish                        {-# UNPACK #-} !PacketIdentifier !Message
+   | ServerPublish                        {-# UNPACK #-} !PacketIdentifier !Duplicate !Message
    | ServerPublishAcknowledged            {-# UNPACK #-} !PacketIdentifier
    | ServerPublishReceived                {-# UNPACK #-} !PacketIdentifier
    | ServerPublishRelease                 {-# UNPACK #-} !PacketIdentifier
@@ -162,7 +162,7 @@ connectParser = do
             0x08 -> pure Qos1
             0x10 -> pure Qos2
             _    -> fail "clientConnectParser: Violation of [MQTT-3.1.2-14]."
-          pure $ Message topic body qos ( y .&. 0x20 /= 0 ) False
+          pure $ Message topic body qos ( y .&. 0x20 /= 0 )
       cred  <- if y .&. 0x80 == 0
         then pure Nothing
         else Just <$> ( (,)
@@ -193,7 +193,7 @@ connectAcknowledgedParser = do
     5 -> pure $ ServerConnectionRejected NotAuthorized
     _ -> fail "serverCnnectAcknowledgedParser: Invalid (reserved) return code."
 
-publishParser :: (PacketIdentifier -> Message -> a) -> SG.Get a
+publishParser :: (PacketIdentifier -> Duplicate -> Message -> a) -> SG.Get a
 publishParser publish = do
   hflags <- SG.getWord8
   let dup = hflags .&. 0x08 /= 0 -- duplicate flag
@@ -204,22 +204,20 @@ publishParser publish = do
   if  qosBits == 0x00
     then do
       body <- SG.getLazyByteString $ fromIntegral ( len - topicLen )
-      pure $ publish (-1) Message {
+      pure $ publish (-1) dup Message {
             msgTopic     = topic
           , msgBody      = body
           , msgQos       = Qos0
-          , msgDuplicate = dup
           , msgRetain    = ret
         }
     else do
       let qos = if qosBits == 0x02 then Qos1 else Qos2
       pid  <- fromIntegral <$> SG.getWord16be
       body <- SG.getLazyByteString $ fromIntegral ( len - topicLen - 2 )
-      pure $ publish pid Message {
+      pure $ publish pid dup Message {
           msgTopic     = topic
         , msgBody      = body
         , msgQos       = qos
-        , msgDuplicate = dup
         , msgRetain    = ret
         }
 
@@ -306,7 +304,7 @@ clientMessageBuilder (ClientConnect cid cleanSession keepAlive will credentials)
     (willBuilder, willLen, willFlag) = case will of
       Nothing ->
         (mempty, 0, 0x00)
-      Just (Message t b q r _)->
+      Just (Message t b q r)->
        let tlen  = TF.topicLength t
            blen  = fromIntegral (BSL.length b)
            qflag = case q of
@@ -339,8 +337,8 @@ clientMessageBuilder (ClientConnect cid cleanSession keepAlive will credentials)
         in (x1 <> x2 <> x3 <> x4, 4 + ulen + plen, 0xc0)
 clientMessageBuilder ClientConnectUnsupported =
   BS.word8 10 <> lengthBuilder 38 <> BS.word64BE 0x00064d514973647063
-clientMessageBuilder (ClientPublish pid msg) =
-  publishBuilder pid msg
+clientMessageBuilder (ClientPublish pid dup msg) =
+  publishBuilder pid dup msg
 clientMessageBuilder (ClientPublishAcknowledged p) =
   BS.word32BE $ fromIntegral $ 0x40020000 .|. p
 clientMessageBuilder (ClientPublishReceived p) =
@@ -387,8 +385,8 @@ serverMessageBuilder (ServerConnectionRejected reason) =
     ServerUnavailable           -> 0x20020003
     BadUsernameOrPassword       -> 0x20020004
     NotAuthorized               -> 0x20020005
-serverMessageBuilder (ServerPublish pid msg) =
-  publishBuilder pid msg
+serverMessageBuilder (ServerPublish pid dup msg) =
+  publishBuilder pid dup msg
 serverMessageBuilder (ServerPublishAcknowledged p) =
   BS.word32BE $ fromIntegral $ 0x40020000 .|. p
 serverMessageBuilder (ServerPublishReceived p) =
@@ -410,8 +408,8 @@ serverMessageBuilder (ServerUnsubscribeAcknowledged p) =
 serverMessageBuilder ServerPingResponse =
   BS.word16BE 0xd000
 
-publishBuilder :: PacketIdentifier -> Message -> BS.Builder
-publishBuilder pid msg =
+publishBuilder :: PacketIdentifier -> Duplicate -> Message -> BS.Builder
+publishBuilder pid dup msg =
   BS.word8 h
   <> lengthBuilder len
   <> BS.word16BE (fromIntegral topicLen)
@@ -425,7 +423,7 @@ publishBuilder pid msg =
                  + bool 2 0 (msgQos msg == Qos0)
     h            = 0x30
                 .|. bool 0x00 0x01 (msgRetain msg)
-                .|. bool 0x00 0x08 (msgDuplicate msg)
+                .|. bool 0x00 0x08 dup
                 .|. case msgQos msg of
                       Qos0 -> 0x00
                       Qos1 -> 0x02

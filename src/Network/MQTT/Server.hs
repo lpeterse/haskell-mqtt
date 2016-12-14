@@ -225,8 +225,8 @@ handleConnection broker cfg conn connInfo = do
             E.throwIO (ProtocolViolation "Unexpected CONN packet." :: SS.ServerException (MQTT transport))
           ClientConnectUnsupported ->
             E.throwIO (ProtocolViolation "Unexpected CONN packet (of unsupported protocol version)." :: SS.ServerException (MQTT transport))
-          ClientPublish pid msg -> do
-            Session.processPublish session pid msg (Broker.publishUpstream broker session)
+          ClientPublish pid dup msg -> do
+            Session.processPublish session pid dup msg (Broker.publishUpstream broker session)
             pure False
           ClientPublishAcknowledged pid -> do
             Session.processPublishAcknowledged session pid

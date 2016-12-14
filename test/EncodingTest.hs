@@ -44,14 +44,15 @@ instance Arbitrary ClientMessage where
         <$> elements [ "", "client-identifier" ]
         <*> arbitrary
         <*> arbitrary
-        <*> oneof [ pure Nothing , Just <$> ( arbitrary >>= \msg-> pure msg { msgDuplicate = False } ) ]
+        <*> arbitrary
         <*> oneof [ pure Nothing, (Just .) . (,)
           <$> elements [ "", "username" ]
           <*> oneof [ pure Nothing, Just <$> elements [ Password "", Password "password" ] ] ]
       arbitraryPublish = do
         msg <- arbitrary
+        dup <- if msgQos msg == Qos0 then pure False else arbitrary
         pid <- if msgQos msg == Qos0 then pure (-1) else choose (0, 65535)
-        pure (ClientPublish pid msg)
+        pure (ClientPublish pid dup msg)
       arbitrarySubscribe = ClientSubscribe
         <$> choose (0, 65535)
         <*> listOf1 ((,) <$> arbitrary <*> arbitrary )
@@ -65,8 +66,9 @@ instance Arbitrary ServerMessage where
     , ServerConnectionRejected      <$> arbitrary
     , do
         msg <- arbitrary
+        dup <- if msgQos msg == Qos0 then pure False else arbitrary
         pid <- if msgQos msg == Qos0 then pure (-1) else choose (0, 65535)
-        pure (ServerPublish pid msg)
+        pure (ServerPublish pid dup msg)
     , ServerPublishAcknowledged     <$> choose (0, 65535)
     , ServerPublishReceived         <$> choose (0, 65535)
     , ServerPublishRelease          <$> choose (0, 65535)
@@ -80,7 +82,6 @@ instance Arbitrary Message where
   arbitrary = Message
     <$> arbitrary
     <*> elements [ "", "shortTopic", BSL.replicate 345 23 ]
-    <*> arbitrary
     <*> arbitrary
     <*> arbitrary
 

@@ -133,7 +133,7 @@ dequeue session =
   modifyMVar (sessionQueue session) $ \queue-> do
     let q = normalizeQueue queue
     if | not (Seq.null $ outputBuffer q) -> pure (q { outputBuffer = mempty }, outputBuffer q)
-       | not (Seq.null $ queueQos0    q) -> pure (q { queueQos0    = mempty }, fmap (ServerPublish (-1)) (queueQos0 q))
+       | not (Seq.null $ queueQos0    q) -> pure (q { queueQos0    = mempty }, fmap (ServerPublish (-1) False) (queueQos0 q))
        | otherwise                       -> clearPending >> pure (q, mempty)
   where
     -- | In case all queues are empty, we need to clear the `pending` variable.
@@ -142,15 +142,11 @@ dequeue session =
     clearPending :: IO ()
     clearPending  = void $ tryTakeMVar (sessionQueuePending session)
 
-dequeueQos0    :: ServerQueue -> (ServerQueue, Seq.Seq ServerMessage)
-dequeueQos0 queue =
-  ( queue { queueQos0 = mempty }, fmap (ServerPublish (-1)) (queueQos0 queue) )
-
 -- | Process a @PUB@ message received from the peer.
 --
 --   Different handling depending on message qos.
-processPublish :: Session auth -> PacketIdentifier -> Message -> (Message -> IO ()) -> IO ()
-processPublish session pid msg forward =
+processPublish :: Session auth -> PacketIdentifier -> Duplicate -> Message -> (Message -> IO ()) -> IO ()
+processPublish session pid _dup msg forward =
   case msgQos msg of
     Qos0 ->
       forward msg
@@ -163,7 +159,7 @@ processPublish session pid msg forward =
     Qos2 -> do
       modifyMVar_ (sessionQueue session) $ \q-> pure $! q {
           outputBuffer = outputBuffer q Seq.|> ServerPublishReceived pid
-        , notReleased   = IM.insert pid msg (notReleased q)
+        , notReleased  = IM.insert pid msg (notReleased q)
         }
       notePending session
 
@@ -248,10 +244,9 @@ resetQueue q = q {
     outputBuffer = (rePublishQos1 . rePublishQos2 . reReleaseQos2) mempty
   }
   where
-    rePublishQos1 s = IM.foldlWithKey (\s' pid msg-> s' Seq.|> ServerPublish         pid msg { msgDuplicate = True }) s (notAcknowledged q)
-    rePublishQos2 s = IM.foldlWithKey (\s' pid msg-> s' Seq.|> ServerPublish         pid msg)                         s (notReceived     q)
-    reReleaseQos2 s = IS.foldl        (\s' pid->     s' Seq.|> ServerPublishRelease  pid)                             s (notComplete     q)
-
+    rePublishQos1 s = IM.foldlWithKey (\s' pid msg-> s' Seq.|> ServerPublish         pid True msg) s (notAcknowledged q)
+    rePublishQos2 s = IM.foldlWithKey (\s' pid msg-> s' Seq.|> ServerPublish         pid True msg) s (notReceived     q)
+    reReleaseQos2 s = IS.foldl        (\s' pid->     s' Seq.|> ServerPublishRelease  pid)          s (notComplete     q)
 
 -- | This function fills the output buffer with as many messages
 --   as possible (this is limited by the available packet identifiers).
@@ -261,7 +256,7 @@ normalizeQueue = takeQos1 . takeQos2
     takeQos1 q
       | Seq.null msgs     = q
       | otherwise         = q
-        { outputBuffer    = outputBuffer q <> Seq.zipWith ServerPublish pids' msgs'
+        { outputBuffer    = outputBuffer q <> Seq.zipWith (flip ServerPublish False) pids' msgs'
         , queuePids       = pids''
         , queueQos1       = msgs''
         , notAcknowledged = foldr (uncurry IM.insert) (notAcknowledged q)
@@ -276,7 +271,7 @@ normalizeQueue = takeQos1 . takeQos2
     takeQos2 q
       | Seq.null msgs     = q
       | otherwise         = q
-        { outputBuffer    = outputBuffer q <> Seq.zipWith ServerPublish pids' msgs'
+        { outputBuffer    = outputBuffer q <> Seq.zipWith (flip ServerPublish False) pids' msgs'
         , queuePids       = pids''
         , queueQos2       = msgs''
         , notReceived     = foldr (uncurry IM.insert) (notReceived q)
