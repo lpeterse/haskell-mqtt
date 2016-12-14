@@ -21,7 +21,3 @@ instance RoutingTreeValue QualityOfService where
   nodeValue (QosNode 1 _)      = Just Qos1
   nodeValue (QosNode 2 _)      = Just Qos2
   nodeValue (QosNode _ _)      = Nothing
-  nodeFromTree                 = QosNode 3
-  nodeFromTreeAndValue t Qos0  = QosNode 0 t
-  nodeFromTreeAndValue t Qos1  = QosNode 1 t
-  nodeFromTreeAndValue t Qos2  = QosNode 2 t

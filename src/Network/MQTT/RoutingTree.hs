@@ -41,8 +41,6 @@ module Network.MQTT.RoutingTree (
   , map
   -- ** mapMaybe
   , mapMaybe
-  -- ** adjust
-  , adjust
   -- ** delete
   , delete
   -- ** union
@@ -83,8 +81,6 @@ class RoutingTreeValue a where
   nodeNull             :: a -> Bool
   nodeTree             :: RoutingTreeNode a -> RoutingTree a
   nodeValue            :: RoutingTreeNode a -> Maybe a
-  nodeFromTree         :: RoutingTree a -> RoutingTreeNode a
-  nodeFromTreeAndValue :: RoutingTree a -> a -> RoutingTreeNode a
 
 instance (RoutingTreeValue a, Monoid a) => Monoid (RoutingTree a) where
   mempty  = empty
@@ -118,8 +114,8 @@ singleton tf = singleton' (filterLevels tf)
     singleton' (x:|xs) a
       | nodeNull a  = empty
       | otherwise   = RoutingTree $ M.singleton x $ case xs of
-          []     -> nodeFromTreeAndValue empty a
-          (y:ys) -> nodeFromTree (singleton' (y:|ys) a)
+          []     -> node empty (Just a)
+          (y:ys) -> node (singleton' (y:|ys) a) Nothing
 
 insert :: RoutingTreeValue a => Filter -> a -> RoutingTree a -> RoutingTree a
 insert  = insertWith const
@@ -133,31 +129,12 @@ insertWith f tf a = insertWith' (filterLevels tf)
       where
         g mn = Just $ case xs of
           []     -> case mn of
-            Nothing -> nodeFromTreeAndValue empty a
-            Just n  -> nodeFromTreeAndValue (nodeTree n) $ fromMaybe a $ f a <$> nodeValue n
-          (y:ys) -> nodeFromTree $ insertWith' (y:|ys) $ fromMaybe empty $ nodeTree <$> mn
+            Nothing -> node empty (Just a)
+            Just n  -> node (nodeTree n) $ (f a <$> nodeValue n) <|> Just a
+          (y:ys) -> node (insertWith' (y:|ys) $ fromMaybe empty $ nodeTree <$> mn) Nothing
 
 insertFoldable :: (RoutingTreeValue a, Foldable t) => t (Filter, a) -> RoutingTree a -> RoutingTree a
 insertFoldable  = flip $ foldr $ uncurry insert
-
-adjust :: RoutingTreeValue a => (a -> a) -> Filter -> RoutingTree a -> RoutingTree a
-adjust f tf = adjust' (filterLevels tf)
-  where
-    adjust' (x:|xs) (RoutingTree m) = RoutingTree $ M.update g x m
-      where
-        g n = case xs of
-          [] -> case nodeValue n of
-            Just v  ->
-              let t' = nodeTree n; v' = f v in
-              if null t' && nodeNull v'
-                then Nothing
-                else Just $ nodeFromTreeAndValue t' v'
-            Nothing -> Just n -- nodeTree is non-empty by invariant
-          (y:ys) ->
-            let t'@(RoutingTree m') = adjust' (y:|ys) (nodeTree n) in
-            case nodeValue n of
-              Just v  -> Just $ nodeFromTreeAndValue t' v
-              Nothing -> if M.null m' then Nothing else Just (nodeFromTree t')
 
 delete :: RoutingTreeValue a => Filter -> RoutingTree a -> RoutingTree a
 delete tf = delete' (filterLevels tf)
@@ -166,28 +143,23 @@ delete tf = delete' (filterLevels tf)
       where
         g n = case xs of
           [] | null (nodeTree n) -> Nothing
-             | otherwise     -> Just $ nodeFromTree $ nodeTree n
+             | otherwise         -> Just $ node (nodeTree n) Nothing
           y:ys -> let t = delete' (y:|ys) (nodeTree n) in
            case nodeValue n of
              Nothing | null t    -> Nothing
-                     | otherwise -> Just $ nodeFromTree t
-             Just v -> Just $ nodeFromTreeAndValue t v
+                     | otherwise -> Just $ node t Nothing
+             Just v -> Just $ node t (Just v)
 
 map :: (RoutingTreeValue a, RoutingTreeValue b) => (a -> b) -> RoutingTree a -> RoutingTree b
 map f (RoutingTree m) = RoutingTree $ fmap g m
-    where
-      g n = let t = map f (nodeTree n) in case nodeValue n of
-        Nothing -> nodeFromTree t
-        Just a  -> let b = f a in
-          if nodeNull b then nodeFromTree t else nodeFromTreeAndValue t b
+  where
+    g n = let t = map f (nodeTree n) in node t (f <$> nodeValue n)
 
 -- FIXME: Review. Does not honour invariants!
 mapMaybe :: (RoutingTreeValue a, RoutingTreeValue b) => (a -> Maybe b) -> RoutingTree a -> RoutingTree b
 mapMaybe f (RoutingTree m) = RoutingTree $ fmap g m
-    where
-      g n = let t = mapMaybe f (nodeTree n) in case nodeValue n >>= f of
-        Nothing -> nodeFromTree t
-        Just b  -> nodeFromTreeAndValue t b
+  where
+    g n = let t = mapMaybe f (nodeTree n) in node t (nodeValue n >>= f)
 
 union     :: (RoutingTreeValue a, Monoid a) => RoutingTree a -> RoutingTree a -> RoutingTree a
 union (RoutingTree m1) (RoutingTree m2) = RoutingTree (M.unionWith g m1 m2)
@@ -209,9 +181,9 @@ differenceWith f (RoutingTree m1) (RoutingTree m2) = RoutingTree (M.differenceWi
     d (Just v1)  _        = Just v1
     d  _         _        = Nothing
     k t Nothing  | null t               = Nothing
-                 | otherwise            = Just (nodeFromTree t)
+                 | otherwise            = Just $ node t Nothing
     k t (Just v) | null t && nodeNull v = Nothing
-                 | otherwise            = Just (nodeFromTreeAndValue t v)
+                 | otherwise            = Just $ node t $ Just v
 
 -- | Collect all values of nodes that match a given topic (according to the
 --   matching rules specified by the MQTT protocol).
@@ -366,8 +338,6 @@ instance RoutingTreeValue IS.IntSet where
   nodeTree (IntSetRoutingTreeNode t _)  = t
   nodeValue (IntSetRoutingTreeNode _ v) | nodeNull v = Nothing
                                         | otherwise = Just v
-  nodeFromTree t                        = IntSetRoutingTreeNode t mempty
-  nodeFromTreeAndValue t v              = IntSetRoutingTreeNode t v
 
 instance RoutingTreeValue (Identity a) where
   data RoutingTreeNode (Identity a) = IdentityNode !(RoutingTree (Identity a)) !(Maybe (Identity a))
@@ -376,19 +346,15 @@ instance RoutingTreeValue (Identity a) where
   nodeNull                      = const False
   nodeTree  (IdentityNode t _)  = t
   nodeValue (IdentityNode _ mv) = mv
-  nodeFromTree t                = IdentityNode t Nothing
-  nodeFromTreeAndValue t v      = IdentityNode t $! Just $! v
 
 instance RoutingTreeValue () where
-  data RoutingTreeNode () = UnitNode {-# UNPACK #-} !Int !(RoutingTree ())
+  data RoutingTreeNode ()  = UnitNode {-# UNPACK #-} !Int !(RoutingTree ())
   node t Nothing           = UnitNode 0 t
   node t _                 = UnitNode 1 t
   nodeNull                 = const False
   nodeTree  (UnitNode _ t) = t
   nodeValue (UnitNode 0 _) = Nothing
   nodeValue (UnitNode _ _) = Just ()
-  nodeFromTree             = UnitNode 0
-  nodeFromTreeAndValue t _ = UnitNode 1 t
 
 instance RoutingTreeValue Bool where
   data RoutingTreeNode Bool = BoolNode {-# UNPACK #-} !Int !(RoutingTree Bool)
@@ -400,6 +366,3 @@ instance RoutingTreeValue Bool where
   nodeValue (BoolNode 1 _)     = Just False
   nodeValue (BoolNode 2 _)     = Just True
   nodeValue (BoolNode _ _)     = Nothing
-  nodeFromTree                 = BoolNode 0
-  nodeFromTreeAndValue t False = BoolNode 1 t
-  nodeFromTreeAndValue t True  = BoolNode 2 t
