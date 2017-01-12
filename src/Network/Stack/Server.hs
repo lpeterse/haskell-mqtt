@@ -180,7 +180,15 @@ instance (StreamServerStack a) => ServerStack (TLS a) where
           TLS.backendFlush = pure () -- backend doesn't buffer
         , TLS.backendClose = pure () -- backend gets closed automatically
         , TLS.backendSend  = void . sendStream connection
-        , TLS.backendRecv  = receiveStream connection
+        -- The following is problematic: The TLS implementation requires us
+        -- to return exactly as many bytes as requested. The underlying transport
+        -- though only yields as many bytes as available.
+        -- The solution is to read, append and loop until the request
+        -- can be fulfilled.
+        -- TODO: Use bytestring builder for concatenation.
+        -- TODO: Fix TLS library upstream. The interface is awkward for a
+        -- networking lib.
+        , TLS.backendRecv  = receiveExactly connection mempty
         }
       mvar <- newEmptyMVar
       let srvParams = tlsServerParams $ tlsServerConfig server
@@ -199,6 +207,13 @@ instance (StreamServerStack a) => ServerStack (TLS a) where
         (TlsServerConnectionInfo info certificateChain)
       TLS.bye context
       pure x
+    where
+      receiveExactly connection accum bytes = do
+        bs <- receiveStream connection bytes
+        let accum' = accum `mappend` bs
+        if BS.length bs < bytes
+          then accum' `seq` receiveExactly connection accum' (bytes - BS.length bs)
+          else pure accum'
 
 instance (StreamServerStack a) => ServerStack (WebSocket a) where
   data Server (WebSocket a) = WebSocketServer
