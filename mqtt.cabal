@@ -112,3 +112,10 @@ test-suite test
     , network-uri
     , deepseq
     , containers
+
+executable haskell-mqtt-retained-store-strictness-test
+  ghc-options:         -Wall
+  main-is:             misc/RetainedStoreStrictnessTest.hs
+  build-depends:       base >= 4.8 && <5,
+                       mqtt
+  default-language:    Haskell2010

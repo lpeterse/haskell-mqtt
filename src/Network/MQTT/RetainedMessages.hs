@@ -5,7 +5,7 @@ import           Control.Concurrent.MVar
 import           Control.Applicative  hiding (empty)
 import qualified Data.ByteString.Lazy as BSL
 import           Data.List.NonEmpty   (NonEmpty (..))
-import qualified Data.Map             as M
+import qualified Data.Map.Strict      as M
 import           Data.Maybe
 import qualified Data.Set             as S
 import qualified Network.MQTT.Message as Message
@@ -22,6 +22,7 @@ new     = RetainedStore <$> newMVar empty
 store  :: Message.Message -> RetainedStore -> IO ()
 store msg (RetainedStore mvar)
   | Message.msgRetain msg = modifyMVar_ mvar $ \tree->
+      -- The seq ($!) is important for not leaking memory!
       pure $! if BSL.null (Message.msgBody msg)
         then delete msg tree
         else insert msg tree
@@ -48,7 +49,7 @@ singleton msg =
   let l :| ls = Topic.topicLevels (Message.msgTopic msg)
   in RetainedTree (M.singleton l $ node ls)
   where
-    node []     = RetainedNode empty (Just msg)
+    node []     = RetainedNode empty $! Just $! msg
     node (x:xs) = RetainedNode (RetainedTree $ M.singleton x $ node xs) Nothing
 
 -- | The expression `union t1 t2` takes the left-biased union of `t1` and `t2`.
@@ -57,7 +58,9 @@ union (RetainedTree m1) (RetainedTree m2) =
   RetainedTree $ M.unionWith merge m1 m2
     where
       merge (RetainedNode t1 mm1) (RetainedNode t2 mm2) =
-        RetainedNode (t1 `union` t2) (mm1 <|> mm2)
+        RetainedNode (t1 `union` t2) $! case mm1 <|> mm2 of
+          Nothing -> Nothing
+          Just mm -> Just $! mm
 
 difference :: RetainedTree -> RetainedTree -> RetainedTree
 difference (RetainedTree m1) (RetainedTree m2) =
