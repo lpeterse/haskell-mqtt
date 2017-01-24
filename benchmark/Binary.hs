@@ -1,12 +1,14 @@
 {-# LANGUAGE OverloadedStrings #-}
 module Main ( main, benchmark ) where
 
-import qualified Data.Serialize.Get as SG
+import           Criterion.Main
+import qualified Data.Binary.Get         as BG
+import qualified Data.ByteString         as BS
 import qualified Data.ByteString.Builder as BS
+import qualified Data.ByteString.Lazy    as BSL
 
-import Criterion.Main
-
-import Network.MQTT.Message
+import           Network.MQTT.Topic
+import           Network.MQTT.Message
 
 main :: IO ()
 main = defaultMain benchmark
@@ -14,36 +16,34 @@ main = defaultMain benchmark
 benchmark :: [Benchmark]
 benchmark =
     [ bgroup "Binary" [
-        bgroup "Connect (without will)" $ pb $
-          Connect "client-identifier" True 65298 Nothing (Just ("username", Just "password"))
-      , bgroup "Connect (with will)" $ pb $
-          Connect "client-identifier" True 65298 (Just $ Will topic payload (Just ExactlyOnce) False) (Just ("username", Just "password"))
-      , bgroup "ConnectAcknowledgement (rejected)" $ pb $
-          ConnectAcknowledgement (Left IdentifierRejected)
-      , bgroup "ConnectAcknowledgement (accepted)" $ pb $
-          ConnectAcknowledgement (Right False)
-      , bgroup "Publish (QoS 0)" $ pb $
-          Publish True False "/another/short/topic" PublishQoS0 payload
-      , bgroup "Publish (QoS 1)" $ pb $
-          Publish True False "/another/short/topic" (PublishQoS1 True $ PacketIdentifier 2342) payload
-      , bgroup "PublishAcknowledgement" $ pb $
-          PublishAcknowledgement (PacketIdentifier 234)
-      , bgroup "Subscribe" $ pb $
-          Subscribe (PacketIdentifier 2345) [(topic, QoS1), (topic, QoS0)]
-      , bgroup "SubscribeAcknowledgement" $ pb $
-          SubscribeAcknowledgement (PacketIdentifier 2345) [Nothing, Just QoS1, Just QoS0, Nothing, Just QoS2]
-      , bgroup "Unsubscribe" $ pb $
-          Unsubscribe (PacketIdentifier 2345) [topic, topic]
+        bgroup "ClientConnect (without will)" $ pb $
+          ClientConnect "client-identifier" True 65298 Nothing credentials
+      , bgroup "ClientConnect (with will)" $ pb $
+          ClientConnect "client-identifier" True 65298 (Just message) credentials
+      , bgroup "ClientPublish" $ pb $
+          ClientPublish 65298 False message
+      , bgroup "ClientSubscribe" $ pb $
+          ClientSubscribe 65298 $ replicate 23 (filtr, Qos2)
+      , bgroup "ClientUnsubscribe" $ pb $
+          ClientUnsubscribe 65298 $ replicate 23 filtr
       ]
     ]
     where
-      topic   = "bla/foo/bar/fnord/+/gnurp"
-      payload = "ashdjahjdahskj hdas dhakjshdas dhakjshdalsjh dashdashd lashdahsad"
+      credentials = Just ("username", Just (Password "password"))
+      topic       = "bla/foo/bar/fnord/gnurp"
+      filtr       = "bla/foo/+/fnord/gnurp/#"
+      payload     = "ashdjahjdahskj hdas dhakjshdas dhakjshdalsjh dashdashd lashdahsad"
+      message     = Message {
+          msgTopic  = topic
+        , msgBody   = payload
+        , msgQos    = Qos1
+        , msgRetain = True
+        }
       pb x = [
           -- evaluate the lazy bytestring to strict normal form
-          bench "build" (nf (BS.toLazyByteString . bRawMessage) x)
-        , env (pure $ BS.toLazyByteString $ bRawMessage x) $ \bs->
+          bench "build" (nf (BS.toLazyByteString . clientMessageBuilder) x)
+        , env (pure $ BS.toLazyByteString $ clientMessageBuilder x) $ \bs->
             -- evaluate to weak head normal form (the parser must have touched
             -- everything if it could decide whether the input was valid or not)
-            bench "parse" (whnf (SG.runGetLazy pRawMessage) bs)
+            bench "parse" (whnf (BG.runGet clientMessageParser) bs)
         ]

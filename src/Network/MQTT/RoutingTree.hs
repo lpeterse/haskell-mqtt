@@ -55,7 +55,7 @@ import           Control.Applicative   ((<|>))
 import           Data.Functor.Identity
 import qualified Data.IntSet           as IS
 import           Data.List.NonEmpty    (NonEmpty (..))
-import qualified Data.Map              as M
+import qualified Data.Map.Strict       as M
 import           Data.Maybe            hiding (mapMaybe)
 import           Data.Monoid
 import qualified Data.List              as L
