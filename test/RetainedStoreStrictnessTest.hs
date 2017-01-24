@@ -9,16 +9,17 @@ import qualified Network.MQTT.RetainedMessages as Retained
 import qualified Network.MQTT.Message as M
 import qualified Network.MQTT.QualityOfService as Qos
 
+-- | This shall test whether inserting into the RetainedStore
+--   leaks memory by building up unevaluated thunks.
+--
+--   The test is supposed to be run with '+RTS -M4m'.
+--   In case of a memory leak the program will crash as
+--   the thunks would require around 300MB heap.
 main :: IO ()
 main  = do
   store <- Retained.new
   forM_ [1..1000000] $ \_i-> do
     Retained.store message store
-  performGC
-  putStrLn "Performed GC. See memory consumption now!"
-  threadDelay 100000000
-  msg' <- Retained.retrieve "abc/def" store 
-  print msg'
   where
     message :: M.Message
     message = M.Message {

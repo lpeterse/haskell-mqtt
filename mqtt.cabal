@@ -113,9 +113,18 @@ test-suite test
     , deepseq
     , containers
 
-executable haskell-mqtt-retained-store-strictness-test
-  ghc-options:         -Wall
-  main-is:             misc/RetainedStoreStrictnessTest.hs
-  build-depends:       base >= 4.8 && <5,
-                       mqtt
-  default-language:    Haskell2010
+-- This test suite runs with restricted maximum heap size.
+-- A memory leak would result in heap usage of more than 4MB
+-- leading to test failure.
+test-suite retained-store-strictness-test
+  type:
+    exitcode-stdio-1.0
+  default-language:
+    Haskell2010
+  ghc-options:
+    -Wall -with-rtsopts=-M4m
+  main-is:
+    test/RetainedStoreStrictnessTest.hs
+  build-depends:
+    base >= 4.8 && <5,
+    mqtt
