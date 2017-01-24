@@ -42,11 +42,9 @@ library
                        containers,
                        socket,
                        tls,
-                       network-uri,
                        case-insensitive,
                        x509,
                        x509-validation,
-                       random,
                        websockets,
                        hslogger
   hs-source-dirs:      src

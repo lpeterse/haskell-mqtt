@@ -143,7 +143,7 @@ connectParser :: SG.Get ClientMessage
 connectParser = do
   h <- SG.getWord8
   when (h .&. 0x0f /= 0) $
-    fail "clientConnectParser: The header flags are reserved and MUST be set to 0."
+    fail "connectParser: The header flags are reserved and MUST be set to 0."
   void lengthParser -- the remaining length is redundant in this packet type
   y <- SG.getWord64be -- get the next 8 bytes all at once and not byte per byte
   case y .&. 0xffffffffffffff00 of
@@ -161,7 +161,7 @@ connectParser = do
             0x00 -> pure Qos0
             0x08 -> pure Qos1
             0x10 -> pure Qos2
-            _    -> fail "clientConnectParser: Violation of [MQTT-3.1.2-14]."
+            _    -> fail "connectParser: Violation of [MQTT-3.1.2-14]."
           pure $ Message topic body qos ( y .&. 0x20 /= 0 )
       cred  <- if y .&. 0x80 == 0
         then pure Nothing
@@ -179,7 +179,7 @@ connectParser = do
     -- MQTT or a newer protocol version we don't know (yet).
     -- The caller shall close the connection immediately without
     -- sending any data in this case.
-    _ -> fail "clientConnectParser: Unexpected protocol initialization."
+    _ -> fail "connectParser: Unexpected protocol initialization."
 
 connectAcknowledgedParser :: SG.Get ServerMessage
 connectAcknowledgedParser = do
@@ -191,7 +191,7 @@ connectAcknowledgedParser = do
     3 -> pure $ ServerConnectionRejected ServerUnavailable
     4 -> pure $ ServerConnectionRejected BadUsernameOrPassword
     5 -> pure $ ServerConnectionRejected NotAuthorized
-    _ -> fail "serverCnnectAcknowledgedParser: Invalid (reserved) return code."
+    _ -> fail "connectAcknowledgedParser: Invalid (reserved) return code."
 
 publishParser :: (PacketIdentifier -> Duplicate -> Message -> a) -> SG.Get a
 publishParser publish = do
