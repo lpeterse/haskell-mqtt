@@ -248,7 +248,7 @@ handleConnection broker cfg conn connInfo = do
             pure False
           ClientPingRequest -> do
             Log.debugM "Server.connection.handleInput" $ "Session " ++ show (Session.sessionIdentifier session) ++ ": Received ping."
-            void $ SS.sendMessage conn ServerPingResponse
+            Session.enqueuePingResponse session
             pure False
           ClientDisconnect ->
             pure True

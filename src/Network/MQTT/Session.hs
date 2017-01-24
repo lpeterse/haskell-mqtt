@@ -98,6 +98,16 @@ publishMessages :: Foldable t => Session auth -> t Message -> IO ()
 publishMessages session msgs =
   forM_ msgs (publishMessage session)
 
+-- | Enqueue a PINGRESP to be sent as soon as the output thread is available.
+--
+--   The PINGRESP will be inserted with highest priority in front of all other enqueued messages.
+enqueuePingResponse :: Session auth -> IO ()
+enqueuePingResponse session = do
+  modifyMVar_ (sessionQueue session) $ \queue->
+    pure $! queue { outputBuffer = ServerPingResponse Seq.<| outputBuffer queue }
+  -- IMPORTANT: Notify the sending thread that something has been enqueued!
+  notePending session
+
 -- | This enqueues a message for transmission to the client. This operation does not block.
 enqueueMessage :: Session auth -> Message -> IO ()
 enqueueMessage session msg = do
