@@ -36,6 +36,7 @@ library
                        attoparsec,
                        base >=4.8 && <5,
                        bytestring,
+                       clock,
                        binary,
                        exceptions,
                        text,

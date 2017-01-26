@@ -41,6 +41,8 @@ module Network.MQTT.RoutingTree (
   , map
   -- ** mapMaybe
   , mapMaybe
+  -- ** foldl'
+  , foldl'
   -- ** delete
   , delete
   -- ** union
@@ -160,6 +162,13 @@ mapMaybe :: (RoutingTreeValue a, RoutingTreeValue b) => (a -> Maybe b) -> Routin
 mapMaybe f (RoutingTree m) = RoutingTree $ fmap g m
   where
     g n = let t = mapMaybe f (nodeTree n) in node t (nodeValue n >>= f)
+
+foldl'  :: (RoutingTreeValue b) => (a -> b -> a) -> a -> RoutingTree b -> a
+foldl' f acc (RoutingTree m) = M.foldl' g acc m
+  where
+    g acc' n = flip (foldl' f) (nodeTree n) $! case nodeValue n of
+      Nothing -> acc'
+      Just value -> f acc' value
 
 union     :: (RoutingTreeValue a, Monoid a) => RoutingTree a -> RoutingTree a -> RoutingTree a
 union (RoutingTree m1) (RoutingTree m2) = RoutingTree (M.unionWith g m1 m2)

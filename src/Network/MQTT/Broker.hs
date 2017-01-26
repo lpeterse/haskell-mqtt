@@ -19,6 +19,8 @@ module Network.MQTT.Broker
   , subscribe
   , unsubscribe
   , withSession
+  , getUptime
+  , getSessions
   , getSubscriptions
   ) where
 
@@ -26,6 +28,7 @@ import           Control.Concurrent.MVar
 import           Control.Exception
 import           Control.Monad
 import           Data.Functor.Identity
+import           Data.Int
 import qualified Data.IntMap                   as IM
 import qualified Data.IntSet                   as IS
 import qualified Data.Map                      as M
@@ -41,12 +44,14 @@ import qualified Network.MQTT.RetainedMessages as RM
 import qualified Network.MQTT.RoutingTree      as R
 import qualified Network.MQTT.Session          as Session
 import           Network.MQTT.Topic
+import           System.Clock
 import qualified System.Log.Logger             as Log
 
 data Broker auth  = Broker {
-    brokerAuthenticator    :: auth
-  , brokerRetainedStore    :: RM.RetainedStore
-  , brokerState            :: MVar (BrokerState auth)
+    brokerCreatedAt     :: Int64
+  , brokerAuthenticator :: auth
+  , brokerRetainedStore :: RM.RetainedStore
+  , brokerState         :: MVar (BrokerState auth)
   }
 
 data BrokerState auth
@@ -59,6 +64,7 @@ data BrokerState auth
 
 new :: Authenticator auth => auth -> IO (Broker auth)
 new authenticator = do
+  now <- sec <$> getTime Realtime
   rm <- RM.new
   st <-newMVar BrokerState
     { brokerMaxSessionIdentifier = 0
@@ -67,7 +73,8 @@ new authenticator = do
     , brokerPrincipals           = mempty
     }
   pure Broker {
-      brokerAuthenticator = authenticator
+      brokerCreatedAt     = now
+    , brokerAuthenticator = authenticator
     , brokerRetainedStore = rm
     , brokerState         = st
     }
@@ -212,6 +219,14 @@ unsubscribe broker session pid filters =
   where
     unsubBrokerTree  = R.insertFoldable
       ( fmap (,Identity $ Session.sessionIdentifier session) filters ) R.empty
+
+getUptime        :: Broker auth -> IO Int64
+getUptime broker = do
+  now <- sec <$> getTime Realtime
+  pure $ now - brokerCreatedAt broker
+
+getSessions      :: Broker auth -> IO (IM.IntMap (Session.Session auth))
+getSessions broker = brokerSessions <$> readMVar (brokerState broker)
 
 getSubscriptions :: Broker auth -> IO (R.RoutingTree IS.IntSet)
 getSubscriptions broker = brokerSubscriptions <$> readMVar (brokerState broker)
