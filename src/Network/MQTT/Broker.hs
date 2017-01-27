@@ -47,20 +47,21 @@ import           Network.MQTT.Topic
 import           System.Clock
 import qualified System.Log.Logger             as Log
 
-data Broker auth  = Broker {
-    brokerCreatedAt     :: Int64
-  , brokerAuthenticator :: auth
-  , brokerRetainedStore :: RM.RetainedStore
-  , brokerState         :: MVar (BrokerState auth)
-  }
+data Broker auth
+   = Broker
+   { brokerCreatedAt     :: Int64
+   , brokerAuthenticator :: auth
+   , brokerRetainedStore :: RM.RetainedStore
+   , brokerState         :: MVar (BrokerState auth)
+   }
 
 data BrokerState auth
-  =  BrokerState
-    { brokerMaxSessionIdentifier :: !Session.Identifier
-    , brokerSubscriptions        :: !(R.RoutingTree IS.IntSet)
-    , brokerSessions             :: !(IM.IntMap (Session.Session auth))
-    , brokerPrincipals           :: !(M.Map (Principal auth) (M.Map ClientIdentifier Int))
-    }
+   = BrokerState
+   { brokerMaxSessionIdentifier :: !Session.Identifier
+   , brokerSubscriptions        :: !(R.RoutingTree IS.IntSet)
+   , brokerSessions             :: !(IM.IntMap (Session.Session auth))
+   , brokerPrincipals           :: !(M.Map (Principal auth) (M.Map ClientIdentifier Int))
+   }
 
 new :: Authenticator auth => auth -> IO (Broker auth)
 new authenticator = do

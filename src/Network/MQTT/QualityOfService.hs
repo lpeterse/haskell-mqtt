@@ -1,4 +1,13 @@
 {-# LANGUAGE TypeFamilies #-}
+--------------------------------------------------------------------------------
+-- |
+-- Module      :  Network.MQTT.Message
+-- Copyright   :  (c) Lars Petersen 2016
+-- License     :  MIT
+--
+-- Maintainer  :  info@lars-petersen.net
+-- Stability   :  experimental
+--------------------------------------------------------------------------------
 module Network.MQTT.QualityOfService where
 
 import Network.MQTT.RoutingTree
