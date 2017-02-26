@@ -13,6 +13,7 @@
 module Network.MQTT.Session where
 
 import           Control.Concurrent.MVar
+import           Control.Concurrent.PrioritySemaphore
 import           Control.Monad
 import           Data.Bool
 import qualified Data.IntSet              as IS
@@ -29,6 +30,7 @@ data Session auth = Session
   { sessionPrincipal           :: !(Principal auth)
   , sessionClientIdentifier    :: !ClientIdentifier
   , sessionIdentifier          :: !Identifier
+  , sessionSemaphore           :: !PrioritySemaphore
   , sessionSubscriptions       :: !(MVar (R.RoutingTree QualityOfService))
   , sessionQueue               :: !(MVar ServerQueue)
   , sessionQueuePending        :: !(MVar ())

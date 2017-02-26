@@ -25,6 +25,7 @@ module Network.MQTT.Broker
   ) where
 
 import           Control.Concurrent.MVar
+import qualified Control.Concurrent.PrioritySemaphore as PrioritySemaphore
 import           Control.Exception
 import           Control.Monad
 import           Data.Functor.Identity
@@ -87,10 +88,26 @@ withSession broker request sessionRejectHandler sessionAcceptHandler = do
     Left _ -> sessionRejectHandler ServerUnavailable
     Right mp -> case mp of
       Nothing -> sessionRejectHandler NotAuthorized
+      -- In case the principals identity could be determined, we'll either
+      -- find an associated existing session or create a new one.
       Just principal -> bracket
+        -- Getting/creating a session eventually modifies the broker state.
         ( modifyMVar (brokerState broker) $ getSession principal (requestClientIdentifier request) )
-        (\(_present, session)-> when (requestCleanSession request) (closeSession broker session) )
-        (\(present, session)-> sessionAcceptHandler session present principal )
+        -- This is executed when the current thread terminates (on connection loss).
+        -- Cleanup actions are executed here (like removing the session when the clean session flag was set).
+        (\(_present, session)-> if requestCleanSession request
+            then closeSession broker session
+            else Session.reset session
+        )
+        -- This is where the actual connection handler code is invoked.
+        -- We're using a `PrioritySemaphore` here. This allows other threads for
+        -- this session to terminate the current one. This is usually the case
+        -- when the client loses the connection and reconnects, but we have not
+        -- yet noted the dead connection. The currently running handler thread
+        -- will receive a `ThreadKilled` exception.
+        (\(present, session)-> PrioritySemaphore.exclusively (Session.sessionSemaphore session) $
+          sessionAcceptHandler session present principal
+        )
 
 getSession :: Authenticator auth => Principal auth -> ClientIdentifier -> BrokerState auth -> IO (BrokerState auth, (SessionPresent, Session.Session auth))
 getSession principal cid st =
@@ -100,7 +117,6 @@ getSession principal cid st =
         case IM.lookup sid (brokerSessions st) of
           -- Resuming an existing session..
           Just session -> do
-            Session.reset session
             pure (st, (True, session))
           -- Orphaned session id. This is illegal state.
           Nothing -> do
@@ -113,6 +129,7 @@ getSession principal cid st =
   where
     --createSession :: IO (BrokerState auth, Session.Session)
     createSession = do
+      semaphore <- PrioritySemaphore.new
       subscriptions <- newMVar R.empty
       queue <- newMVar (Session.emptyServerQueue 1000)
       queuePending <- newEmptyMVar
@@ -121,6 +138,7 @@ getSession principal cid st =
            { Session.sessionIdentifier       = newSessionIdentifier
            , Session.sessionClientIdentifier = cid
            , Session.sessionPrincipal        = principal
+           , Session.sessionSemaphore        = semaphore
            , Session.sessionSubscriptions    = subscriptions
            , Session.sessionQueue            = queue
            , Session.sessionQueuePending     = queuePending
