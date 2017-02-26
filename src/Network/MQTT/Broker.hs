@@ -96,7 +96,7 @@ withSession broker request sessionRejectHandler sessionAcceptHandler = do
         -- This is executed when the current thread terminates (on connection loss).
         -- Cleanup actions are executed here (like removing the session when the clean session flag was set).
         (\(session, _)-> if requestCleanSession request
-            then closeSession broker (Session.sessionIdentifier session)
+            then terminateSession broker (Session.sessionIdentifier session)
             else Session.reset session
         )
         -- This is where the actual connection handler code is invoked.
@@ -152,8 +152,8 @@ getSession principal cid st =
       Log.infoM "Broker.createSession" $ "Creating new session with id " ++ show newSessionIdentifier ++ " for " ++ show principal ++ "."
       pure (newBrokerState, (newSession, False))
 
-closeSession :: Authenticator auth => Broker auth -> Session.Identifier -> IO ()
-closeSession broker sessionid =
+terminateSession :: Authenticator auth => Broker auth -> Session.Identifier -> IO ()
+terminateSession broker sessionid =
   IM.lookup sessionid <$> getSessions broker >>= \case
     -- Session does not exist (anymore). Nothing to do.
     Nothing -> pure ()
