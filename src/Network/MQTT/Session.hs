@@ -56,10 +56,10 @@ data ServerQueue
   , queueQos0           :: !(Seq.Seq Message)
   , queueQos1           :: !(Seq.Seq Message)
   , queueQos2           :: !(Seq.Seq Message)
-  , notAcknowledged     :: !(IM.IntMap Message) -- | We sent a `Qos1` message and have not yet received the @PUBACK@.
-  , notReceived         :: !(IM.IntMap Message) -- | We sent a `Qos2` message and have not yet received the @PUBREC@.
-  , notReleased         :: !(IM.IntMap Message) -- | We received as `Qos2` message, sent the @PUBREC@ and wait for the @PUBREL@.
-  , notComplete         :: !IS.IntSet           -- | We sent a @PUBREL@ and have not yet received the @PUBCOMP@.
+  , notAcknowledged     :: !(IM.IntMap Message) -- We sent a `Qos1` message and have not yet received the @PUBACK@.
+  , notReceived         :: !(IM.IntMap Message) -- We sent a `Qos2` message and have not yet received the @PUBREC@.
+  , notReleased         :: !(IM.IntMap Message) -- We received as `Qos2` message, sent the @PUBREC@ and wait for the @PUBREL@.
+  , notComplete         :: !IS.IntSet           -- We sent a @PUBREL@ and have not yet received the @PUBCOMP@.
   }
 
 emptyServerQueue :: Int -> ServerQueue

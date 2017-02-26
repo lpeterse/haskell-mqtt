@@ -152,6 +152,13 @@ getSession principal cid st =
       Log.infoM "Broker.createSession" $ "Creating new session with id " ++ show newSessionIdentifier ++ " for " ++ show principal ++ "."
       pure (newBrokerState, (newSession, False))
 
+-- | Terminate a session.
+--
+--   * An eventually connected client gets disconnected.
+--   * The session subscriptions are removed from the subscription tree
+--     which means that it will receive no more messages.
+--   * The session will be unlinked from the broker which means
+--     that clients cannot resume it anymore under this client identifier.
 terminateSession :: Authenticator auth => Broker auth -> Session.Identifier -> IO ()
 terminateSession broker sessionid =
   IM.lookup sessionid <$> getSessions broker >>= \case
