@@ -14,9 +14,8 @@
 module Network.MQTT.Broker
   ( Broker ()
   , new
-  , publishDownstream
   , publishUpstream
-  , publishUpstream'
+  , publishDownstream
   , subscribe
   , unsubscribe
   , withSession
@@ -189,6 +188,8 @@ terminateSession broker sessionid =
                   ( brokerSubscriptions st ) subscriptions
               }
 
+-- | Inject a message downstream into the broker. It will be delivered
+--   to all subscribed sessions within this broker instance.
 publishDownstream :: Broker auth -> Message -> IO ()
 publishDownstream broker msg = do
   RM.store msg (brokerRetainedStore broker)
@@ -202,7 +203,9 @@ publishDownstream broker msg = do
 
 -- | Publish a message on the broker regarding specific permissions of the session.
 --
---   QUESTION: Where do qos 1 and 2 messages get acknowledged?
+--   * Publishing will fail silently if the session does not have the required permission.
+--   * FUTURE NOTE: In clustering mode this shall distribute the message
+--     to other brokers or upwards when the brokers form a hierarchy.
 publishUpstream :: Authenticator auth => Broker auth -> Session.Session auth -> Message -> IO ()
 publishUpstream broker session  msg = do
   isPermitted <- hasPublishPermission (brokerAuthenticator broker) (Session.sessionPrincipal session) (msgTopic msg)
@@ -211,9 +214,6 @@ publishUpstream broker session  msg = do
   if isPermitted
     then publishDownstream broker msg
     else pure ()
-
-publishUpstream' :: Broker auth -> Message -> IO ()
-publishUpstream'  = publishDownstream
 
 subscribe :: Authenticator auth => Broker auth -> Session.Session auth -> PacketIdentifier -> [(Filter, QualityOfService)] -> IO ()
 subscribe broker session pid filters = do
