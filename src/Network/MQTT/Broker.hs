@@ -1,6 +1,7 @@
 {-# LANGUAGE OverloadedStrings   #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TupleSections       #-}
+{-# LANGUAGE LambdaCase          #-}
 --------------------------------------------------------------------------------
 -- |
 -- Module      :  Network.MQTT.Broker
@@ -83,8 +84,7 @@ new authenticator = do
 
 withSession :: forall auth. (Authenticator auth) => Broker auth -> ConnectionRequest -> (ConnectionRejectReason -> IO ()) -> (Session.Session auth -> SessionPresent -> Principal auth -> IO ()) -> IO ()
 withSession broker request sessionRejectHandler sessionAcceptHandler = do
-  emp <- try $ authenticate (brokerAuthenticator broker) request :: IO (Either (AuthenticationException auth) (Maybe (Principal auth)))
-  case emp of
+  (try $ authenticate (brokerAuthenticator broker) request :: IO (Either (AuthenticationException auth) (Maybe (Principal auth)))) >>= \case
     Left _ -> sessionRejectHandler ServerUnavailable
     Right mp -> case mp of
       Nothing -> sessionRejectHandler NotAuthorized
@@ -95,8 +95,8 @@ withSession broker request sessionRejectHandler sessionAcceptHandler = do
         ( modifyMVar (brokerState broker) $ getSession principal (requestClientIdentifier request) )
         -- This is executed when the current thread terminates (on connection loss).
         -- Cleanup actions are executed here (like removing the session when the clean session flag was set).
-        (\(_present, session)-> if requestCleanSession request
-            then closeSession broker session
+        (\(session, _)-> if requestCleanSession request
+            then closeSession broker (Session.sessionIdentifier session)
             else Session.reset session
         )
         -- This is where the actual connection handler code is invoked.
@@ -105,11 +105,11 @@ withSession broker request sessionRejectHandler sessionAcceptHandler = do
         -- when the client loses the connection and reconnects, but we have not
         -- yet noted the dead connection. The currently running handler thread
         -- will receive a `ThreadKilled` exception.
-        (\(present, session)-> PrioritySemaphore.exclusively (Session.sessionSemaphore session) $
-          sessionAcceptHandler session present principal
+        (\(session, sessionPresent)-> PrioritySemaphore.exclusively (Session.sessionSemaphore session) $
+          sessionAcceptHandler session sessionPresent principal
         )
 
-getSession :: Authenticator auth => Principal auth -> ClientIdentifier -> BrokerState auth -> IO (BrokerState auth, (SessionPresent, Session.Session auth))
+getSession :: Authenticator auth => Principal auth -> ClientIdentifier -> BrokerState auth -> IO (BrokerState auth, (Session.Session auth, SessionPresent))
 getSession principal cid st =
   case M.lookup principal (brokerPrincipals st) of
     Just mcis -> case M.lookup cid mcis of
@@ -117,7 +117,7 @@ getSession principal cid st =
         case IM.lookup sid (brokerSessions st) of
           -- Resuming an existing session..
           Just session -> do
-            pure (st, (True, session))
+            pure (st, (session, True))
           -- Orphaned session id. This is illegal state.
           Nothing -> do
             Log.warningM "Broker.getSession" $ "Illegal state: Found orphanded session id " ++ show sid ++ "."
@@ -150,28 +150,37 @@ getSession principal cid st =
            , brokerPrincipals           = M.unionWith M.union (brokerPrincipals st) (M.singleton principal $ M.singleton cid newSessionIdentifier)
            }
       Log.infoM "Broker.createSession" $ "Creating new session with id " ++ show newSessionIdentifier ++ " for " ++ show principal ++ "."
-      pure (newBrokerState, (False, newSession))
+      pure (newBrokerState, (newSession, False))
 
-closeSession :: Authenticator auth => Broker auth -> Session.Session auth -> IO ()
-closeSession broker session =
-  modifyMVar_ (brokerState broker) $ \st->
-    withMVar (Session.sessionSubscriptions session) $ \subscriptions->
-      pure $ st
-        { brokerSubscriptions =
-            -- Remove the session identifier from each set that the session subscription
-            -- tree has a corresponding value for (which is ignored).
-            R.differenceWith (\b _-> Just (IS.delete (Session.sessionIdentifier session) b))
-              ( brokerSubscriptions st) subscriptions
-        , brokerSessions =
-            IM.delete
-              ( Session.sessionIdentifier session )
-              ( brokerSessions st )
-        , brokerPrincipals =
-            M.update
-              (\mcid-> let mcid' = M.delete (Session.sessionClientIdentifier session) mcid
-                              in if M.null mcid' then Nothing else Just mcid')
-              ( Session.sessionPrincipal session ) ( brokerPrincipals st )
-        }
+closeSession :: Authenticator auth => Broker auth -> Session.Identifier -> IO ()
+closeSession broker sessionid =
+  IM.lookup sessionid <$> getSessions broker >>= \case
+    -- Session does not exist (anymore). Nothing to do.
+    Nothing -> pure ()
+    Just session ->
+      -- This assures that the client gets disconnected. The code is executed
+      -- _after_ the current client handler that has terminated.
+      -- TODO Race: New clients may try to connect while we are in here.
+      -- This would not make the state inconsistent, but kill this thread.
+      -- What we need is another `exclusivelyUninterruptible` function for
+      -- the priority semaphore.
+      PrioritySemaphore.exclusively (Session.sessionSemaphore session) $
+        modifyMVarMasked_ (brokerState broker) $ \st->
+          withMVarMasked (Session.sessionSubscriptions session) $ \subscriptions->
+            pure st
+              { brokerSessions = IM.delete sessionid (brokerSessions st)
+                -- Remove the session id from the (principal, client) -> sessionid
+                -- mapping. Remove empty leaves in this mapping, too.
+              , brokerPrincipals = M.update
+                  (\mcid-> let mcid' = M.delete (Session.sessionClientIdentifier session) mcid
+                           in if M.null mcid' then Nothing else Just mcid')
+                  ( Session.sessionPrincipal session ) ( brokerPrincipals st )
+                -- Remove the session id from each set that the session
+                -- subscription tree has a corresponding value for (which is ignored).
+              , brokerSubscriptions = R.differenceWith
+                  (\b _-> Just (IS.delete sessionid b) )
+                  ( brokerSubscriptions st ) subscriptions
+              }
 
 publishDownstream :: Broker auth -> Message -> IO ()
 publishDownstream broker msg = do
