@@ -21,7 +21,8 @@ source-repository head
 
 library
   ghc-options:         -Wall
-  exposed-modules:     Network.Stack.Server,
+  exposed-modules:     Control.Concurrent.PrioritySemaphore,
+                       Network.Stack.Server,
                        Network.MQTT.Authentication,
                        Network.MQTT.Client,
                        Network.MQTT.Message,
