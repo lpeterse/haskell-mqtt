@@ -12,7 +12,7 @@
 -- Stability   :  experimental
 --------------------------------------------------------------------------------
 module Network.MQTT.Broker
-  ( Broker ()
+  ( Broker ( brokerAuthenticator )
   , new
   , publishUpstream
   , publishDownstream
@@ -38,7 +38,6 @@ import           Network.MQTT.Authentication   (AuthenticationException,
                                                 Authenticator,
                                                 ConnectionRequest (..),
                                                 Principal, authenticate,
-                                                hasPublishPermission,
                                                 hasSubscribePermission)
 import           Network.MQTT.Message
 import qualified Network.MQTT.RetainedMessages as RM
@@ -201,19 +200,13 @@ publishDownstream broker msg = do
         putStrLn "WARNING: dead session reference"
       Just session -> Session.publishMessage session msg
 
--- | Publish a message on the broker regarding specific permissions of the session.
+-- | Publish a message upstream on the broker.
 --
---   * Publishing will fail silently if the session does not have the required permission.
+--   * As long as the broker is not clustered upstream=downstream.
 --   * FUTURE NOTE: In clustering mode this shall distribute the message
 --     to other brokers or upwards when the brokers form a hierarchy.
-publishUpstream :: Authenticator auth => Broker auth -> Session.Session auth -> Message -> IO ()
-publishUpstream broker session  msg = do
-  isPermitted <- hasPublishPermission (brokerAuthenticator broker) (Session.sessionPrincipal session) (msgTopic msg)
-  Log.debugM "Broker.publishUpstream" $ show (Session.sessionPrincipal session) ++ " publishes on "
-    ++ show (msgTopic msg) ++ ": " ++ (if isPermitted then "OK" else "FORBIDDEN")
-  if isPermitted
-    then publishDownstream broker msg
-    else pure ()
+publishUpstream :: Broker auth -> Message -> IO ()
+publishUpstream = publishDownstream
 
 subscribe :: Authenticator auth => Broker auth -> Session.Session auth -> PacketIdentifier -> [(Filter, QualityOfService)] -> IO ()
 subscribe broker session pid filters = do
@@ -254,6 +247,7 @@ unsubscribe broker session pid filters =
   where
     unsubBrokerTree  = R.insertFoldable
       ( fmap (,Identity $ Session.sessionIdentifier session) filters ) R.empty
+
 
 getUptime        :: Broker auth -> IO Int64
 getUptime broker = do

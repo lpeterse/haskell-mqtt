@@ -2,7 +2,7 @@ resolver: lts-7.19
 packages:
   - '.'
 extra-deps:
-  - socket-0.8.0.0
-  - QuickCheck-2.9.2
+  - socket-0.8.0.1
+  - socket-unix-0.2.0.0
 flags: {}
 extra-package-dbs: []
