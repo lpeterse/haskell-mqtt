@@ -1,6 +1,7 @@
+{-# LANGUAGE MultiWayIf        #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE TupleSections     #-}
-{-# LANGUAGE MultiWayIf        #-}
+{-# LANGUAGE DeriveGeneric     #-}
 --------------------------------------------------------------------------------
 -- |
 -- Module      :  Network.MQTT.Session
@@ -16,26 +17,42 @@ import           Control.Concurrent.MVar
 import           Control.Concurrent.PrioritySemaphore
 import           Control.Monad
 import           Data.Bool
-import qualified Data.IntSet              as IS
-import qualified Data.IntMap              as IM
+import qualified Data.ByteString                      as BS
+import           Data.Int
+import qualified Data.IntMap                          as IM
+import qualified Data.IntSet                          as IS
 import           Data.Monoid
-import qualified Data.Sequence            as Seq
-import           Network.MQTT.Message
-import qualified Network.MQTT.RoutingTree as R
+import qualified Data.Sequence                        as Seq
 import           Network.MQTT.Authentication
+import           Network.MQTT.Message
+import qualified Network.MQTT.RoutingTree             as R
+import           GHC.Generics                      (Generic)
+import qualified Data.Binary                          as B
 
 type Identifier = Int
 
 data Session auth = Session
-  { sessionPrincipal           :: !(Principal auth)
-  , sessionClientIdentifier    :: !ClientIdentifier
-  , sessionIdentifier          :: !Identifier
-  , sessionSemaphore           :: !PrioritySemaphore
-  , sessionSubscriptions       :: !(MVar (R.RoutingTree QualityOfService))
-  , sessionQueue               :: !(MVar ServerQueue)
-  , sessionQueuePending        :: !(MVar ())
-  , sessionQueueLimitQos0      :: Int
+  { sessionIdentifier       :: !Identifier
+  , sessionClientIdentifier :: !ClientIdentifier
+  , sessionCreatedAt        :: !Int64
+  , sessionConnection       :: !(MVar Connection)
+  , sessionPrincipal        :: !(Principal auth)
+  , sessionSemaphore        :: !PrioritySemaphore
+  , sessionSubscriptions    :: !(MVar (R.RoutingTree QualityOfService))
+  , sessionQueue            :: !(MVar ServerQueue)
+  , sessionQueuePending     :: !(MVar ())
+  , sessionQueueLimitQos0   :: Int
   }
+
+data Connection = Connection
+  { connectionCreatedAt     :: !Int64
+  , connectionCleanSession  :: !Bool
+  , connectionSecure        :: !Bool
+  , connectionWebSocket     :: !Bool
+  , connectionRemoteAddress :: !(Maybe BS.ByteString)
+  } deriving (Eq, Ord, Show, Generic)
+
+instance B.Binary Connection
 
 instance Eq (Session auth) where
   (==) s1 s2 = (==) (sessionIdentifier s1) (sessionIdentifier s2)
@@ -51,15 +68,15 @@ instance (Authenticator auth) => Show (Session auth) where
 
 data ServerQueue
   = ServerQueue
-  { queuePids           :: !(Seq.Seq Int)
-  , outputBuffer        :: !(Seq.Seq ServerMessage)
-  , queueQos0           :: !(Seq.Seq Message)
-  , queueQos1           :: !(Seq.Seq Message)
-  , queueQos2           :: !(Seq.Seq Message)
-  , notAcknowledged     :: !(IM.IntMap Message) -- We sent a `Qos1` message and have not yet received the @PUBACK@.
-  , notReceived         :: !(IM.IntMap Message) -- We sent a `Qos2` message and have not yet received the @PUBREC@.
-  , notReleased         :: !(IM.IntMap Message) -- We received as `Qos2` message, sent the @PUBREC@ and wait for the @PUBREL@.
-  , notComplete         :: !IS.IntSet           -- We sent a @PUBREL@ and have not yet received the @PUBCOMP@.
+  { queuePids       :: !(Seq.Seq Int)
+  , outputBuffer    :: !(Seq.Seq ServerMessage)
+  , queueQos0       :: !(Seq.Seq Message)
+  , queueQos1       :: !(Seq.Seq Message)
+  , queueQos2       :: !(Seq.Seq Message)
+  , notAcknowledged :: !(IM.IntMap Message) -- We sent a `Qos1` message and have not yet received the @PUBACK@.
+  , notReceived     :: !(IM.IntMap Message) -- We sent a `Qos2` message and have not yet received the @PUBREC@.
+  , notReleased     :: !(IM.IntMap Message) -- We received as `Qos2` message, sent the @PUBREC@ and wait for the @PUBREL@.
+  , notComplete     :: !IS.IntSet           -- We sent a @PUBREL@ and have not yet received the @PUBCOMP@.
   }
 
 emptyServerQueue :: Int -> ServerQueue
@@ -246,6 +263,10 @@ processPublishComplete session pid = do
 getSubscriptions :: Session auth -> IO (R.RoutingTree QualityOfService)
 getSubscriptions session =
   readMVar (sessionSubscriptions session)
+
+getConnection :: Session auth -> IO (Maybe Connection)
+getConnection session =
+  tryReadMVar (sessionConnection session)
 
 getFreePacketIdentifiers :: Session auth -> IO (Seq.Seq PacketIdentifier)
 getFreePacketIdentifiers session =

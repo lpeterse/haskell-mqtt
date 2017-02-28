@@ -19,6 +19,8 @@ module Network.MQTT.Broker
   , subscribe
   , unsubscribe
   , withSession
+  , disconnectSession
+  , terminateSession
   , getUptime
   , getSessions
   , getSubscriptions
@@ -103,8 +105,19 @@ withSession broker request sessionRejectHandler sessionAcceptHandler = do
         -- when the client loses the connection and reconnects, but we have not
         -- yet noted the dead connection. The currently running handler thread
         -- will receive a `ThreadKilled` exception.
-        (\(session, sessionPresent)-> PrioritySemaphore.exclusively (Session.sessionSemaphore session) $
-          sessionAcceptHandler session sessionPresent principal
+        (\(session, sessionPresent)-> PrioritySemaphore.exclusively (Session.sessionSemaphore session) $ do
+          now <- sec <$> getTime Realtime
+          let connection = Session.Connection {
+              Session.connectionCreatedAt = now
+            , Session.connectionCleanSession = requestCleanSession request
+            , Session.connectionSecure = requestSecure request
+            , Session.connectionWebSocket = isJust (requestHttp request)
+            , Session.connectionRemoteAddress = requestRemoteAddress request
+            }
+          bracket
+            ( putMVar (Session.sessionConnection session) connection )
+            ( const $ void $ takeMVar (Session.sessionConnection session) )
+            ( const $ sessionAcceptHandler session sessionPresent principal )
         )
 
 getSession :: Authenticator auth => Principal auth -> ClientIdentifier -> BrokerState auth -> IO (BrokerState auth, (Session.Session auth, SessionPresent))
@@ -127,6 +140,8 @@ getSession principal cid st =
   where
     --createSession :: IO (BrokerState auth, Session.Session)
     createSession = do
+      now <- sec <$> getTime Realtime
+      connection <- newEmptyMVar
       semaphore <- PrioritySemaphore.new
       subscriptions <- newMVar R.empty
       queue <- newMVar (Session.emptyServerQueue 1000)
@@ -135,6 +150,8 @@ getSession principal cid st =
           newSession = Session.Session
            { Session.sessionIdentifier       = newSessionIdentifier
            , Session.sessionClientIdentifier = cid
+           , Session.sessionCreatedAt        = now
+           , Session.sessionConnection       = connection
            , Session.sessionPrincipal        = principal
            , Session.sessionSemaphore        = semaphore
            , Session.sessionSubscriptions    = subscriptions
@@ -149,6 +166,17 @@ getSession principal cid st =
            }
       Log.infoM "Broker.createSession" $ "Creating new session with id " ++ show newSessionIdentifier ++ " for " ++ show principal ++ "."
       pure (newBrokerState, (newSession, False))
+
+-- | Disconnect a session.
+disconnectSession :: Authenticator auth => Broker auth -> Session.Identifier -> IO ()
+disconnectSession broker sessionid =
+  IM.lookup sessionid <$> getSessions broker >>= \case
+    -- Session does not exist (anymore). Nothing to do.
+    Nothing -> pure ()
+    Just session ->
+      -- This assures that the client gets disconnected. The code is executed
+      -- _after_ the current client handler that has terminated.
+      PrioritySemaphore.exclusively (Session.sessionSemaphore session) (pure ())
 
 -- | Terminate a session.
 --
@@ -247,7 +275,6 @@ unsubscribe broker session pid filters =
   where
     unsubBrokerTree  = R.insertFoldable
       ( fmap (,Identity $ Session.sessionIdentifier session) filters ) R.empty
-
 
 getUptime        :: Broker auth -> IO Int64
 getUptime broker = do
