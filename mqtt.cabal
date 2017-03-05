@@ -32,6 +32,7 @@ library
                        Network.MQTT.RoutingTree,
                        Network.MQTT.Server,
                        Network.MQTT.Session,
+                       Network.MQTT.SessionStatistics,
                        Network.MQTT.QualityOfService
   build-depends:       async,
                        attoparsec,
@@ -44,6 +45,7 @@ library
                        containers,
                        socket,
                        tls,
+                       uuid,
                        case-insensitive,
                        x509,
                        x509-validation,

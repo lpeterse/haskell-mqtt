@@ -1,7 +1,7 @@
+{-# LANGUAGE LambdaCase          #-}
 {-# LANGUAGE OverloadedStrings   #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TupleSections       #-}
-{-# LANGUAGE LambdaCase          #-}
 --------------------------------------------------------------------------------
 -- |
 -- Module      :  Network.MQTT.Broker
@@ -16,6 +16,7 @@ module Network.MQTT.Broker
   , new
   , publishUpstream
   , publishDownstream
+  , publish
   , subscribe
   , unsubscribe
   , withSession
@@ -32,22 +33,33 @@ import           Control.Exception
 import           Control.Monad
 import           Data.Functor.Identity
 import           Data.Int
-import qualified Data.IntMap                   as IM
-import qualified Data.IntSet                   as IS
-import qualified Data.Map                      as M
+import qualified Data.IntMap.Strict                   as IM
+import qualified Data.IntSet                          as IS
+import qualified Data.Map.Strict                      as M
 import           Data.Maybe
-import           Network.MQTT.Authentication   (AuthenticationException,
-                                                Authenticator,
-                                                ConnectionRequest (..),
-                                                Principal, authenticate,
-                                                hasSubscribePermission)
-import           Network.MQTT.Message
-import qualified Network.MQTT.RetainedMessages as RM
-import qualified Network.MQTT.RoutingTree      as R
-import qualified Network.MQTT.Session          as Session
-import           Network.MQTT.Topic
 import           System.Clock
-import qualified System.Log.Logger             as Log
+import qualified System.Log.Logger                    as Log
+
+import           Network.MQTT.Authentication          (AuthenticationException,
+                                                       Authenticator,
+                                                       ConnectionRequest (..),
+                                                       PrincipalIdentifier,
+                                                       authenticate,
+                                                       getPrincipal,
+                                                       principalPublishPermissions,
+                                                       principalSubscribePermissions)
+import           Network.MQTT.Message                 (ClientIdentifier,
+                                                       ConnectionRejectReason (..),
+                                                       Message (..),
+                                                       PacketIdentifier,
+                                                       SessionPresent)
+import           Network.MQTT.QualityOfService        (QualityOfService)
+import qualified Network.MQTT.Message                 as Message
+import qualified Network.MQTT.RetainedMessages        as RM
+import qualified Network.MQTT.RoutingTree             as R
+import qualified Network.MQTT.Session                 as Session
+import qualified Network.MQTT.SessionStatistics       as SS
+import           Network.MQTT.Topic
 
 data Broker auth
    = Broker
@@ -59,13 +71,13 @@ data Broker auth
 
 data BrokerState auth
    = BrokerState
-   { brokerMaxSessionIdentifier :: !Session.Identifier
-   , brokerSubscriptions        :: !(R.RoutingTree IS.IntSet)
-   , brokerSessions             :: !(IM.IntMap (Session.Session auth))
-   , brokerPrincipals           :: !(M.Map (Principal auth) (M.Map ClientIdentifier Int))
+   { brokerMaxSessionIdentifier   :: !Session.Identifier
+   , brokerSubscriptions          :: !(R.RoutingTree IS.IntSet)
+   , brokerSessions               :: !(IM.IntMap (Session.Session auth))
+   , brokerSessionsByPrincipals   :: !(M.Map (PrincipalIdentifier, ClientIdentifier) Int)
    }
 
-new :: Authenticator auth => auth -> IO (Broker auth)
+new :: auth -> IO (Broker auth)
 new authenticator = do
   now <- sec <$> getTime Realtime
   rm <- RM.new
@@ -73,7 +85,7 @@ new authenticator = do
     { brokerMaxSessionIdentifier = 0
     , brokerSubscriptions        = mempty
     , brokerSessions             = mempty
-    , brokerPrincipals           = mempty
+    , brokerSessionsByPrincipals = mempty
     }
   pure Broker {
       brokerCreatedAt     = now
@@ -82,93 +94,106 @@ new authenticator = do
     , brokerState         = st
     }
 
-withSession :: forall auth. (Authenticator auth) => Broker auth -> ConnectionRequest -> (ConnectionRejectReason -> IO ()) -> (Session.Session auth -> SessionPresent -> Principal auth -> IO ()) -> IO ()
-withSession broker request sessionRejectHandler sessionAcceptHandler = do
-  (try $ authenticate (brokerAuthenticator broker) request :: IO (Either (AuthenticationException auth) (Maybe (Principal auth)))) >>= \case
+withSession :: forall auth. (Authenticator auth) => Broker auth -> ConnectionRequest -> (ConnectionRejectReason -> IO ()) -> (Session.Session auth -> SessionPresent -> IO ()) -> IO ()
+withSession broker request sessionRejectHandler sessionAcceptHandler =
+  (try $ authenticate (brokerAuthenticator broker) request :: IO (Either (AuthenticationException auth) (Maybe PrincipalIdentifier))) >>= \case
     Left _ -> sessionRejectHandler ServerUnavailable
     Right mp -> case mp of
       Nothing -> sessionRejectHandler NotAuthorized
-      -- In case the principals identity could be determined, we'll either
-      -- find an associated existing session or create a new one.
-      Just principal -> bracket
-        -- Getting/creating a session eventually modifies the broker state.
-        ( modifyMVar (brokerState broker) $ getSession principal (requestClientIdentifier request) )
-        -- This is executed when the current thread terminates (on connection loss).
-        -- Cleanup actions are executed here (like removing the session when the clean session flag was set).
-        (\(session, _)-> if requestCleanSession request
-            then terminateSession broker (Session.sessionIdentifier session)
-            else Session.reset session
-        )
-        -- This is where the actual connection handler code is invoked.
-        -- We're using a `PrioritySemaphore` here. This allows other threads for
-        -- this session to terminate the current one. This is usually the case
-        -- when the client loses the connection and reconnects, but we have not
-        -- yet noted the dead connection. The currently running handler thread
-        -- will receive a `ThreadKilled` exception.
-        (\(session, sessionPresent)-> PrioritySemaphore.exclusively (Session.sessionSemaphore session) $ do
-          now <- sec <$> getTime Realtime
-          let connection = Session.Connection {
-              Session.connectionCreatedAt = now
-            , Session.connectionCleanSession = requestCleanSession request
-            , Session.connectionSecure = requestSecure request
-            , Session.connectionWebSocket = isJust (requestHttp request)
-            , Session.connectionRemoteAddress = requestRemoteAddress request
-            }
-          bracket
-            ( putMVar (Session.sessionConnection session) connection )
-            ( const $ void $ takeMVar (Session.sessionConnection session) )
-            ( const $ sessionAcceptHandler session sessionPresent principal )
-        )
+      Just principalIdentifier -> bracket
+            -- In case the principals identity could be determined, we'll either
+            -- find an associated existing session or create a new one.
+            -- Getting/creating a session eventually modifies the broker state.
+            ( getSession broker (principalIdentifier, requestClientIdentifier request) )
+            -- This is executed when the current thread terminates (on connection loss).
+            -- Cleanup actions are executed here (like removing the session when the clean session flag was set).
+            (\case
+                Nothing -> pure ()
+                Just (session, _) -> if requestCleanSession request
+                  then terminateSession broker (Session.sessionIdentifier session)
+                  else Session.reset session
+            )
+            -- This is where the actual connection handler code is invoked.
+            -- We're using a `PrioritySemaphore` here. This allows other threads for
+            -- this session to terminate the current one. This is usually the case
+            -- when the client loses the connection and reconnects, but we have not
+            -- yet noted the dead connection. The currently running handler thread
+            -- will receive a `ThreadKilled` exception.
+            (\case
+                Nothing -> sessionRejectHandler NotAuthorized
+                Just (session, sessionPresent)->
+                  PrioritySemaphore.exclusively (Session.sessionSemaphore session) $ do
+                    now <- sec <$> getTime Realtime
+                    let connection = Session.Connection {
+                        Session.connectionCreatedAt = now
+                      , Session.connectionCleanSession = requestCleanSession request
+                      , Session.connectionSecure = requestSecure request
+                      , Session.connectionWebSocket = isJust (requestHttp request)
+                      , Session.connectionRemoteAddress = requestRemoteAddress request
+                      }
+                    bracket_
+                      ( putMVar (Session.sessionConnection session) connection )
+                      ( void $ takeMVar (Session.sessionConnection session) )
+                      ( sessionAcceptHandler session sessionPresent )
+            )
 
-getSession :: Authenticator auth => Principal auth -> ClientIdentifier -> BrokerState auth -> IO (BrokerState auth, (Session.Session auth, SessionPresent))
-getSession principal cid st =
-  case M.lookup principal (brokerPrincipals st) of
-    Just mcis -> case M.lookup cid mcis of
+-- | Either lookup or create a session if none is present (yet).
+--
+--   Principal is only looked up initially. Reconnects won't update the
+--   permissions etc. Returns Nothing in case the principal identifier cannot
+--   be mapped to a principal object.
+getSession :: Authenticator auth => Broker auth -> (PrincipalIdentifier, ClientIdentifier) -> IO (Maybe (Session.Session auth, SessionPresent))
+getSession broker pcid@(pid, cid) =
+  modifyMVar (brokerState broker) $ \st->
+    case M.lookup pcid (brokerSessionsByPrincipals st) of
       Just sid ->
         case IM.lookup sid (brokerSessions st) of
           -- Resuming an existing session..
-          Just session -> do
-            pure (st, (session, True))
+          Just session ->
+            pure (st, Just (session, True))
           -- Orphaned session id. This is illegal state.
           Nothing -> do
             Log.warningM "Broker.getSession" $ "Illegal state: Found orphanded session id " ++ show sid ++ "."
-            createSession
-      -- No session found for client identifier. Creating one.
-      Nothing -> createSession
-    -- No session entry found for principal. Creating one.
-    Nothing -> createSession
-  where
-    --createSession :: IO (BrokerState auth, Session.Session)
-    createSession = do
-      now <- sec <$> getTime Realtime
-      connection <- newEmptyMVar
-      semaphore <- PrioritySemaphore.new
-      subscriptions <- newMVar R.empty
-      queue <- newMVar (Session.emptyServerQueue 1000)
-      queuePending <- newEmptyMVar
-      let newSessionIdentifier = brokerMaxSessionIdentifier st + 1
-          newSession = Session.Session
-           { Session.sessionIdentifier       = newSessionIdentifier
-           , Session.sessionClientIdentifier = cid
-           , Session.sessionCreatedAt        = now
-           , Session.sessionConnection       = connection
-           , Session.sessionPrincipal        = principal
-           , Session.sessionSemaphore        = semaphore
-           , Session.sessionSubscriptions    = subscriptions
-           , Session.sessionQueue            = queue
-           , Session.sessionQueuePending     = queuePending
-           , Session.sessionQueueLimitQos0   = 256
-           }
-          newBrokerState = st
-           { brokerMaxSessionIdentifier = newSessionIdentifier
-           , brokerSessions             = IM.insert newSessionIdentifier newSession (brokerSessions st)
-           , brokerPrincipals           = M.unionWith M.union (brokerPrincipals st) (M.singleton principal $ M.singleton cid newSessionIdentifier)
-           }
-      Log.infoM "Broker.createSession" $ "Creating new session with id " ++ show newSessionIdentifier ++ " for " ++ show principal ++ "."
-      pure (newBrokerState, (newSession, False))
+            createSession st
+      -- No session entry found for principal. Creating one.
+      Nothing -> createSession st
+    where
+      createSession st = getPrincipal (brokerAuthenticator broker) pid >>= \case
+        Nothing -> pure (st, Nothing)
+        Just principal -> do
+          now <- sec <$> getTime Realtime
+          semaphore <- PrioritySemaphore.new
+          subscriptions <- newMVar R.empty
+          queue <- newMVar (Session.emptyServerQueue 1000)
+          queuePending <- newEmptyMVar
+          mconnection <- newEmptyMVar
+          mprincipal <- newMVar principal
+          stats <- SS.new
+          let newSessionIdentifier = brokerMaxSessionIdentifier st + 1
+              newSession = Session.Session
+               { Session.sessionIdentifier       = newSessionIdentifier
+               , Session.sessionClientIdentifier = cid
+               , Session.sessionPrincipalIdentifier = pid
+               , Session.sessionCreatedAt        = now
+               , Session.sessionConnection       = mconnection
+               , Session.sessionPrincipal        = mprincipal
+               , Session.sessionSemaphore        = semaphore
+               , Session.sessionSubscriptions    = subscriptions
+               , Session.sessionQueue            = queue
+               , Session.sessionQueuePending     = queuePending
+               , Session.sessionQueueLimitQos0   = 256
+               , Session.sessionStatistics       = stats
+               }
+              newBrokerState = st
+               { brokerMaxSessionIdentifier = newSessionIdentifier
+               , brokerSessions             = IM.insert newSessionIdentifier newSession (brokerSessions st)
+               , brokerSessionsByPrincipals = M.insert pcid newSessionIdentifier (brokerSessionsByPrincipals st)
+               }
+          Log.infoM "Broker.createSession" $ "Creating new session with id " ++ show newSessionIdentifier ++ " for " ++ show pid ++ "."
+          pure (newBrokerState, Just (newSession, False))
 
 -- | Disconnect a session.
-disconnectSession :: Authenticator auth => Broker auth -> Session.Identifier -> IO ()
+disconnectSession :: Broker auth -> Session.Identifier -> IO ()
 disconnectSession broker sessionid =
   IM.lookup sessionid <$> getSessions broker >>= \case
     -- Session does not exist (anymore). Nothing to do.
@@ -185,7 +210,7 @@ disconnectSession broker sessionid =
 --     which means that it will receive no more messages.
 --   * The session will be unlinked from the broker which means
 --     that clients cannot resume it anymore under this client identifier.
-terminateSession :: Authenticator auth => Broker auth -> Session.Identifier -> IO ()
+terminateSession :: Broker auth -> Session.Identifier -> IO ()
 terminateSession broker sessionid =
   IM.lookup sessionid <$> getSessions broker >>= \case
     -- Session does not exist (anymore). Nothing to do.
@@ -204,10 +229,10 @@ terminateSession broker sessionid =
               { brokerSessions = IM.delete sessionid (brokerSessions st)
                 -- Remove the session id from the (principal, client) -> sessionid
                 -- mapping. Remove empty leaves in this mapping, too.
-              , brokerPrincipals = M.update
-                  (\mcid-> let mcid' = M.delete (Session.sessionClientIdentifier session) mcid
-                           in if M.null mcid' then Nothing else Just mcid')
-                  ( Session.sessionPrincipal session ) ( brokerPrincipals st )
+              , brokerSessionsByPrincipals = M.delete
+                  ( Session.sessionPrincipalIdentifier session
+                  , Session.sessionClientIdentifier session)
+                  (brokerSessionsByPrincipals st)
                 -- Remove the session id from each set that the session
                 -- subscription tree has a corresponding value for (which is ignored).
               , brokerSubscriptions = R.differenceWith
@@ -236,9 +261,21 @@ publishDownstream broker msg = do
 publishUpstream :: Broker auth -> Message -> IO ()
 publishUpstream = publishDownstream
 
-subscribe :: Authenticator auth => Broker auth -> Session.Session auth -> PacketIdentifier -> [(Filter, QualityOfService)] -> IO ()
+publish   :: Broker auth -> Session.Session auth -> Message.Message -> IO ()
+publish broker session msg = do
+  principal <- readMVar (Session.sessionPrincipal session)
+  -- A topic is permitted if it yields a match in the publish permission tree.
+  if R.matchTopic (Message.msgTopic msg) (principalPublishPermissions principal)
+    then do
+      publishUpstream broker msg
+      SS.accountMessagePublished (Session.sessionStatistics session)
+    else
+      SS.accountMessageDropped (Session.sessionStatistics session)
+
+subscribe :: Broker auth -> Session.Session auth -> PacketIdentifier -> [(Filter, QualityOfService)] -> IO ()
 subscribe broker session pid filters = do
-  checkedFilters <- mapM checkPermission filters
+  principal <- readMVar (Session.sessionPrincipal session)
+  checkedFilters <- mapM (checkPermission principal) filters
   let subscribeFilters = mapMaybe (\(filtr,mqos)->(filtr,) <$> mqos) checkedFilters
       qosTree = R.insertFoldable subscribeFilters R.empty
       sidTree = R.map (const $ IS.singleton $ Session.sessionIdentifier session) qosTree
@@ -254,10 +291,8 @@ subscribe broker session pid filters = do
     forM_ checkedFilters $ \(filtr,_qos)->
        Session.publishMessages session =<< RM.retrieve filtr (brokerRetainedStore broker)
   where
-    checkPermission (filtr, qos) = do
-      isPermitted <- hasSubscribePermission (brokerAuthenticator broker) (Session.sessionPrincipal session) filtr
-      Log.debugM "Broker.subscribe" $ show (Session.sessionPrincipal session) ++ " subscribes "
-        ++ show filtr ++ " with " ++ show qos ++ ": " ++ (if isPermitted then "OK" else "FORBIDDEN")
+    checkPermission principal (filtr, qos) = do
+      let isPermitted = R.matchFilter filtr (principalSubscribePermissions principal)
       pure (filtr, if isPermitted then Just qos else Nothing)
 
 unsubscribe :: Broker auth -> Session.Session auth -> PacketIdentifier -> [Filter] -> IO ()

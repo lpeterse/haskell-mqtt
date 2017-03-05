@@ -167,9 +167,9 @@ handleConnection broker cfg conn connInfo = do
 
           -- | This part is where the threads for a connection are created
           --   (one for input, one for output and one watchdog thread).
-          sessionAcceptHandler session sessionPresent principal = do
+          sessionAcceptHandler session sessionPresent = do
             Log.infoM "Server.connection" $ "Connection accepted: Associated "
-              ++ show principal ++ (if sessionPresent then " with existing session "
+              ++ show (Session.sessionPrincipalIdentifier session) ++ (if sessionPresent then " with existing session "
               ++ show (Session.sessionIdentifier session) ++  "." else " with new session.")
             void $ SS.sendMessage conn (ServerConnectionAccepted sessionPresent)
             foldl1 race_
@@ -226,7 +226,7 @@ handleConnection broker cfg conn connInfo = do
           ClientConnectUnsupported ->
             E.throwIO (ProtocolViolation "Unexpected CONN packet (of unsupported protocol version)." :: SS.ServerException (MQTT transport))
           ClientPublish pid dup msg -> do
-            Session.processPublish session pid dup msg publish
+            Session.processPublish session pid dup msg (Broker.publish broker session)
             pure False
           ClientPublishAcknowledged pid -> do
             Session.processPublishAcknowledged session pid
@@ -235,7 +235,7 @@ handleConnection broker cfg conn connInfo = do
             Session.processPublishReceived session pid
             pure False
           ClientPublishRelease pid -> do
-            Session.processPublishRelease session pid publish
+            Session.processPublishRelease session pid (Broker.publish broker session)
             pure False
           ClientPublishComplete pid -> do
             Session.processPublishComplete session pid
@@ -252,16 +252,6 @@ handleConnection broker cfg conn connInfo = do
             pure False
           ClientDisconnect ->
             pure True
-      where
-        -- | A message is only sent upstream if the principal has publish
-        --   permission. Otherwise the message is discarded silently.
-        publish :: Message -> IO ()
-        publish msg = do
-          isPermitted <- hasPublishPermission
-            (Broker.brokerAuthenticator broker)
-            (Session.sessionPrincipal session)
-            (msgTopic msg)
-          when isPermitted (Broker.publishUpstream broker msg)
     handleOutput session = forever $ do
       -- The `waitPending` operation is blocking until messages get available.
       Session.waitPending session

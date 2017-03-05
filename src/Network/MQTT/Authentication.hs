@@ -13,12 +13,15 @@
 module Network.MQTT.Authentication where
 
 import           Control.Exception
-import qualified Data.ByteString      as BS
+import qualified Data.ByteString          as BS
 import           Data.CaseInsensitive
-import qualified Data.Text            as T
-import qualified Data.X509            as X509
+import           Data.Word
+import qualified Data.Text                as T
+import           Data.UUID                as UUID
+import qualified Data.X509                as X509
+
 import           Network.MQTT.Message
-import           Network.MQTT.Topic   as Topic
+import           Network.MQTT.RoutingTree as R
 
 -- | A peer identity optionally associated with connection/session
 --   specific information.
@@ -26,22 +29,41 @@ import           Network.MQTT.Topic   as Topic
 
 -- | An `Authenticator` is able to determine a `Principal`'s identity from a
 --   `Request`.
-class (Exception (AuthenticationException a), Eq (Principal a), Ord (Principal a), Show (Principal a)) => Authenticator a where
-  data Principal a
+class (Exception (AuthenticationException a)) => Authenticator a where
   data AuthenticatorConfig a
   -- | This `Exception` may be thrown by any operation within this class.
   --   Operations /must/ only throw this type of exception. Other exceptions
   --   won't be catched and may kill the broker.
   data AuthenticationException a
-  -- | Try to determine a `Principal`'s identity from connection `Request`.
+  -- | Create a new authenticator instance from configuration.
+  newAuthenticator       :: AuthenticatorConfig a -> IO a
+  -- | Try to determine a `Principal`'s identity from a connection `Request`.
   --
   --   The operation shall return `Nothing` in case the authentication
   --   mechanism is working, but couldn't associate an identity. It shall
-  --   throw and `AuthenticationException` in case of other problems.
-  newAuthenticator       :: AuthenticatorConfig a -> IO a
-  authenticate           :: a -> ConnectionRequest -> IO (Maybe (Principal a))
-  hasPublishPermission   :: a -> Principal a -> Topic.Topic  -> IO Bool
-  hasSubscribePermission :: a -> Principal a -> Topic.Filter -> IO Bool
+  --   throw an `AuthenticationException` in case of other problems.
+  authenticate           :: a -> ConnectionRequest -> IO (Maybe PrincipalIdentifier)
+  -- | Gets a principal by principal primary key (UUID).
+  --
+  --   The operation shall return `Nothing` in case the principal is not / no
+  --   longer available. It shall throw an `AuthenticationException` in case
+  --   of other problems.
+  getPrincipal           :: a -> PrincipalIdentifier -> IO (Maybe Principal)
+
+type PrincipalIdentifier = UUID
+
+data Principal
+   = Principal
+   { principalUsername             :: Maybe T.Text
+   , principalQuota                :: Quota
+   , principalPublishPermissions   :: R.RoutingTree ()
+   , principalSubscribePermissions :: R.RoutingTree ()
+   } deriving (Eq, Show)
+
+data Quota
+   = Quota
+   { quotaSessionTTL :: Word64
+   } deriving (Eq, Show)
 
 -- | This class defines how the information gathered from a
 --   connection request looks like. An `Authenticator` may use

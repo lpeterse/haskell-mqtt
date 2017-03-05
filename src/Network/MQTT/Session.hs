@@ -23,25 +23,29 @@ import qualified Data.IntMap                          as IM
 import qualified Data.IntSet                          as IS
 import           Data.Monoid
 import qualified Data.Sequence                        as Seq
+import           GHC.Generics                      (Generic)
+import qualified Data.Binary                          as B
+
 import           Network.MQTT.Authentication
 import           Network.MQTT.Message
 import qualified Network.MQTT.RoutingTree             as R
-import           GHC.Generics                      (Generic)
-import qualified Data.Binary                          as B
+import qualified Network.MQTT.SessionStatistics       as SS
 
 type Identifier = Int
 
 data Session auth = Session
   { sessionIdentifier       :: !Identifier
   , sessionClientIdentifier :: !ClientIdentifier
+  , sessionPrincipalIdentifier :: !PrincipalIdentifier
   , sessionCreatedAt        :: !Int64
   , sessionConnection       :: !(MVar Connection)
-  , sessionPrincipal        :: !(Principal auth)
+  , sessionPrincipal        :: !(MVar Principal)
   , sessionSemaphore        :: !PrioritySemaphore
   , sessionSubscriptions    :: !(MVar (R.RoutingTree QualityOfService))
   , sessionQueue            :: !(MVar ServerQueue)
   , sessionQueuePending     :: !(MVar ())
   , sessionQueueLimitQos0   :: Int
+  , sessionStatistics       :: SS.SessionStatistics
   }
 
 data Connection = Connection
@@ -60,10 +64,10 @@ instance Eq (Session auth) where
 instance Ord (Session auth) where
   compare s1 s2 = compare (sessionIdentifier s1) (sessionIdentifier s2)
 
-instance (Authenticator auth) => Show (Session auth) where
+instance Show (Session auth) where
   show session =
     "Session { identifier = " ++ show (sessionIdentifier session)
-    ++ ", principal = " ++ show (sessionPrincipal session)
+    ++ ", principal = " ++ show (sessionPrincipalIdentifier session)
     ++ ", client = " ++ show (sessionClientIdentifier session) ++ " }"
 
 data ServerQueue
