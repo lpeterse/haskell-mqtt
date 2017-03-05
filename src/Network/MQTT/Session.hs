@@ -45,7 +45,7 @@ data Session auth = Session
   , sessionQueue            :: !(MVar ServerQueue)
   , sessionQueuePending     :: !(MVar ())
   , sessionQueueLimitQos0   :: Int
-  , sessionStatistics       :: SS.SessionStatistics
+  , sessionStatistics       :: SS.Statistics
   }
 
 data Connection = Connection
@@ -271,6 +271,10 @@ getSubscriptions session =
 getConnection :: Session auth -> IO (Maybe Connection)
 getConnection session =
   tryReadMVar (sessionConnection session)
+
+getPrincipal  :: Session auth -> IO Principal
+getPrincipal session =
+  readMVar (sessionPrincipal session)
 
 getFreePacketIdentifiers :: Session auth -> IO (Seq.Seq PacketIdentifier)
 getFreePacketIdentifiers session =

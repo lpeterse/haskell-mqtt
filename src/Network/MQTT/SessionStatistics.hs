@@ -1,22 +1,43 @@
-module Network.MQTT.SessionStatistics where
+{-# LANGUAGE DeriveGeneric #-}
+module Network.MQTT.SessionStatistics
+  ( Statistics ()
+  , StatisticsSnapshot (..)
+  , new
+  , snapshot
+  , accountMessagePublished
+  , accountMessageDropped ) where
 
-import Control.Concurrent.MVar
-import Data.Word
+import           Control.Concurrent.MVar
+import qualified Data.Binary             as B
+import           Data.Word
+import           GHC.Generics
 
-data SessionStatistics = SessionStatistics
-   { published  :: MVar Word64
-   , dropped    :: MVar Word64
+data Statistics = Statistics
+   { stMessagesPublished :: MVar Word64
+   , stMessagesDropped   :: MVar Word64
    }
 
-new :: IO SessionStatistics
-new = SessionStatistics
+data StatisticsSnapshot = StatisticsSnapshot
+   { messagesPublished :: Word64
+   , messagesDropped   :: Word64
+   } deriving (Eq, Ord, Show, Generic)
+
+instance B.Binary StatisticsSnapshot
+
+new :: IO Statistics
+new = Statistics
   <$> newMVar 0
   <*> newMVar 0
 
-accountMessagePublished :: SessionStatistics -> IO ()
-accountMessagePublished ss =
-  modifyMVar_ (published ss) $ \i-> pure $! i + 1
+snapshot :: Statistics -> IO StatisticsSnapshot
+snapshot st = StatisticsSnapshot
+  <$> readMVar (stMessagesPublished st)
+  <*> readMVar (stMessagesDropped st)
 
-accountMessageDropped   :: SessionStatistics -> IO ()
+accountMessagePublished :: Statistics -> IO ()
+accountMessagePublished ss =
+  modifyMVar_ (stMessagesPublished ss) $ \i-> pure $! i + 1
+
+accountMessageDropped   :: Statistics -> IO ()
 accountMessageDropped ss =
-  modifyMVar_ (dropped ss) $ \i-> pure $! i + 1
+  modifyMVar_ (stMessagesDropped ss) $ \i-> pure $! i + 1

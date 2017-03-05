@@ -1,3 +1,4 @@
+{-# LANGUAGE DeriveGeneric     #-}
 {-# LANGUAGE FlexibleContexts  #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE TypeFamilies      #-}
@@ -13,12 +14,14 @@
 module Network.MQTT.Authentication where
 
 import           Control.Exception
+import qualified Data.Binary              as B
 import qualified Data.ByteString          as BS
 import           Data.CaseInsensitive
-import           Data.Word
 import qualified Data.Text                as T
 import           Data.UUID                as UUID
+import           Data.Word
 import qualified Data.X509                as X509
+import           GHC.Generics
 
 import           Network.MQTT.Message
 import           Network.MQTT.RoutingTree as R
@@ -62,8 +65,14 @@ data Principal
 
 data Quota
    = Quota
-   { quotaSessionTTL :: Word64
-   } deriving (Eq, Show)
+   { quotaSessionTTL           :: Word64
+   , quotaMaxInflightMessages  :: Word64
+   , quotaMaxQueueSizeQos0     :: Word64
+   , quotaMaxQueueSizeQos1     :: Word64
+   , quotaMaxQueueSizeQos2     :: Word64
+   } deriving (Eq, Ord, Show, Generic)
+
+instance B.Binary Quota
 
 -- | This class defines how the information gathered from a
 --   connection request looks like. An `Authenticator` may use
