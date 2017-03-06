@@ -81,9 +81,9 @@ instance Arbitrary ServerPacket where
 instance Arbitrary Message where
   arbitrary = Message
     <$> arbitrary
+    <*> arbitrary
+    <*> arbitrary
     <*> elements [ "", "shortTopic", Payload $ BSL.replicate 345 23 ]
-    <*> arbitrary
-    <*> arbitrary
 
 instance Arbitrary PacketIdentifier where
   arbitrary = PacketIdentifier <$> choose (0, 65535)

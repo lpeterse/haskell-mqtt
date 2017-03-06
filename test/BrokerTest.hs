@@ -63,7 +63,7 @@ getTestTree =
           broker <- Broker.new $ TestAuthenticator authenticatorConfigAllAccess
           let req1 = connectionRequest { requestClientIdentifier = "1" }
               req2 = connectionRequest { requestClientIdentifier = "2" }
-              msg  = Message.Message "a/b" "" QoS0 (Retain False)
+              msg  = Message.Message "a/b" QoS0 (Retain False) ""
           Broker.withSession broker req1 (const $ pure ()) $ \session1 _ ->
             Broker.withSession broker req2 (const $ pure ()) $ \session2 _ -> do
               Broker.subscribe broker session1 (PacketIdentifier 42) [("a/b", QoS0)]
@@ -77,8 +77,8 @@ getTestTree =
       , testCase "get retained message on subscription (newer overrides older, issue #6)" $ do
           broker <- Broker.new $ TestAuthenticator authenticatorConfigAllAccess
           let req1 = connectionRequest { requestClientIdentifier = "1" }
-              msg1 = Message.Message "topic" "test"  QoS0 (Retain True)
-              msg2 = Message.Message "topic" "toast" QoS0 (Retain True)
+              msg1 = Message.Message "topic" QoS0 (Retain True) "test"
+              msg2 = Message.Message "topic" QoS0 (Retain True) "toast"
           Broker.withSession broker req1 (const $ pure ()) $ \session1 _-> do
             Broker.publishDownstream broker msg1
             Broker.publishDownstream broker msg2
@@ -89,8 +89,8 @@ getTestTree =
       , testCase "delete retained message when body is empty" $ do
           broker <- Broker.new $ TestAuthenticator authenticatorConfigAllAccess
           let req1 = connectionRequest { requestClientIdentifier = "1" }
-              msg1 = Message.Message "topic" "test"  QoS0 (Retain True)
-              msg2 = Message.Message "topic" ""      QoS0 (Retain True)
+              msg1 = Message.Message "topic" QoS0 (Retain True) "test"
+              msg2 = Message.Message "topic" QoS0 (Retain True) ""
           Broker.withSession broker req1 (const $ pure ()) $ \session1 _ -> do
             Broker.publishDownstream broker msg1
             Broker.publishDownstream broker msg2
@@ -101,7 +101,7 @@ getTestTree =
     , testGroup "Quality of Service"
 
       [ testCase "transmit a QoS1 message and process acknowledgement" $ do
-          let msg = Message.Message "topic" "body" QoS1 (Retain False)
+          let msg = Message.Message "topic" QoS1 (Retain False) "payload"
               pid = PacketIdentifier 0
           broker <- Broker.new $ TestAuthenticator authenticatorConfigAllAccess
           Broker.withSession broker connectionRequest (const $ pure ()) $ \session _-> do
@@ -116,7 +116,7 @@ getTestTree =
             assertEqual "The packet is expected in the output queue." (Seq.fromList [ ServerPublish pid (Duplicate False) msg ]) queue
 
       , testCase "receive a QoS1 message and send acknowledgement" $ do
-          let msg = Message.Message "topic" "body" QoS1 (Retain False)
+          let msg = Message.Message "topic" QoS1 (Retain False) "payload"
               pid = PacketIdentifier 0
           broker <- Broker.new $ TestAuthenticator authenticatorConfigAllAccess
           Broker.withSession broker connectionRequest (const $ pure ()) $ \session _-> do
@@ -132,7 +132,7 @@ getTestTree =
 
       , testCase "transmit a QoS1 message and retransmit after connection failure" $ do
           let req = connectionRequest { requestCleanSession = False }
-              msg = Message.Message "topic" "body" QoS1 (Retain False)
+              msg = Message.Message "topic" QoS1 (Retain False) "payload"
               pid = PacketIdentifier 0
           broker <- Broker.new $ TestAuthenticator authenticatorConfigAllAccess
           Broker.withSession broker req (const $ pure ()) $ \session present-> do
@@ -146,7 +146,7 @@ getTestTree =
             assertEqual "The message shall again be in the output queue, and must not be marked duplicate." (Seq.fromList [ ServerPublish pid (Duplicate True) msg ]) queue
 
       , testCase "transmit a QoS2 message and process confirmations" $ do
-          let msg = Message.Message "topic" "body" QoS2 (Retain False)
+          let msg = Message.Message "topic" QoS2 (Retain False) "payload"
               pid = PacketIdentifier 0
           broker <- Broker.new $ TestAuthenticator authenticatorConfigAllAccess
           Broker.withSession broker connectionRequest (const $ pure ()) $ \session _-> do
@@ -167,7 +167,7 @@ getTestTree =
 
       , testCase "transmit a QoS2 message and handle retransmissions on connection failure" $ do
           let req = connectionRequest { requestCleanSession = False }
-              msg = Message.Message "topic" "body" QoS2 (Retain False)
+              msg = Message.Message "topic" QoS2 (Retain False) "payload"
               pid = PacketIdentifier 0
           broker <- Broker.new $ TestAuthenticator authenticatorConfigAllAccess
           Broker.withSession broker req (const $ pure ()) $ \session _-> do
