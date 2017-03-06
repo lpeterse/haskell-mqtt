@@ -23,14 +23,15 @@ import qualified Data.ByteString             as BS
 import           Data.Int
 import           Data.IORef
 import           Data.Typeable
-import           Network.MQTT.Authentication
-import qualified Network.MQTT.Broker         as Broker
-import           Network.MQTT.Message
-import qualified Network.MQTT.Session        as Session
 import qualified Network.Stack.Server        as SS
 import qualified Network.WebSockets          as WS
 import qualified System.Log.Logger           as Log
 import qualified System.Socket               as S
+
+import           Network.MQTT.Authentication
+import qualified Network.MQTT.Broker         as Broker
+import           Network.MQTT.Message
+import qualified Network.MQTT.Session        as Session
 
 instance (Typeable transport) => E.Exception (SS.ServerException (MQTT transport))
 
@@ -101,17 +102,17 @@ instance (SS.StreamServerStack transport) => SS.ServerStack (MQTT transport) whe
 
 -- TODO: eventually too strict with message size tracking
 instance (SS.StreamServerStack transport) => SS.MessageServerStack (MQTT transport) where
-  type ClientMessage (MQTT transport) = ClientMessage
-  type ServerMessage (MQTT transport) = ServerMessage
+  type ClientMessage (MQTT transport) = ClientPacket
+  type ServerMessage (MQTT transport) = ServerPacket
   sendMessage connection =
-    SS.sendStreamBuilder (mqttTransportConnection connection) 8192 . serverMessageBuilder
+    SS.sendStreamBuilder (mqttTransportConnection connection) 8192 . serverPacketBuilder
   sendMessages connection msgs =
-    SS.sendStreamBuilder (mqttTransportConnection connection) 8192 $ foldl (\b m-> b `mappend` serverMessageBuilder m) mempty msgs
+    SS.sendStreamBuilder (mqttTransportConnection connection) 8192 $ foldl (\b m-> b `mappend` serverPacketBuilder m) mempty msgs
   receiveMessage connection maxMsgSize =
     modifyMVar (mqttTransportLeftover connection) (execute 0 . SG.pushChunk decode)
     where
       fetch  = SS.receiveStream (mqttTransportConnection connection) 4096
-      decode = SG.runGetIncremental clientMessageParser
+      decode = SG.runGetIncremental clientPacketParser
       execute received result
         | received > maxMsgSize = E.throwIO (MessageTooLong :: SS.ServerException (MQTT transport))
         | otherwise = case result of
@@ -128,7 +129,7 @@ instance (SS.StreamServerStack transport) => SS.MessageServerStack (MQTT transpo
     modifyMVar_ (mqttTransportLeftover connection) (execute 0 . SG.pushChunk decode)
     where
       fetch  = SS.receiveStream (mqttTransportConnection connection) 4096
-      decode = SG.runGetIncremental clientMessageParser
+      decode = SG.runGetIncremental clientPacketParser
       execute received result
         | received > maxMsgSize = E.throwIO (MessageTooLong :: SS.ServerException (MQTT transport))
         | otherwise = case result of

@@ -27,13 +27,13 @@ library
                        Network.MQTT.Message,
                        Network.MQTT.RetainedMessages,
                        Network.MQTT.Broker,
-                       Network.MQTT.Topic,
                        Network.MQTT.RoutingTree,
                        Network.MQTT.Server,
                        Network.MQTT.Session,
-                       Network.MQTT.SessionStatistics,
-                       Network.MQTT.QualityOfService
-  other-modules:       Control.Concurrent.PrioritySemaphore
+                       Network.MQTT.SessionStatistics
+  other-modules:       Control.Concurrent.PrioritySemaphore,
+                       Network.MQTT.Message.QualityOfService,
+                       Network.MQTT.Message.Topic
   build-depends:       async,
                        attoparsec,
                        base >=4.8 && <5,

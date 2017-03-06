@@ -10,16 +10,17 @@
 --------------------------------------------------------------------------------
 module Network.MQTT.RetainedMessages where
 
+import           Control.Applicative        hiding (empty)
 import           Control.Concurrent.MVar
-import           Control.Applicative  hiding (empty)
-import qualified Data.ByteString.Lazy as BSL
-import           Data.List.NonEmpty   (NonEmpty (..))
-import qualified Data.Map.Strict      as M
+import qualified Data.ByteString.Lazy       as BSL
+import           Data.List.NonEmpty         (NonEmpty (..))
+import qualified Data.Map.Strict            as M
 import           Data.Maybe
-import qualified Data.Set             as S
-import qualified Network.MQTT.Message as Message
-import qualified Network.MQTT.Topic   as Topic
-import Prelude hiding (null)
+import qualified Data.Set                   as S
+import           Prelude                    hiding (null)
+
+import qualified Network.MQTT.Message       as Message
+import qualified Network.MQTT.Message.Topic as Topic
 
 newtype RetainedStore = RetainedStore { unstore :: MVar RetainedTree }
 newtype RetainedTree  = RetainedTree  { untree :: M.Map Topic.Level RetainedNode }
@@ -105,4 +106,4 @@ lookupFilter filtr t =
     pathNode (x:xs) (RetainedNode subtree mmsg) =
       case x of
         "#"-> fromMaybe id (S.insert <$> mmsg) (collect x xs subtree)
-        _  -> collect x xs subtree
+        _   -> collect x xs subtree

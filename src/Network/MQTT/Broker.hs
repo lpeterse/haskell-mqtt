@@ -28,40 +28,39 @@ module Network.MQTT.Broker
   ) where
 
 import           Control.Concurrent.MVar
-import qualified Control.Concurrent.PrioritySemaphore as PrioritySemaphore
+import qualified Control.Concurrent.PrioritySemaphore  as PrioritySemaphore
 import           Control.Exception
 import           Control.Monad
 import           Data.Functor.Identity
 import           Data.Int
-import qualified Data.IntMap.Strict                   as IM
-import qualified Data.IntSet                          as IS
-import qualified Data.Map.Strict                      as M
+import qualified Data.IntMap.Strict                    as IM
+import qualified Data.IntSet                           as IS
+import qualified Data.Map.Strict                       as M
 import           Data.Maybe
 import           System.Clock
-import qualified System.Log.Logger                    as Log
+import qualified System.Log.Logger                     as Log
 
-import           Network.MQTT.Authentication          (AuthenticationException,
-                                                       Authenticator,
-                                                       ConnectionRequest (..),
-                                                       PrincipalIdentifier,
-                                                       authenticate,
-                                                       getPrincipal,
-                                                       principalQuota,
-                                                       principalPublishPermissions,
-                                                       principalSubscribePermissions,
-                                                       Quota (..))
-import           Network.MQTT.Message                 (ClientIdentifier,
-                                                       ConnectionRejectReason (..),
-                                                       Message (..),
-                                                       PacketIdentifier,
-                                                       SessionPresent (..))
-import           Network.MQTT.QualityOfService        (QualityOfService)
-import qualified Network.MQTT.Message                 as Message
-import qualified Network.MQTT.RetainedMessages        as RM
-import qualified Network.MQTT.RoutingTree             as R
-import qualified Network.MQTT.Session                 as Session
-import qualified Network.MQTT.SessionStatistics       as SS
-import           Network.MQTT.Topic
+import           Network.MQTT.Authentication           (AuthenticationException,
+                                                        Authenticator,
+                                                        ConnectionRequest (..),
+                                                        PrincipalIdentifier,
+                                                        Quota (..),
+                                                        authenticate,
+                                                        getPrincipal,
+                                                        principalPublishPermissions,
+                                                        principalQuota,
+                                                        principalSubscribePermissions)
+import           Network.MQTT.Message                  (ClientIdentifier, ConnectionRejectReason (..),
+                                                        Message (..),
+                                                        PacketIdentifier,
+                                                        SessionPresent (..))
+import qualified Network.MQTT.Message                  as Message
+import           Network.MQTT.Message.QualityOfService (QualityOfService)
+import           Network.MQTT.Message.Topic
+import qualified Network.MQTT.RetainedMessages         as RM
+import qualified Network.MQTT.RoutingTree              as R
+import qualified Network.MQTT.Session                  as Session
+import qualified Network.MQTT.SessionStatistics        as SS
 
 data Broker auth
    = Broker

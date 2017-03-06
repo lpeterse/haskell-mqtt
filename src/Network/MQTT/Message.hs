@@ -11,14 +11,14 @@
 -- Stability   :  experimental
 --------------------------------------------------------------------------------
 module Network.MQTT.Message (
-  -- * ClientMessage
-    ClientMessage (..)
-  , clientMessageBuilder
-  , clientMessageParser
-  -- * ServerMessage
-  , ServerMessage (..)
-  , serverMessageBuilder
-  , serverMessageParser
+  -- * ClientPacket
+    ClientPacket (..)
+  , clientPacketBuilder
+  , clientPacketParser
+  -- * ServerPacket
+  , ServerPacket (..)
+  , serverPacketBuilder
+  , serverPacketParser
   -- * Other types
   -- ** PacketIdentifier
   , PacketIdentifier (..)
@@ -51,21 +51,21 @@ module Network.MQTT.Message (
   ) where
 
 import           Control.Monad
-import qualified Data.Attoparsec.ByteString    as A
-import qualified Data.Binary.Get               as SG
+import qualified Data.Attoparsec.ByteString            as A
+import qualified Data.Binary.Get                       as SG
 import           Data.Bits
 import           Data.Bool
-import qualified Data.ByteString               as BS
-import qualified Data.ByteString.Builder       as BS
-import qualified Data.ByteString.Lazy          as BSL
+import qualified Data.ByteString                       as BS
+import qualified Data.ByteString.Builder               as BS
+import qualified Data.ByteString.Lazy                  as BSL
 import           Data.Monoid
 import           Data.String
-import qualified Data.Text                     as T
-import qualified Data.Text.Encoding            as T
+import qualified Data.Text                             as T
+import qualified Data.Text.Encoding                    as T
 import           Data.Word
 
-import           Network.MQTT.QualityOfService
-import qualified Network.MQTT.Topic            as TF
+import           Network.MQTT.Message.QualityOfService
+import qualified Network.MQTT.Message.Topic            as TF
 
 newtype SessionPresent    = SessionPresent Bool      deriving (Eq, Ord, Show)
 newtype CleanSession      = CleanSession Bool        deriving (Eq, Ord, Show)
@@ -96,7 +96,7 @@ data Message
    , msgRetain :: !Retain
    } deriving (Eq, Ord, Show)
 
-data ClientMessage
+data ClientPacket
    = ClientConnect
      { connectClientIdentifier :: !ClientIdentifier
      , connectCleanSession     :: !CleanSession
@@ -116,7 +116,7 @@ data ClientMessage
    | ClientDisconnect
    deriving (Eq, Show)
 
-data ServerMessage
+data ServerPacket
    = ServerConnectionAccepted                            !SessionPresent
    | ServerConnectionRejected                            !ConnectionRejectReason
    | ServerPublish                        {-# UNPACK #-} !PacketIdentifier !Duplicate !Message
@@ -129,8 +129,8 @@ data ServerMessage
    | ServerPingResponse
    deriving (Eq, Show)
 
-clientMessageParser :: SG.Get ClientMessage
-clientMessageParser =
+clientPacketParser :: SG.Get ClientPacket
+clientPacketParser =
   SG.lookAhead SG.getWord8 >>= \h-> case h .&. 0xf0 of
     0x10 -> connectParser
     0x30 -> publishParser      ClientPublish
@@ -142,10 +142,10 @@ clientMessageParser =
     0xa0 -> unsubscribeParser
     0xc0 -> pingRequestParser
     0xe0 -> disconnectParser
-    _    -> fail "clientMessageParser: Invalid message type."
+    _    -> fail "clientPacketParser: Invalid message type."
 
-serverMessageParser :: SG.Get ServerMessage
-serverMessageParser =
+serverPacketParser :: SG.Get ServerPacket
+serverPacketParser =
   SG.lookAhead SG.getWord8 >>= \h-> case h .&. 0xf0 of
     0x20 -> connectAcknowledgedParser
     0x30 -> publishParser      ServerPublish
@@ -156,9 +156,9 @@ serverMessageParser =
     0xb0 -> acknowledgedParser ServerUnsubscribeAcknowledged
     0x90 -> subscribeAcknowledgedParser
     0xd0 -> pingResponseParser
-    _    -> fail "serverMessageParser: Packet type not implemented."
+    _    -> fail "serverPacketParser: Packet type not implemented."
 
-connectParser :: SG.Get ClientMessage
+connectParser :: SG.Get ClientPacket
 connectParser = do
   h <- SG.getWord8
   when (h .&. 0x0f /= 0) $
@@ -201,7 +201,7 @@ connectParser = do
     -- sending any data in this case.
     _ -> fail "connectParser: Unexpected protocol initialization."
 
-connectAcknowledgedParser :: SG.Get ServerMessage
+connectAcknowledgedParser :: SG.Get ServerPacket
 connectAcknowledgedParser = do
   x <- SG.getWord32be
   case x .&. 0xff of
@@ -247,7 +247,7 @@ acknowledgedParser f = do
   pure $ f $ PacketIdentifier $ fromIntegral $ w32 .&. 0xffff
 {-# INLINE acknowledgedParser #-}
 
-subscribeParser :: SG.Get ClientMessage
+subscribeParser :: SG.Get ClientPacket
 subscribeParser = do
   void SG.getWord8
   rlen <- lengthParser
@@ -266,7 +266,7 @@ subscribeParser = do
         0x02 -> pure Qos2
         _    -> fail "clientSubscribeParser: Violation of [MQTT-3.8.3-4]."
 
-unsubscribeParser :: SG.Get ClientMessage
+unsubscribeParser :: SG.Get ClientPacket
 unsubscribeParser = do
   void SG.getWord8
   rlen <- lengthParser
@@ -279,7 +279,7 @@ unsubscribeParser = do
           (filtr,len) <- filterParser
           parseFilters ( r - len ) ( filtr : accum )
 
-subscribeAcknowledgedParser :: SG.Get ServerMessage
+subscribeAcknowledgedParser :: SG.Get ServerPacket
 subscribeAcknowledgedParser = do
   void SG.getWord8
   rlen <- lengthParser
@@ -291,26 +291,26 @@ subscribeAcknowledgedParser = do
     f 0x02 = Just Qos2
     f    _ = Nothing
 
-pingRequestParser :: SG.Get ClientMessage
+pingRequestParser :: SG.Get ClientPacket
 pingRequestParser = do
   void SG.getWord16be
   pure ClientPingRequest
 {-# INLINE pingRequestParser #-}
 
-pingResponseParser :: SG.Get ServerMessage
+pingResponseParser :: SG.Get ServerPacket
 pingResponseParser = do
   void SG.getWord16be
   pure ServerPingResponse
 {-# INLINE pingResponseParser #-}
 
-disconnectParser :: SG.Get ClientMessage
+disconnectParser :: SG.Get ClientPacket
 disconnectParser = do
   void SG.getWord16be
   pure ClientDisconnect
 {-# INLINE disconnectParser #-}
 
-clientMessageBuilder :: ClientMessage -> BS.Builder
-clientMessageBuilder (ClientConnect
+clientPacketBuilder :: ClientPacket -> BS.Builder
+clientPacketBuilder (ClientConnect
     (ClientIdentifier cid)
     (CleanSession cleanSession)
     (KeepAliveInterval keepAlive) will credentials) =
@@ -358,19 +358,19 @@ clientMessageBuilder (ClientConnect
             x3   = BS.word16BE (fromIntegral plen)
             x4   = BS.byteString p
         in (x1 <> x2 <> x3 <> x4, 4 + ulen + plen, 0xc0)
-clientMessageBuilder ClientConnectUnsupported =
+clientPacketBuilder ClientConnectUnsupported =
   BS.word8 10 <> lengthBuilder 38 <> BS.word64BE 0x00064d514973647063
-clientMessageBuilder (ClientPublish pid dup msg) =
+clientPacketBuilder (ClientPublish pid dup msg) =
   publishBuilder pid dup msg
-clientMessageBuilder (ClientPublishAcknowledged (PacketIdentifier pid)) =
+clientPacketBuilder (ClientPublishAcknowledged (PacketIdentifier pid)) =
   BS.word32BE $ fromIntegral $ 0x40020000 .|. pid
-clientMessageBuilder (ClientPublishReceived (PacketIdentifier pid)) =
+clientPacketBuilder (ClientPublishReceived (PacketIdentifier pid)) =
   BS.word32BE $ fromIntegral $ 0x50020000 .|. pid
-clientMessageBuilder (ClientPublishRelease (PacketIdentifier pid)) =
+clientPacketBuilder (ClientPublishRelease (PacketIdentifier pid)) =
   BS.word32BE $ fromIntegral $ 0x62020000 .|. pid
-clientMessageBuilder (ClientPublishComplete (PacketIdentifier pid)) =
+clientPacketBuilder (ClientPublishComplete (PacketIdentifier pid)) =
   BS.word32BE $ fromIntegral $ 0x70020000 .|. pid
-clientMessageBuilder (ClientSubscribe (PacketIdentifier pid) filters) =
+clientPacketBuilder (ClientSubscribe (PacketIdentifier pid) filters) =
   BS.word8 0x82 <> lengthBuilder len <> BS.word16BE (fromIntegral pid)
                                      <> mconcat (fmap filterBuilder filters)
   where
@@ -383,7 +383,7 @@ clientMessageBuilder (ClientSubscribe (PacketIdentifier pid) filters) =
           Qos1 -> 0x01
           Qos2 -> 0x02
     len  = 2  + sum ( map ( (+3) . TF.filterLength . fst ) filters )
-clientMessageBuilder (ClientUnsubscribe (PacketIdentifier pid) filters) =
+clientPacketBuilder (ClientUnsubscribe (PacketIdentifier pid) filters) =
   BS.word8 0xa2 <> lengthBuilder len <> BS.word16BE (fromIntegral pid)
                                      <> mconcat ( map filterBuilder filters )
   where
@@ -392,33 +392,33 @@ clientMessageBuilder (ClientUnsubscribe (PacketIdentifier pid) filters) =
         fb = TF.filterBuilder f
         fl = TF.filterLength  f
     len  = 2  + sum ( map ( (+2) . TF.filterLength ) filters )
-clientMessageBuilder ClientPingRequest =
+clientPacketBuilder ClientPingRequest =
   BS.word16BE 0xc000
-clientMessageBuilder ClientDisconnect =
+clientPacketBuilder ClientDisconnect =
   BS.word16BE 0xe000
 
-serverMessageBuilder :: ServerMessage -> BS.Builder
-serverMessageBuilder (ServerConnectionAccepted (SessionPresent sessionPresent))
+serverPacketBuilder :: ServerPacket -> BS.Builder
+serverPacketBuilder (ServerConnectionAccepted (SessionPresent sessionPresent))
   | sessionPresent   = BS.word32BE 0x20020100
   | otherwise        = BS.word32BE 0x20020000
-serverMessageBuilder (ServerConnectionRejected reason) =
+serverPacketBuilder (ServerConnectionRejected reason) =
   BS.word32BE $ case reason of
     UnacceptableProtocolVersion -> 0x20020001
     IdentifierRejected          -> 0x20020002
     ServerUnavailable           -> 0x20020003
     BadUsernameOrPassword       -> 0x20020004
     NotAuthorized               -> 0x20020005
-serverMessageBuilder (ServerPublish pid dup msg) =
+serverPacketBuilder (ServerPublish pid dup msg) =
   publishBuilder pid dup msg
-serverMessageBuilder (ServerPublishAcknowledged (PacketIdentifier pid)) =
+serverPacketBuilder (ServerPublishAcknowledged (PacketIdentifier pid)) =
   BS.word32BE $ fromIntegral $ 0x40020000 .|. pid
-serverMessageBuilder (ServerPublishReceived (PacketIdentifier pid)) =
+serverPacketBuilder (ServerPublishReceived (PacketIdentifier pid)) =
   BS.word32BE $ fromIntegral $ 0x50020000 .|. pid
-serverMessageBuilder (ServerPublishRelease (PacketIdentifier pid)) =
+serverPacketBuilder (ServerPublishRelease (PacketIdentifier pid)) =
   BS.word32BE $ fromIntegral $ 0x62020000 .|. pid
-serverMessageBuilder (ServerPublishComplete (PacketIdentifier pid)) =
+serverPacketBuilder (ServerPublishComplete (PacketIdentifier pid)) =
   BS.word32BE $ fromIntegral $ 0x70020000 .|. pid
-serverMessageBuilder (ServerSubscribeAcknowledged (PacketIdentifier pid) rcs) =
+serverPacketBuilder (ServerSubscribeAcknowledged (PacketIdentifier pid) rcs) =
   BS.word8 0x90 <> lengthBuilder (2 + length rcs)
     <> BS.word16BE (fromIntegral pid) <> mconcat ( map ( BS.word8 . f ) rcs )
   where
@@ -426,9 +426,9 @@ serverMessageBuilder (ServerSubscribeAcknowledged (PacketIdentifier pid) rcs) =
     f (Just Qos0) = 0x00
     f (Just Qos1) = 0x01
     f (Just Qos2) = 0x02
-serverMessageBuilder (ServerUnsubscribeAcknowledged (PacketIdentifier pid)) =
+serverPacketBuilder (ServerUnsubscribeAcknowledged (PacketIdentifier pid)) =
   BS.word16BE 0xb002 <> BS.word16BE (fromIntegral pid)
-serverMessageBuilder ServerPingResponse =
+serverPacketBuilder ServerPingResponse =
   BS.word16BE 0xd000
 
 publishBuilder :: PacketIdentifier -> Duplicate -> Message -> BS.Builder

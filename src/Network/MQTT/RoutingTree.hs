@@ -53,16 +53,17 @@ module Network.MQTT.RoutingTree (
   , differenceWith
   ) where
 
-import           Control.Applicative   ((<|>))
+import           Control.Applicative        ((<|>))
 import           Data.Functor.Identity
-import qualified Data.IntSet           as IS
-import           Data.List.NonEmpty    (NonEmpty (..))
-import qualified Data.Map.Strict       as M
-import           Data.Maybe            hiding (mapMaybe)
+import qualified Data.IntSet                as IS
+import qualified Data.List                  as L
+import           Data.List.NonEmpty         (NonEmpty (..))
+import qualified Data.Map.Strict            as M
+import           Data.Maybe                 hiding (mapMaybe)
 import           Data.Monoid
-import qualified Data.List              as L
-import           Network.MQTT.Topic
-import           Prelude               hiding (lookup, map, null)
+import           Prelude                    hiding (lookup, map, null)
+
+import           Network.MQTT.Message.Topic
 
 -- | The `RoutingTree` is a map-like data structure designed to hold elements
 --   that can efficiently be queried according to the matching rules specified
@@ -167,7 +168,7 @@ foldl'  :: (RoutingTreeValue b) => (a -> b -> a) -> a -> RoutingTree b -> a
 foldl' f acc (RoutingTree m) = M.foldl' g acc m
   where
     g acc' n = flip (foldl' f) (nodeTree n) $! case nodeValue n of
-      Nothing -> acc'
+      Nothing    -> acc'
       Just value -> f acc' value
 
 union     :: (RoutingTreeValue a, Monoid a) => RoutingTree a -> RoutingTree a -> RoutingTree a
@@ -350,16 +351,16 @@ instance RoutingTreeValue IS.IntSet where
 
 instance RoutingTreeValue (Identity a) where
   data RoutingTreeNode (Identity a) = IdentityNode !(RoutingTree (Identity a)) !(Maybe (Identity a))
-  node t n@Nothing              = IdentityNode t n
-  node t n@(Just v)             = v `seq` IdentityNode t n
+  node t n@Nothing  = IdentityNode t n
+  node t n@(Just v) = v `seq` IdentityNode t n
   nodeNull                      = const False
   nodeTree  (IdentityNode t _)  = t
   nodeValue (IdentityNode _ mv) = mv
 
 instance RoutingTreeValue () where
   data RoutingTreeNode ()  = UnitNode {-# UNPACK #-} !Int !(RoutingTree ())
-  node t Nothing           = UnitNode 0 t
-  node t _                 = UnitNode 1 t
+  node t Nothing = UnitNode 0 t
+  node t _       = UnitNode 1 t
   nodeNull                 = const False
   nodeTree  (UnitNode _ t) = t
   nodeValue (UnitNode 0 _) = Nothing
@@ -367,11 +368,11 @@ instance RoutingTreeValue () where
 
 instance RoutingTreeValue Bool where
   data RoutingTreeNode Bool = BoolNode {-# UNPACK #-} !Int !(RoutingTree Bool)
-  node t Nothing               = BoolNode 0 t
-  node t (Just False)          = BoolNode 1 t
-  node t (Just True)           = BoolNode 2 t
+  node t Nothing      = BoolNode 0 t
+  node t (Just False) = BoolNode 1 t
+  node t (Just True)  = BoolNode 2 t
   nodeNull                     = const False
   nodeTree  (BoolNode _ t)     = t
-  nodeValue (BoolNode 1 _)     = Just False
-  nodeValue (BoolNode 2 _)     = Just True
-  nodeValue (BoolNode _ _)     = Nothing
+  nodeValue (BoolNode 1 _) = Just False
+  nodeValue (BoolNode 2 _) = Just True
+  nodeValue (BoolNode _ _) = Nothing

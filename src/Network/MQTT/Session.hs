@@ -72,7 +72,7 @@ instance Show (Session auth) where
 data ServerQueue
   = ServerQueue
   { queuePids       :: !(Seq.Seq PacketIdentifier)
-  , outputBuffer    :: !(Seq.Seq ServerMessage)
+  , outputBuffer    :: !(Seq.Seq ServerPacket)
   , queueQos0       :: !(Seq.Seq Message)
   , queueQos1       :: !(Seq.Seq Message)
   , queueQos2       :: !(Seq.Seq Message)
@@ -162,7 +162,7 @@ enqueueUnsubscribeAcknowledged session pid = do
 
 -- | Blocks until messages are available and prefers non-qos0 messages over
 --  qos0 messages.
-dequeue :: Session auth -> IO (Seq.Seq ServerMessage)
+dequeue :: Session auth -> IO (Seq.Seq ServerPacket)
 dequeue session =
   modifyMVar (sessionQueue session) $ \queue-> do
     let q = normalizeQueue queue
