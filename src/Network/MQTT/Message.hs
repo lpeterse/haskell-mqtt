@@ -1,3 +1,4 @@
+{-# LANGUAGE DeriveGeneric              #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE LambdaCase                 #-}
 {-# LANGUAGE TupleSections              #-}
@@ -54,6 +55,7 @@ module Network.MQTT.Message (
 
 import           Control.Monad
 import qualified Data.Attoparsec.ByteString            as A
+import qualified Data.Binary                           as B
 import qualified Data.Binary.Get                       as SG
 import           Data.Bits
 import           Data.Bool
@@ -65,6 +67,7 @@ import           Data.String
 import qualified Data.Text                             as T
 import qualified Data.Text.Encoding                    as T
 import           Data.Word
+import           GHC.Generics
 
 import           Network.MQTT.Message.QualityOfService
 import           Network.MQTT.Message.Topic
@@ -77,11 +80,13 @@ newtype Duplicate         = Duplicate Bool           deriving (Eq, Ord, Show)
 newtype KeepAliveInterval = KeepAliveInterval Word16 deriving (Eq, Ord, Show, Num)
 newtype Username          = Username T.Text          deriving (Eq, Ord, Show, IsString)
 newtype Password          = Password BS.ByteString   deriving (Eq)
-newtype ClientIdentifier  = ClientIdentifier T.Text  deriving (Eq, Ord, Show, IsString)
+newtype ClientIdentifier  = ClientIdentifier T.Text  deriving (Eq, Ord, Show, IsString, Generic)
 newtype PacketIdentifier  = PacketIdentifier Int     deriving (Eq, Ord, Show)
 
 instance Show Password where
   show = const "*********"
+
+instance B.Binary ClientIdentifier
 
 data ConnectionRejectReason
    = UnacceptableProtocolVersion
