@@ -4,7 +4,6 @@ module Main where
 import           Control.Monad                 (forM_)
 
 import qualified Network.MQTT.Message          as M
-import qualified Network.MQTT.QualityOfService as Qos
 import qualified Network.MQTT.RetainedMessages as Retained
 
 -- | This shall test whether inserting into the RetainedStore
@@ -23,6 +22,6 @@ main  = do
     message = M.Message {
         M.msgTopic = "ahsdjkha/def/hij"
       , M.msgBody = "ahsjdkhajskdhaksjdhakjshd"
-      , M.msgQos = Qos.Qos1
+      , M.msgQos = M.Qos1
       , M.msgRetain = M.Retain True
       }

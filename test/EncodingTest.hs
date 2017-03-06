@@ -5,7 +5,7 @@ import qualified Data.ByteString.Builder as BS
 import qualified Data.ByteString.Lazy    as BSL
 import qualified Data.Binary.Get         as SG
 import           Network.MQTT.Message
-import qualified Network.MQTT.Topic      as Topic
+import qualified Network.MQTT.Message      as Topic
 import           Prelude                 hiding (head)
 import           Test.Tasty
 import           Test.Tasty.HUnit
@@ -13,20 +13,20 @@ import           Test.Tasty.QuickCheck   as QC
 
 tests :: TestTree
 tests = testGroup "Encoding / Decoding"
-  [ testClientMessage
-  , testServerMessage
+  [ testClientPacket
+  , testServerPacket
   , testLengthEncoding
   ]
 
-testClientMessage :: TestTree
-testClientMessage = QC.testProperty "clientMessageBuilder <-> clientMessageParser" $ \msg->
-  msg === SG.runGet clientMessageParser (BS.toLazyByteString $ clientMessageBuilder msg)
+testClientPacket :: TestTree
+testClientPacket = QC.testProperty "clientMessageBuilder <-> clientPacketParser" $ \msg->
+  msg === SG.runGet clientPacketParser (BS.toLazyByteString $ clientPacketBuilder msg)
 
-testServerMessage :: TestTree
-testServerMessage = QC.testProperty "serverMessageBuilder <-> serverMessageParser" $ \msg->
-  msg === SG.runGet serverMessageParser (BS.toLazyByteString $ serverMessageBuilder msg)
+testServerPacket :: TestTree
+testServerPacket = QC.testProperty "serverMessageBuilder <-> serverPacketParser" $ \msg->
+  msg === SG.runGet serverPacketParser (BS.toLazyByteString $ serverPacketBuilder msg)
 
-instance Arbitrary ClientMessage where
+instance Arbitrary ClientPacket where
   arbitrary = oneof
     [ arbitraryConnect
     , arbitraryPublish
@@ -60,7 +60,7 @@ instance Arbitrary ClientMessage where
         <$> arbitrary
         <*> listOf1 arbitrary
 
-instance Arbitrary ServerMessage where
+instance Arbitrary ServerPacket where
   arbitrary = oneof
     [ ServerConnectionAccepted      <$> arbitrary
     , ServerConnectionRejected      <$> arbitrary

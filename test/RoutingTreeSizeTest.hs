@@ -7,8 +7,8 @@ import qualified Data.List.NonEmpty       as NL
 import qualified Data.Map                 as M
 import           System.Random            ( randomIO )
 
+import           Network.MQTT.Message
 import           Network.MQTT.RoutingTree as R
-import           Network.MQTT.Topic
 
 -- | This test shall assure that the memory consumption of the subscription
 --   tree stays within certain limits.

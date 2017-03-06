@@ -42,6 +42,8 @@ module Network.MQTT.Message (
   , QualityOfService (..)
   -- ** ConnectionRejectReason
   , ConnectionRejectReason (..)
+  -- ** Topic / Filter
+  , module Network.MQTT.Message.Topic
   , Message (..)
   -- ** Other (internal) exports
   , lengthParser
@@ -65,6 +67,7 @@ import qualified Data.Text.Encoding                    as T
 import           Data.Word
 
 import           Network.MQTT.Message.QualityOfService
+import           Network.MQTT.Message.Topic
 import qualified Network.MQTT.Message.Topic            as TF
 
 newtype SessionPresent    = SessionPresent Bool      deriving (Eq, Ord, Show)
@@ -174,7 +177,7 @@ connectParser = do
       will      <- if y .&. 0x04 == 0
         then pure Nothing
         else Just <$> do
-          topic      <- fst <$> topicParser
+          topic      <- fst <$> topicAndLengthParser
           bodyLen    <- fromIntegral <$> SG.getWord16be
           body       <- SG.getLazyByteString bodyLen
           qos        <- case y .&. 0x18 of
@@ -219,7 +222,7 @@ publishParser publish = do
   let dup = Duplicate $ hflags .&. 0x08 /= 0 -- duplicate flag
   let ret = Retain    $ hflags .&. 0x01 /= 0 -- retain flag
   len <- lengthParser
-  (topic, topicLen)  <- topicParser
+  (topic, topicLen)  <- topicAndLengthParser
   let qosBits = hflags .&. 0x06
   if  qosBits == 0x00
     then do
@@ -257,7 +260,7 @@ subscribeParser = do
     parseFilters r accum
       | r <= 0    = pure (reverse accum)
       | otherwise = do
-          (filtr,len) <- filterParser
+          (filtr,len) <- filterAndLengthParser
           qos <- getQoS
           parseFilters ( r - 1 - len ) ( ( filtr, qos ) : accum )
     getQoS = SG.getWord8 >>= \w-> case w of
@@ -276,7 +279,7 @@ unsubscribeParser = do
     parseFilters r accum
       | r <= 0    = pure (reverse accum)
       | otherwise = do
-          (filtr,len) <- filterParser
+          (filtr,len) <- filterAndLengthParser
           parseFilters ( r - len ) ( filtr : accum )
 
 subscribeAcknowledgedParser :: SG.Get ServerPacket
@@ -372,9 +375,9 @@ clientPacketBuilder (ClientPublishComplete (PacketIdentifier pid)) =
   BS.word32BE $ fromIntegral $ 0x70020000 .|. pid
 clientPacketBuilder (ClientSubscribe (PacketIdentifier pid) filters) =
   BS.word8 0x82 <> lengthBuilder len <> BS.word16BE (fromIntegral pid)
-                                     <> mconcat (fmap filterBuilder filters)
+                                     <> mconcat (fmap filterBuilder' filters)
   where
-    filterBuilder (f, q) = BS.word16BE (fromIntegral fl) <> fb <> qb
+    filterBuilder' (f, q) = BS.word16BE (fromIntegral fl) <> fb <> qb
       where
         fb = TF.filterBuilder f
         fl = TF.filterLength  f
@@ -385,9 +388,9 @@ clientPacketBuilder (ClientSubscribe (PacketIdentifier pid) filters) =
     len  = 2  + sum ( map ( (+3) . TF.filterLength . fst ) filters )
 clientPacketBuilder (ClientUnsubscribe (PacketIdentifier pid) filters) =
   BS.word8 0xa2 <> lengthBuilder len <> BS.word16BE (fromIntegral pid)
-                                     <> mconcat ( map filterBuilder filters )
+                                     <> mconcat ( map filterBuilder' filters )
   where
-    filterBuilder f = BS.word16BE (fromIntegral fl) <> fb
+    filterBuilder' f = BS.word16BE (fromIntegral fl) <> fb
       where
         fb = TF.filterBuilder f
         fl = TF.filterLength  f
@@ -436,41 +439,41 @@ publishBuilder (PacketIdentifier pid) (Duplicate dup) msg =
   BS.word8 h
   <> lengthBuilder len
   <> BS.word16BE (fromIntegral topicLen)
-  <> topicBuilder
+  <> topicBuilder'
   <> bool (BS.word16BE $ fromIntegral pid) mempty (msgQos msg == Qos0)
   <> BS.lazyByteString (msgBody msg)
   where
-    topicLen     = TF.topicLength  (msgTopic msg)
-    topicBuilder = TF.topicBuilder (msgTopic msg)
-    len          = 2 + topicLen + fromIntegral (BSL.length $ msgBody msg)
-                 + bool 2 0 (msgQos msg == Qos0)
-    h            = 0x30
-                .|. bool 0x00 0x01 retain
-                .|. bool 0x00 0x08 dup
-                .|. case msgQos msg of
-                      Qos0 -> 0x00
-                      Qos1 -> 0x02
-                      Qos2 -> 0x04
+    topicLen       = TF.topicLength  (msgTopic msg)
+    topicBuilder'  = TF.topicBuilder (msgTopic msg)
+    len            = 2 + topicLen + fromIntegral (BSL.length $ msgBody msg)
+                   + bool 2 0 (msgQos msg == Qos0)
+    h              = 0x30
+                  .|. bool 0x00 0x01 retain
+                  .|. bool 0x00 0x08 dup
+                  .|. case msgQos msg of
+                        Qos0 -> 0x00
+                        Qos1 -> 0x02
+                        Qos2 -> 0x04
       where
         Retain retain = msgRetain msg
 
-topicParser :: SG.Get (TF.Topic, Int)
-topicParser = do
+topicAndLengthParser :: SG.Get (TF.Topic, Int)
+topicAndLengthParser = do
   topicLen   <- fromIntegral <$> SG.getWord16be
   topicBytes <- SG.getByteString topicLen
   case A.parseOnly TF.topicParser topicBytes of
     Right t -> pure (t, topicLen + 2)
-    Left  _ -> fail "topicParser: Invalid topic."
-{-# INLINE topicParser #-}
+    Left  _ -> fail "topicAndLengthParser: Invalid topic."
+{-# INLINE topicAndLengthParser #-}
 
-filterParser :: SG.Get (TF.Filter, Int)
-filterParser = do
+filterAndLengthParser :: SG.Get (TF.Filter, Int)
+filterAndLengthParser = do
   filterLen   <- fromIntegral <$> SG.getWord16be
   filterBytes <- SG.getByteString filterLen
   case A.parseOnly TF.filterParser filterBytes of
     Right f -> pure (f, filterLen + 2)
-    Left  _ -> fail "filterParser: Invalid filter."
-{-# INLINE filterParser #-}
+    Left  _ -> fail "filterAndLengthParser: Invalid filter."
+{-# INLINE filterAndLengthParser #-}
 
 utf8Parser :: SG.Get T.Text
 utf8Parser = do

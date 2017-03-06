@@ -3,7 +3,7 @@ module TopicTest ( tests ) where
 
 import qualified Data.Attoparsec.ByteString as A
 import           Data.List.NonEmpty         (NonEmpty (..))
-import           Network.MQTT.Topic
+import           Network.MQTT.Message
 import           Test.Tasty
 import           Test.Tasty.HUnit
 

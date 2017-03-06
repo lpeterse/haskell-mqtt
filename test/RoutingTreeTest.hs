@@ -3,17 +3,12 @@
 module RoutingTreeTest ( tests ) where
 
 import qualified Data.IntSet              as IS
-import           Data.List.NonEmpty       (NonEmpty (..))
-import           Data.Monoid
-import qualified Data.Text                as T
 import           Prelude                  hiding (head)
 
 import           Test.Tasty
 import           Test.Tasty.HUnit
-import           Test.Tasty.QuickCheck    as QC
 
 import qualified Network.MQTT.RoutingTree as R
-import           Network.MQTT.Topic
 
 tests :: TestTree
 tests = testGroup "RoutingTree"
