@@ -54,7 +54,7 @@ import           Network.MQTT.Message                 (ClientIdentifier,
                                                        ConnectionRejectReason (..),
                                                        Message (..),
                                                        PacketIdentifier,
-                                                       SessionPresent)
+                                                       SessionPresent (..))
 import           Network.MQTT.QualityOfService        (QualityOfService)
 import qualified Network.MQTT.Message                 as Message
 import qualified Network.MQTT.RetainedMessages        as RM
@@ -152,7 +152,7 @@ getSession broker pcid@(pid, cid) =
         case IM.lookup sid (brokerSessions st) of
           -- Resuming an existing session..
           Just session ->
-            pure (st, Just (session, True))
+            pure (st, Just (session, SessionPresent True))
           -- Orphaned session id. This is illegal state.
           Nothing -> do
             Log.warningM "Broker.getSession" $ "Illegal state: Found orphanded session id " ++ show sid ++ "."
@@ -191,7 +191,7 @@ getSession broker pcid@(pid, cid) =
                , brokerSessionsByPrincipals = M.insert pcid newSessionIdentifier (brokerSessionsByPrincipals st)
                }
           Log.infoM "Broker.createSession" $ "Creating new session with id " ++ show newSessionIdentifier ++ " for " ++ show pid ++ "."
-          pure (newBrokerState, Just (newSession, False))
+          pure (newBrokerState, Just (newSession, SessionPresent False))
 
 -- | Disconnect a session.
 disconnectSession :: Broker auth -> Session.Identifier -> IO ()

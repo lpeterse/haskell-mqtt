@@ -12,10 +12,11 @@ module Network.MQTT.QualityOfService where
 
 import Network.MQTT.RoutingTree
 
+-- | The `QualityOfService` defines the guarantees given wrt to message reception.
 data QualityOfService
-  = Qos0
-  | Qos1
-  | Qos2
+  = Qos0 -- ^ Message delivery is not guaranteed.
+  | Qos1 -- ^ Message is guaranteed to be received at least once.
+  | Qos2 -- ^ Message is guaranteed to be delivered exactly once.
   deriving (Eq, Ord, Show, Enum, Bounded)
 
 instance RoutingTreeValue QualityOfService where

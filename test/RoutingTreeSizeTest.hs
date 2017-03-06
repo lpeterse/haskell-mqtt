@@ -1,7 +1,7 @@
 {-# LANGUAGE OverloadedStrings #-}
 module Main where
 
-import           Control.Monad            ( foldM )
+import           Control.Monad            ( foldM, when )
 import           Data.IntSet              as IS
 import qualified Data.List.NonEmpty       as NL
 import qualified Data.Map                 as M
@@ -20,7 +20,8 @@ import           Network.MQTT.Topic
 main :: IO ()
 main  = do
   r <- randomTree 6 10 :: IO (RoutingTree IS.IntSet)
-  print (R.size r)
+  -- We need to to something with `r` or it won't be evaluated.
+  when (R.size r == 0) (error "should not be 0")
 
 randomTree :: Int -> Int -> IO (RoutingTree IS.IntSet)
 randomTree 0     _         = RoutingTree <$> pure mempty

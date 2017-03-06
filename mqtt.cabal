@@ -21,8 +21,7 @@ source-repository head
 
 library
   ghc-options:         -Wall
-  exposed-modules:     Control.Concurrent.PrioritySemaphore,
-                       Network.Stack.Server,
+  exposed-modules:     Network.Stack.Server,
                        Network.MQTT.Authentication,
                        Network.MQTT.Client,
                        Network.MQTT.Message,
@@ -34,6 +33,7 @@ library
                        Network.MQTT.Session,
                        Network.MQTT.SessionStatistics,
                        Network.MQTT.QualityOfService
+  other-modules:       Control.Concurrent.PrioritySemaphore
   build-depends:       async,
                        attoparsec,
                        base >=4.8 && <5,
@@ -128,9 +128,12 @@ test-suite priority-semaphore
   ghc-options:
     -Wall
   hs-source-dirs:
+    src,
     test
   main-is:
     PrioritySemaphoreTest.hs
+  other-modules:
+    Control.Concurrent.PrioritySemaphore
   build-depends:
       async
     , base >= 4.8 && < 5

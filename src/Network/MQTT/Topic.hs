@@ -9,16 +9,19 @@
 -- Stability   :  experimental
 --------------------------------------------------------------------------------
 module Network.MQTT.Topic
-  ( Topic ()
+  ( -- * Topic
+    Topic ()
   , topicLevels
   , topicLength
   , topicParser
   , topicBuilder
+  -- * Filter
   , Filter ()
   , filterLevels
   , filterLength
   , filterParser
   , filterBuilder
+  -- * Level
   , Level ()
   , levelParser
   , multiLevelWildcard
@@ -42,10 +45,15 @@ import           Data.Word
 
 -- | According to the MQTT specification a topic
 --
---  * may not be empty
---  * may not contain @+@, @#@ or @\\NUL@ characters
+--  * must not be empty
+--  * must not contain @+@, @#@ or @\\NUL@ characters
 newtype Topic  = Topic  (NonEmpty Level)  deriving (Eq, Ord)
+-- | According to the MQTT specification a filter
+--
+--  * must not be empty
+--  * must not contain a @\\NUL@ character
 newtype Filter = Filter (NonEmpty Level)  deriving (Eq, Ord)
+-- | A `Level` represents a single path element of a `Topic` or a `Filter`.
 newtype Level  = Level BS.ShortByteString deriving (Eq, Ord)
 
 instance Show Topic where
@@ -94,6 +102,7 @@ topicParser = (<|> fail "invalid topic") $ Topic <$> do
     pSlash      = void (A.word8 slash)
     pLevel      = Level . BS.toShort <$> A.takeWhile
                   (\w8-> w8 /= slash && w8 /= zero && w8 /= hash && w8 /= plus)
+{-# INLINEABLE topicParser #-}
 
 topicBuilder :: Topic -> BS.Builder
 topicBuilder (Topic (Level x:|xs)) =
@@ -139,22 +148,30 @@ filterParser = (<|> fail "invalid filter") $ Filter <$> do
       <|> (void (A.word8 plus) >> ((A.endOfInput >> pure [singleLevelWildcard]) <|>
                        (pSlash >> (:) <$> pure singleLevelWildcard <*> pLevels)))
       <|> (pLevel >>= \x-> (x:) <$> ((A.endOfInput >> pure []) <|> (pSlash >> pLevels)))
+{-# INLINEABLE filterParser #-}
 
 levelParser :: A.Parser Level
 levelParser = do
   x <- A.takeWhile (\w8-> w8 /= slash && w8 /= zero)
   A.endOfInput
   pure (Level $ BS.toShort x)
+{-# INLINE levelParser #-}
 
+-- | The @#@ path element. It must only appear at the end of a `Filter`.
 multiLevelWildcard :: Level
 multiLevelWildcard  = Level $ BS.pack $ pure hash
+{-# INLINE multiLevelWildcard #-}
 
+-- | The @+@ path element. It may appear anywhere within a `Filter`.
 singleLevelWildcard :: Level
 singleLevelWildcard  = Level $ BS.pack $ pure plus
+{-# INLINE singleLevelWildcard #-}
 
+-- | Returns `True` iff the `Level` starts with @$@.
 startsWithDollar    :: Level -> Bool
 startsWithDollar (Level bs) =
   not (BS.null bs) && BS.index bs 0 == dollar
+{-# INLINE startsWithDollar #-}
 
 zero, plus, hash, slash, dollar :: Word8
 zero   = 0x00

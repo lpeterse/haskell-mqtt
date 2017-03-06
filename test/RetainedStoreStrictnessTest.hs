@@ -1,13 +1,11 @@
 {-# LANGUAGE OverloadedStrings #-}
 module Main where
 
-import           Control.Concurrent
-import           Control.Monad            (forM_)
-import           System.Mem
+import           Control.Monad                 (forM_)
 
-import qualified Network.MQTT.RetainedMessages as Retained
-import qualified Network.MQTT.Message as M
+import qualified Network.MQTT.Message          as M
 import qualified Network.MQTT.QualityOfService as Qos
+import qualified Network.MQTT.RetainedMessages as Retained
 
 -- | This shall test whether inserting into the RetainedStore
 --   leaks memory by building up unevaluated thunks.
@@ -18,7 +16,7 @@ import qualified Network.MQTT.QualityOfService as Qos
 main :: IO ()
 main  = do
   store <- Retained.new
-  forM_ [1..1000000] $ \_i-> do
+  forM_ [1..1000000 :: Int] $ \_i-> do
     Retained.store message store
   where
     message :: M.Message
@@ -26,6 +24,5 @@ main  = do
         M.msgTopic = "ahsdjkha/def/hij"
       , M.msgBody = "ahsjdkhajskdhaksjdhakjshd"
       , M.msgQos = Qos.Qos1
-      , M.msgRetain = True
+      , M.msgRetain = M.Retain True
       }
-

@@ -1,4 +1,6 @@
-{-# LANGUAGE TupleSections, LambdaCase #-}
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE LambdaCase                 #-}
+{-# LANGUAGE TupleSections              #-}
 --------------------------------------------------------------------------------
 -- |
 -- Module      :  Network.MQTT.Message
@@ -8,25 +10,40 @@
 -- Maintainer  :  info@lars-petersen.net
 -- Stability   :  experimental
 --------------------------------------------------------------------------------
-module Network.MQTT.Message
-  ( ClientIdentifier
-  , SessionPresent
-  , CleanSession
-  , Retain
-  , Duplicate
-  , KeepAliveInterval
-  , Username
-  , Password (..)
-  , PacketIdentifier
-  , QualityOfService (..)
-  , ConnectionRejectReason (..)
-  , Message (..)
-  , ClientMessage (..)
+module Network.MQTT.Message (
+  -- * ClientMessage
+    ClientMessage (..)
   , clientMessageBuilder
   , clientMessageParser
+  -- * ServerMessage
   , ServerMessage (..)
   , serverMessageBuilder
   , serverMessageParser
+  -- * Other types
+  -- ** PacketIdentifier
+  , PacketIdentifier
+  -- ** ClientIdentifier
+  , ClientIdentifier (..)
+  -- ** SessionPresent
+  , SessionPresent (..)
+  -- ** CleanSession
+  , CleanSession (..)
+  -- ** Retain
+  , Retain (..)
+  -- ** Duplicate
+  , Duplicate (..)
+  -- ** KeepAliveInterval
+  , KeepAliveInterval (..)
+  -- ** Username
+  , Username (..)
+  -- ** Password
+  , Password (..)
+  -- ** QualityOfService
+  , QualityOfService (..)
+  -- ** ConnectionRejectReason
+  , ConnectionRejectReason (..)
+  , Message (..)
+  -- ** Other (internal) exports
   , lengthParser
   , lengthBuilder
   , utf8Parser
@@ -34,28 +51,30 @@ module Network.MQTT.Message
   ) where
 
 import           Control.Monad
-import qualified Data.Attoparsec.ByteString as A
+import qualified Data.Attoparsec.ByteString    as A
+import qualified Data.Binary.Get               as SG
 import           Data.Bits
 import           Data.Bool
-import qualified Data.ByteString            as BS
-import qualified Data.ByteString.Builder    as BS
-import qualified Data.ByteString.Lazy       as BSL
+import qualified Data.ByteString               as BS
+import qualified Data.ByteString.Builder       as BS
+import qualified Data.ByteString.Lazy          as BSL
 import           Data.Monoid
-import qualified Data.Binary.Get            as SG
-import qualified Data.Text                  as T
-import qualified Data.Text.Encoding         as T
+import           Data.String
+import qualified Data.Text                     as T
+import qualified Data.Text.Encoding            as T
 import           Data.Word
-import qualified Network.MQTT.Topic         as TF
-import           Network.MQTT.QualityOfService
 
-type SessionPresent   = Bool
-type CleanSession     = Bool
-type Retain           = Bool
-type Duplicate        = Bool
-type KeepAliveInterval = Word16
-type Username         = T.Text
-newtype Password      = Password BS.ByteString deriving (Eq)
-type ClientIdentifier = T.Text
+import           Network.MQTT.QualityOfService
+import qualified Network.MQTT.Topic            as TF
+
+newtype SessionPresent    = SessionPresent Bool      deriving (Eq, Ord, Show)
+newtype CleanSession      = CleanSession Bool        deriving (Eq, Ord, Show)
+newtype Retain            = Retain Bool              deriving (Eq, Ord, Show)
+newtype Duplicate         = Duplicate Bool           deriving (Eq, Ord, Show)
+newtype KeepAliveInterval = KeepAliveInterval Word16 deriving (Eq, Ord, Show, Num)
+newtype Username          = Username T.Text          deriving (Eq, Ord, Show, IsString)
+newtype Password          = Password BS.ByteString   deriving (Eq)
+newtype ClientIdentifier  = ClientIdentifier T.Text  deriving (Eq, Ord, Show, IsString)
 type PacketIdentifier = Int
 
 instance Show Password where
@@ -71,10 +90,10 @@ data ConnectionRejectReason
 
 data Message
    = Message
-   { msgTopic     :: !TF.Topic
-   , msgBody      :: !BSL.ByteString
-   , msgQos       :: !QualityOfService
-   , msgRetain    :: !Retain
+   { msgTopic  :: !TF.Topic
+   , msgBody   :: !BSL.ByteString
+   , msgQos    :: !QualityOfService
+   , msgRetain :: !Retain
    } deriving (Eq, Ord, Show)
 
 data ClientMessage
@@ -148,9 +167,10 @@ connectParser = do
   y <- SG.getWord64be -- get the next 8 bytes all at once and not byte per byte
   case y .&. 0xffffffffffffff00 of
     0x00044d5154540400 -> do
-      let cleanSession = y .&. 0x02 /= 0
-      keepAlive <- SG.getWord16be
-      cid       <- utf8Parser
+      let cleanSession = CleanSession ( y .&. 0x02 /= 0 )
+      let retain       = Retain ( y .&. 0x20 /= 0 )
+      keepAlive <- KeepAliveInterval <$> SG.getWord16be
+      cid       <- ClientIdentifier <$> utf8Parser
       will      <- if y .&. 0x04 == 0
         then pure Nothing
         else Just <$> do
@@ -162,11 +182,11 @@ connectParser = do
             0x08 -> pure Qos1
             0x10 -> pure Qos2
             _    -> fail "connectParser: Violation of [MQTT-3.1.2-14]."
-          pure $ Message topic body qos ( y .&. 0x20 /= 0 )
+          pure $ Message topic body qos retain
       cred  <- if y .&. 0x80 == 0
         then pure Nothing
         else Just <$> ( (,)
-          <$> utf8Parser
+          <$> (Username <$> utf8Parser)
           <*> if y .&. 0x40 == 0
                 then pure Nothing
                 else Just . Password <$> (SG.getByteString . fromIntegral =<< SG.getWord16be) )
@@ -185,7 +205,7 @@ connectAcknowledgedParser :: SG.Get ServerMessage
 connectAcknowledgedParser = do
   x <- SG.getWord32be
   case x .&. 0xff of
-    0 -> pure $ ServerConnectionAccepted (x .&. 0x0100 /= 0)
+    0 -> pure $ ServerConnectionAccepted $ SessionPresent (x .&. 0x0100 /= 0)
     1 -> pure $ ServerConnectionRejected UnacceptableProtocolVersion
     2 -> pure $ ServerConnectionRejected IdentifierRejected
     3 -> pure $ ServerConnectionRejected ServerUnavailable
@@ -196,8 +216,8 @@ connectAcknowledgedParser = do
 publishParser :: (PacketIdentifier -> Duplicate -> Message -> a) -> SG.Get a
 publishParser publish = do
   hflags <- SG.getWord8
-  let dup = hflags .&. 0x08 /= 0 -- duplicate flag
-  let ret = hflags .&. 0x01 /= 0 -- retain flag
+  let dup = Duplicate $ hflags .&. 0x08 /= 0 -- duplicate flag
+  let ret = Retain    $ hflags .&. 0x01 /= 0 -- retain flag
   len <- lengthParser
   (topic, topicLen)  <- topicParser
   let qosBits = hflags .&. 0x06
@@ -290,7 +310,10 @@ disconnectParser = do
 {-# INLINE disconnectParser #-}
 
 clientMessageBuilder :: ClientMessage -> BS.Builder
-clientMessageBuilder (ClientConnect cid cleanSession keepAlive will credentials) =
+clientMessageBuilder (ClientConnect
+    (ClientIdentifier cid)
+    (CleanSession cleanSession)
+    (KeepAliveInterval keepAlive) will credentials) =
   BS.word8 0x10
   <> lengthBuilder ( 10 + cidLen + willLen + credLen )
   <> BS.word64BE ( 0x00044d5154540400 .|. willFlag .|. credFlag .|. sessFlag )
@@ -304,7 +327,7 @@ clientMessageBuilder (ClientConnect cid cleanSession keepAlive will credentials)
     (willBuilder, willLen, willFlag) = case will of
       Nothing ->
         (mempty, 0, 0x00)
-      Just (Message t b q r)->
+      Just (Message t b q (Retain r))->
        let tlen  = TF.topicLength t
            blen  = fromIntegral (BSL.length b)
            qflag = case q of
@@ -320,13 +343,13 @@ clientMessageBuilder (ClientConnect cid cleanSession keepAlive will credentials)
     (credBuilder, credLen, credFlag) = case credentials of
       Nothing           ->
         (mempty, 0, 0x00)
-      Just (ut, Nothing) ->
+      Just (Username ut, Nothing) ->
         let u    = T.encodeUtf8 ut
             ulen = BS.length u
             x1   = BS.word16BE (fromIntegral ulen)
             x2   = BS.byteString u
         in (x1 <> x2, 2 + ulen, 0x80)
-      Just (ut, Just (Password p))  ->
+      Just (Username ut, Just (Password p))  ->
         let u    = T.encodeUtf8 ut
             ulen = BS.length u
             plen = BS.length p
@@ -375,7 +398,7 @@ clientMessageBuilder ClientDisconnect =
   BS.word16BE 0xe000
 
 serverMessageBuilder :: ServerMessage -> BS.Builder
-serverMessageBuilder (ServerConnectionAccepted sessionPresent)
+serverMessageBuilder (ServerConnectionAccepted (SessionPresent sessionPresent))
   | sessionPresent   = BS.word32BE 0x20020100
   | otherwise        = BS.word32BE 0x20020000
 serverMessageBuilder (ServerConnectionRejected reason) =
@@ -409,7 +432,7 @@ serverMessageBuilder ServerPingResponse =
   BS.word16BE 0xd000
 
 publishBuilder :: PacketIdentifier -> Duplicate -> Message -> BS.Builder
-publishBuilder pid dup msg =
+publishBuilder pid (Duplicate dup) msg =
   BS.word8 h
   <> lengthBuilder len
   <> BS.word16BE (fromIntegral topicLen)
@@ -422,12 +445,14 @@ publishBuilder pid dup msg =
     len          = 2 + topicLen + fromIntegral (BSL.length $ msgBody msg)
                  + bool 2 0 (msgQos msg == Qos0)
     h            = 0x30
-                .|. bool 0x00 0x01 (msgRetain msg)
+                .|. bool 0x00 0x01 retain
                 .|. bool 0x00 0x08 dup
                 .|. case msgQos msg of
                       Qos0 -> 0x00
                       Qos1 -> 0x02
                       Qos2 -> 0x04
+      where
+        Retain retain = msgRetain msg
 
 topicParser :: SG.Get (TF.Topic, Int)
 topicParser = do

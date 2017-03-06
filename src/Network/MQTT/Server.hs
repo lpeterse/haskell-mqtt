@@ -44,7 +44,7 @@ instance (Typeable f, Typeable t, Typeable p, S.Family f, S.Protocol p, S.Type t
   getConnectionRequest (SS.SocketServerConnectionInfo addr) = do
     remoteAddr <- S.hostName <$> S.getNameInfo addr (S.niNumericHost `mappend` S.niNumericService)
     pure ConnectionRequest {
-        requestClientIdentifier = mempty
+        requestClientIdentifier = ClientIdentifier mempty
       , requestSecure = False
       , requestCleanSession = True
       , requestCredentials = Nothing
@@ -167,9 +167,9 @@ handleConnection broker cfg conn connInfo = do
 
           -- | This part is where the threads for a connection are created
           --   (one for input, one for output and one watchdog thread).
-          sessionAcceptHandler session sessionPresent = do
+          sessionAcceptHandler session sessionPresent@(SessionPresent sp) = do
             Log.infoM "Server.connection" $ "Connection accepted: Associated "
-              ++ show (Session.sessionPrincipalIdentifier session) ++ (if sessionPresent then " with existing session "
+              ++ show (Session.sessionPrincipalIdentifier session) ++ (if sp then " with existing session "
               ++ show (Session.sessionIdentifier session) ++  "." else " with new session.")
             void $ SS.sendMessage conn (ServerConnectionAccepted sessionPresent)
             foldl1 race_
@@ -186,9 +186,11 @@ handleConnection broker cfg conn connInfo = do
           -- Extend the request object with information gathered from the connect packet.
           request = req {
               requestClientIdentifier = connectClientIdentifier msg
-            , requestCleanSession     = connectCleanSession msg
+            , requestCleanSession     = cleanSession
             , requestCredentials      = connectCredentials msg
             }
+            where
+              CleanSession cleanSession = connectCleanSession msg
       Log.infoM "Server.connection" $ "Connection request: " ++ show request
       Broker.withSession broker request sessionRejectHandler sessionAcceptHandler
     _ -> pure () -- TODO: Don't parse not-CONN packets in the first place!
@@ -200,7 +202,7 @@ handleConnection broker cfg conn connInfo = do
     -- That way a timeout will be detected between 1.5 and 2 `keep alive`
     -- intervals after the last actual client activity.
     keepAlive :: RecentActivity -> KeepAliveInterval -> Session.Session auth -> IO ()
-    keepAlive recentActivity interval session = forever $ do
+    keepAlive recentActivity (KeepAliveInterval interval) session = forever $ do
       writeIORef recentActivity False
       threadDelay regularInterval
       activity <- readIORef recentActivity

@@ -17,7 +17,6 @@ import           Control.Exception
 import qualified Data.Binary              as B
 import qualified Data.ByteString          as BS
 import           Data.CaseInsensitive
-import qualified Data.Text                as T
 import           Data.UUID                as UUID
 import           Data.Word
 import qualified Data.X509                as X509
@@ -57,7 +56,7 @@ type PrincipalIdentifier = UUID
 
 data Principal
    = Principal
-   { principalUsername             :: Maybe T.Text
+   { principalUsername             :: Maybe Username
    , principalQuota                :: Quota
    , principalPublishPermissions   :: R.RoutingTree ()
    , principalSubscribePermissions :: R.RoutingTree ()
@@ -79,7 +78,7 @@ instance B.Binary Quota
 --   whatever information it finds suitable to authenticate the `Principal`.
 data ConnectionRequest
    = ConnectionRequest
-   { requestClientIdentifier :: T.Text,
+   { requestClientIdentifier :: ClientIdentifier,
      requestCleanSession     :: Bool,
      -- | Is this connection secure in terms of
      --  [Transport Layer Security](https://en.wikipedia.org/wiki/Transport_Layer_Security)?
