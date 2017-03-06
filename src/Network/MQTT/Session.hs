@@ -71,7 +71,7 @@ instance Show (Session auth) where
 
 data ServerQueue
   = ServerQueue
-  { queuePids       :: !(Seq.Seq Int)
+  { queuePids       :: !(Seq.Seq PacketIdentifier)
   , outputBuffer    :: !(Seq.Seq ServerMessage)
   , queueQos0       :: !(Seq.Seq Message)
   , queueQos1       :: !(Seq.Seq Message)
@@ -84,7 +84,7 @@ data ServerQueue
 
 emptyServerQueue :: Int -> ServerQueue
 emptyServerQueue i = ServerQueue
-  { queuePids         = Seq.fromList [0..min i 65535]
+  { queuePids         = Seq.fromList $ fmap PacketIdentifier [0 .. min i 65535]
   , outputBuffer      = mempty
   , queueQos0         = mempty
   , queueQos1         = mempty
@@ -167,7 +167,7 @@ dequeue session =
   modifyMVar (sessionQueue session) $ \queue-> do
     let q = normalizeQueue queue
     if | not (Seq.null $ outputBuffer q) -> pure (q { outputBuffer = mempty }, outputBuffer q)
-       | not (Seq.null $ queueQos0    q) -> pure (q { queueQos0    = mempty }, fmap (ServerPublish (-1) (Duplicate False)) (queueQos0 q))
+       | not (Seq.null $ queueQos0    q) -> pure (q { queueQos0    = mempty }, fmap (ServerPublish (PacketIdentifier (-1)) (Duplicate False)) (queueQos0 q))
        | otherwise                       -> clearPending >> pure (q, mempty)
   where
     -- | In case all queues are empty, we need to clear the `pending` variable.
@@ -180,7 +180,7 @@ dequeue session =
 --
 --   Different handling depending on message qos.
 processPublish :: Session auth -> PacketIdentifier -> Duplicate -> Message -> (Message -> IO ()) -> IO ()
-processPublish session pid _dup msg forward =
+processPublish session pid@(PacketIdentifier p) _dup msg forward =
   case msgQos msg of
     Qos0 ->
       forward msg
@@ -193,7 +193,7 @@ processPublish session pid _dup msg forward =
     Qos2 -> do
       modifyMVar_ (sessionQueue session) $ \q-> pure $! q {
           outputBuffer = outputBuffer q Seq.|> ServerPublishReceived pid
-        , notReleased  = IM.insert pid msg (notReleased q)
+        , notReleased  = IM.insert p msg (notReleased q)
         }
       notePending session
 
@@ -202,10 +202,10 @@ processPublish session pid _dup msg forward =
 --   This shall be called when a @PUBACK@ has been received by the peer.
 --   We release the message from our buffer and the transaction is then complete.
 processPublishAcknowledged :: Session auth -> PacketIdentifier -> IO ()
-processPublishAcknowledged session pid = do
+processPublishAcknowledged session (PacketIdentifier pid) = do
   modifyMVar_ (sessionQueue session) $ \q-> pure $! q {
       -- The packet identifier is free for reuse only if it actually was in the set of notAcknowledged messages.
-      queuePids = bool (queuePids q) (pid Seq.<| queuePids q) (IM.member pid (notAcknowledged q))
+      queuePids = bool (queuePids q) (PacketIdentifier pid Seq.<| queuePids q) (IM.member pid (notAcknowledged q))
     , notAcknowledged = IM.delete pid (notAcknowledged q)
     }
   -- See code of `processPublishComplete` for explanation.
@@ -218,12 +218,12 @@ processPublishAcknowledged session pid = do
 --   The state changes from _not received_ to _not completed_.
 --   We will send a @PUBREL@ to the client and expect a @PUBCOMP@ in return.
 processPublishReceived :: Session auth -> PacketIdentifier -> IO ()
-processPublishReceived session pid = do
+processPublishReceived session (PacketIdentifier pid) = do
   modifyMVar_ (sessionQueue session) $ \q->
     pure $! q {
       notReceived  = IM.delete pid (notReceived q)
     , notComplete  = IS.insert pid (notComplete q)
-    , outputBuffer = outputBuffer q Seq.|> ServerPublishRelease pid
+    , outputBuffer = outputBuffer q Seq.|> ServerPublishRelease (PacketIdentifier pid)
     }
   notePending session
 
@@ -235,7 +235,7 @@ processPublishReceived session pid = do
 --   The handler is only executed if there still is a message (it is a valid scenario
 --   that it might already have been released).
 processPublishRelease :: Session auth -> PacketIdentifier -> (Message -> IO ()) -> IO ()
-processPublishRelease session pid upstream = do
+processPublishRelease session (PacketIdentifier pid) upstream = do
   modifyMVar_ (sessionQueue session) $ \q->
     case IM.lookup pid (notReleased q) of
       Nothing  ->
@@ -243,7 +243,7 @@ processPublishRelease session pid upstream = do
       Just msg -> do
         upstream msg
         pure $! q { notReleased  = IM.delete pid (notReleased q)
-                  , outputBuffer = outputBuffer q Seq.|> ServerPublishComplete pid
+                  , outputBuffer = outputBuffer q Seq.|> ServerPublishComplete (PacketIdentifier pid)
                   }
   notePending session
 
@@ -252,10 +252,10 @@ processPublishRelease session pid upstream = do
 --   This shall be called when a @PUBCOMP@ has been received from the peer
 --   to finally free the packet identifier.
 processPublishComplete :: Session auth -> PacketIdentifier -> IO ()
-processPublishComplete session pid = do
+processPublishComplete session (PacketIdentifier pid) = do
   modifyMVar_ (sessionQueue session) $ \q-> pure $! q {
       -- The packet identifier is now free for reuse.
-      queuePids   = pid Seq.<| queuePids q
+      queuePids   = PacketIdentifier pid Seq.<| queuePids q
     , notComplete = IS.delete pid (notComplete q)
     }
   -- Although we did not enqueue something it might still be the case
@@ -286,9 +286,9 @@ resetQueue q = q {
     outputBuffer = (rePublishQos1 . rePublishQos2 . reReleaseQos2) mempty
   }
   where
-    rePublishQos1 s = IM.foldlWithKey (\s' pid msg-> s' Seq.|> ServerPublish         pid (Duplicate True) msg) s (notAcknowledged q)
-    rePublishQos2 s = IM.foldlWithKey (\s' pid msg-> s' Seq.|> ServerPublish         pid (Duplicate True) msg) s (notReceived     q)
-    reReleaseQos2 s = IS.foldl        (\s' pid->     s' Seq.|> ServerPublishRelease  pid)                      s (notComplete     q)
+    rePublishQos1 s = IM.foldlWithKey (\s' pid msg-> s' Seq.|> ServerPublish         (PacketIdentifier pid) (Duplicate True) msg) s (notAcknowledged q)
+    rePublishQos2 s = IM.foldlWithKey (\s' pid msg-> s' Seq.|> ServerPublish         (PacketIdentifier pid) (Duplicate True) msg) s (notReceived     q)
+    reReleaseQos2 s = IS.foldl        (\s' pid->     s' Seq.|> ServerPublishRelease  (PacketIdentifier pid)                     ) s (notComplete     q)
 
 -- | This function fills the output buffer with as many messages
 --   as possible (this is limited by the available packet identifiers).
@@ -301,7 +301,8 @@ normalizeQueue = takeQos1 . takeQos2
         { outputBuffer    = outputBuffer q <> Seq.zipWith (flip ServerPublish (Duplicate False)) pids' msgs'
         , queuePids       = pids''
         , queueQos1       = msgs''
-        , notAcknowledged = foldr (uncurry IM.insert) (notAcknowledged q)
+        , notAcknowledged = foldr (\(PacketIdentifier pid, msg)-> IM.insert pid msg)
+                                  (notAcknowledged q)
                                   (Seq.zipWith (,) pids' msgs')
         }
       where
@@ -316,7 +317,8 @@ normalizeQueue = takeQos1 . takeQos2
         { outputBuffer    = outputBuffer q <> Seq.zipWith (flip ServerPublish (Duplicate False)) pids' msgs'
         , queuePids       = pids''
         , queueQos2       = msgs''
-        , notReceived     = foldr (uncurry IM.insert) (notReceived q)
+        , notReceived     = foldr (\(PacketIdentifier pid, msg)-> IM.insert pid msg)
+                                  (notReceived q)
                                   (Seq.zipWith (,) pids' msgs')
         }
       where

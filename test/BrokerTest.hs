@@ -16,7 +16,6 @@ import           Network.MQTT.Message
 import qualified Network.MQTT.Message        as Message
 import qualified Network.MQTT.RoutingTree    as R
 import qualified Network.MQTT.Session        as Session
-import qualified Network.MQTT.Topic          as Topic
 
 import           Test.Tasty
 import           Test.Tasty.HUnit
@@ -67,13 +66,13 @@ getTestTree =
               msg  = Message.Message "a/b" "" Qos0 (Retain False)
           Broker.withSession broker req1 (const $ pure ()) $ \session1 _ ->
             Broker.withSession broker req2 (const $ pure ()) $ \session2 _ -> do
-              Broker.subscribe broker session1 42 [("a/b", Qos0)]
-              Broker.subscribe broker session2 47 [("a/b", Qos0)]
+              Broker.subscribe broker session1 (PacketIdentifier 42) [("a/b", Qos0)]
+              Broker.subscribe broker session2 (PacketIdentifier 47) [("a/b", Qos0)]
               Broker.publishDownstream broker msg
               queue1 <- (<>) <$> Session.dequeue session1 <*> Session.dequeue session1
               queue2 <- (<>) <$> Session.dequeue session2 <*> Session.dequeue session2
-              queue1 @?= Seq.fromList [ ServerSubscribeAcknowledged 42 [Just Qos0], ServerPublish (-1) (Duplicate False) msg]
-              queue2 @?= Seq.fromList [ ServerSubscribeAcknowledged 47 [Just Qos0], ServerPublish (-1) (Duplicate False) msg]
+              queue1 @?= Seq.fromList [ ServerSubscribeAcknowledged (PacketIdentifier 42) [Just Qos0], ServerPublish (PacketIdentifier (-1)) (Duplicate False) msg]
+              queue2 @?= Seq.fromList [ ServerSubscribeAcknowledged (PacketIdentifier 47) [Just Qos0], ServerPublish (PacketIdentifier (-1)) (Duplicate False) msg]
 
       , testCase "get retained message on subscription (newer overrides older, issue #6)" $ do
           broker <- Broker.new $ TestAuthenticator authenticatorConfigAllAccess
@@ -83,9 +82,9 @@ getTestTree =
           Broker.withSession broker req1 (const $ pure ()) $ \session1 _-> do
             Broker.publishDownstream broker msg1
             Broker.publishDownstream broker msg2
-            Broker.subscribe broker session1 23 [("topic", Qos0)]
+            Broker.subscribe broker session1 (PacketIdentifier 23) [("topic", Qos0)]
             queue1 <- (<>) <$> Session.dequeue session1 <*> Session.dequeue session1
-            queue1 @?= Seq.fromList [ ServerSubscribeAcknowledged 23 [Just Qos0], ServerPublish (-1) (Duplicate False) msg2]
+            queue1 @?= Seq.fromList [ ServerSubscribeAcknowledged (PacketIdentifier 23) [Just Qos0], ServerPublish (PacketIdentifier (-1)) (Duplicate False) msg2]
 
       , testCase "delete retained message when body is empty" $ do
           broker <- Broker.new $ TestAuthenticator authenticatorConfigAllAccess
@@ -95,15 +94,15 @@ getTestTree =
           Broker.withSession broker req1 (const $ pure ()) $ \session1 _ -> do
             Broker.publishDownstream broker msg1
             Broker.publishDownstream broker msg2
-            Broker.subscribe broker session1 23 [("topic", Qos0)]
+            Broker.subscribe broker session1 (PacketIdentifier 23) [("topic", Qos0)]
             queue1 <- (<>) <$> Session.dequeue session1 <*> Session.dequeue session1
-            queue1 @?= Seq.fromList [ ServerSubscribeAcknowledged 23 [Just Qos0] ]
+            queue1 @?= Seq.fromList [ ServerSubscribeAcknowledged (PacketIdentifier 23) [Just Qos0] ]
       ]
     , testGroup "Quality of Service"
 
       [ testCase "transmit a Qos1 message and process acknowledgement" $ do
           let msg = Message.Message "topic" "body" Qos1 (Retain False)
-              pid = 0
+              pid = PacketIdentifier 0
           broker <- Broker.new $ TestAuthenticator authenticatorConfigAllAccess
           Broker.withSession broker connectionRequest (const $ pure ()) $ \session _-> do
             pids1 <- Session.getFreePacketIdentifiers session
@@ -118,7 +117,7 @@ getTestTree =
 
       , testCase "receive a Qos1 message and send acknowledgement" $ do
           let msg = Message.Message "topic" "body" Qos1 (Retain False)
-              pid = 0
+              pid = PacketIdentifier 0
           broker <- Broker.new $ TestAuthenticator authenticatorConfigAllAccess
           Broker.withSession broker connectionRequest (const $ pure ()) $ \session _-> do
             Broker.subscribe broker session pid [("topic", Qos0)]
@@ -129,12 +128,12 @@ getTestTree =
             Session.getSubscriptions session >>= print . R.findMaxBounded "topic"
             assertEqual "A publish acknowledgment and the (downgraded) message itself shall be in the output queue." (Seq.fromList [ ServerPublishAcknowledged pid ]) queue2
             queue3 <- Session.dequeue session
-            assertEqual "The downgraded message queue shall be in the output queue." (Seq.fromList [ ServerPublish (-1) (Duplicate False) msg { msgQos = Qos0} ]) queue3
+            assertEqual "The downgraded message queue shall be in the output queue." (Seq.fromList [ ServerPublish (PacketIdentifier (-1)) (Duplicate False) msg { msgQos = Qos0} ]) queue3
 
       , testCase "transmit a Qos1 message and retransmit after connection failure" $ do
           let req = connectionRequest { requestCleanSession = False }
               msg = Message.Message "topic" "body" Qos1 (Retain False)
-              pid = 0
+              pid = PacketIdentifier 0
           broker <- Broker.new $ TestAuthenticator authenticatorConfigAllAccess
           Broker.withSession broker req (const $ pure ()) $ \session present-> do
             assertEqual "The session shall not be present." (SessionPresent False) present
@@ -148,7 +147,7 @@ getTestTree =
 
       , testCase "transmit a Qos2 message and process confirmations" $ do
           let msg = Message.Message "topic" "body" Qos2 (Retain False)
-              pid = 0
+              pid = PacketIdentifier 0
           broker <- Broker.new $ TestAuthenticator authenticatorConfigAllAccess
           Broker.withSession broker connectionRequest (const $ pure ()) $ \session _-> do
             pids1 <- Session.getFreePacketIdentifiers session
@@ -169,7 +168,7 @@ getTestTree =
       , testCase "transmit a Qos2 message and handle retransmissions on connection failure" $ do
           let req = connectionRequest { requestCleanSession = False }
               msg = Message.Message "topic" "body" Qos2 (Retain False)
-              pid = 0
+              pid = PacketIdentifier 0
           broker <- Broker.new $ TestAuthenticator authenticatorConfigAllAccess
           Broker.withSession broker req (const $ pure ()) $ \session _-> do
             Session.enqueueMessage session msg

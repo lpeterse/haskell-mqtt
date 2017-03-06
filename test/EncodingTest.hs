@@ -32,10 +32,10 @@ instance Arbitrary ClientMessage where
     , arbitraryPublish
     , arbitrarySubscribe
     , arbitraryUnsubscribe
-    , ClientPublishAcknowledged <$> choose (0, 65535)
-    , ClientPublishReceived     <$> choose (0, 65535)
-    , ClientPublishRelease      <$> choose (0, 65535)
-    , ClientPublishComplete     <$> choose (0, 65535)
+    , ClientPublishAcknowledged <$> arbitrary
+    , ClientPublishReceived     <$> arbitrary
+    , ClientPublishRelease      <$> arbitrary
+    , ClientPublishComplete     <$> arbitrary
     , pure ClientPingRequest
     , pure ClientDisconnect
     ]
@@ -51,13 +51,13 @@ instance Arbitrary ClientMessage where
       arbitraryPublish = do
         msg <- arbitrary
         dup <- Duplicate <$> if msgQos msg == Qos0 then pure False else arbitrary
-        pid <- if msgQos msg == Qos0 then pure (-1) else choose (0, 65535)
+        pid <- PacketIdentifier <$> if msgQos msg == Qos0 then pure (-1) else choose (0, 65535)
         pure (ClientPublish pid dup msg)
       arbitrarySubscribe = ClientSubscribe
-        <$> choose (0, 65535)
+        <$> arbitrary
         <*> listOf1 ((,) <$> arbitrary <*> arbitrary )
       arbitraryUnsubscribe = ClientUnsubscribe
-        <$> choose (0, 65535)
+        <$> arbitrary
         <*> listOf1 arbitrary
 
 instance Arbitrary ServerMessage where
@@ -67,14 +67,14 @@ instance Arbitrary ServerMessage where
     , do
         msg <- arbitrary
         dup <- Duplicate <$> if msgQos msg == Qos0 then pure False else arbitrary
-        pid <- if msgQos msg == Qos0 then pure (-1) else choose (0, 65535)
+        pid <- PacketIdentifier <$> if msgQos msg == Qos0 then pure (-1) else choose (0, 65535)
         pure (ServerPublish pid dup msg)
-    , ServerPublishAcknowledged     <$> choose (0, 65535)
-    , ServerPublishReceived         <$> choose (0, 65535)
-    , ServerPublishRelease          <$> choose (0, 65535)
-    , ServerPublishComplete         <$> choose (0, 65535)
-    , ServerSubscribeAcknowledged   <$> choose (0, 65535) <*> listOf1 arbitrary
-    , ServerUnsubscribeAcknowledged <$> choose (0, 65535)
+    , ServerPublishAcknowledged     <$> arbitrary
+    , ServerPublishReceived         <$> arbitrary
+    , ServerPublishRelease          <$> arbitrary
+    , ServerPublishComplete         <$> arbitrary
+    , ServerSubscribeAcknowledged   <$> arbitrary <*> listOf1 arbitrary
+    , ServerUnsubscribeAcknowledged <$> arbitrary
     , pure ServerPingResponse
     ]
 
@@ -84,6 +84,9 @@ instance Arbitrary Message where
     <*> elements [ "", "shortTopic", BSL.replicate 345 23 ]
     <*> arbitrary
     <*> arbitrary
+
+instance Arbitrary PacketIdentifier where
+  arbitrary = PacketIdentifier <$> choose (0, 65535)
 
 instance Arbitrary SessionPresent where
   arbitrary = SessionPresent <$> arbitrary
