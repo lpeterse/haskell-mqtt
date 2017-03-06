@@ -46,8 +46,10 @@ import           Network.MQTT.Authentication          (AuthenticationException,
                                                        PrincipalIdentifier,
                                                        authenticate,
                                                        getPrincipal,
+                                                       principalQuota,
                                                        principalPublishPermissions,
-                                                       principalSubscribePermissions)
+                                                       principalSubscribePermissions,
+                                                       Quota (..))
 import           Network.MQTT.Message                 (ClientIdentifier,
                                                        ConnectionRejectReason (..),
                                                        Message (..),
@@ -164,7 +166,7 @@ getSession broker pcid@(pid, cid) =
           now <- sec <$> getTime Realtime
           semaphore <- PrioritySemaphore.new
           subscriptions <- newMVar R.empty
-          queue <- newMVar (Session.emptyServerQueue 1000)
+          queue <- newMVar (Session.emptyServerQueue $ fromIntegral $ quotaMaxInflightMessages $ principalQuota principal)
           queuePending <- newEmptyMVar
           mconnection <- newEmptyMVar
           mprincipal <- newMVar principal
@@ -181,7 +183,6 @@ getSession broker pcid@(pid, cid) =
                , Session.sessionSubscriptions    = subscriptions
                , Session.sessionQueue            = queue
                , Session.sessionQueuePending     = queuePending
-               , Session.sessionQueueLimitQos0   = 256
                , Session.sessionStatistics       = stats
                }
               newBrokerState = st

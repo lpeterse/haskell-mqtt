@@ -26,7 +26,7 @@ import qualified Data.Sequence                        as Seq
 import           GHC.Generics                      (Generic)
 import qualified Data.Binary                          as B
 
-import           Network.MQTT.Authentication
+import           Network.MQTT.Authentication hiding (getPrincipal)
 import           Network.MQTT.Message
 import qualified Network.MQTT.RoutingTree             as R
 import qualified Network.MQTT.SessionStatistics       as SS
@@ -44,7 +44,6 @@ data Session auth = Session
   , sessionSubscriptions    :: !(MVar (R.RoutingTree QualityOfService))
   , sessionQueue            :: !(MVar ServerQueue)
   , sessionQueuePending     :: !(MVar ())
-  , sessionQueueLimitQos0   :: Int
   , sessionStatistics       :: SS.Statistics
   }
 
@@ -134,9 +133,11 @@ enqueuePingResponse session = do
 -- | This enqueues a message for transmission to the client. This operation does not block.
 enqueueMessage :: Session auth -> Message -> IO ()
 enqueueMessage session msg = do
+  quota <- principalQuota <$> getPrincipal session
   modifyMVar_ (sessionQueue session) $ \queue->
     pure $! case msgQos msg of
-      Qos0 -> queue { queueQos0 = Seq.take (sessionQueueLimitQos0 session) $ queueQos0 queue Seq.|> msg }
+      Qos0 -> queue { queueQos0 = Seq.take (fromIntegral $ quotaMaxQueueSizeQos0 quota) $ queueQos0 queue Seq.|> msg }
+      -- TODO: Terminate session on queue overflow!
       Qos1 -> queue { queueQos1 = queueQos1 queue Seq.|> msg }
       Qos2 -> queue { queueQos2 = queueQos2 queue Seq.|> msg }
   -- IMPORTANT: Notify the sending thread that something has been enqueued!
