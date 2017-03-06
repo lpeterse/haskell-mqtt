@@ -66,9 +66,9 @@ data Quota
    = Quota
    { quotaSessionTTL           :: Word64
    , quotaMaxInflightMessages  :: Word64
-   , quotaMaxQueueSizeQos0     :: Word64
-   , quotaMaxQueueSizeQos1     :: Word64
-   , quotaMaxQueueSizeQos2     :: Word64
+   , quotaMaxQueueSizeQoS0     :: Word64
+   , quotaMaxQueueSizeQoS1     :: Word64
+   , quotaMaxQueueSizeQoS2     :: Word64
    } deriving (Eq, Ord, Show, Generic)
 
 instance B.Binary Quota

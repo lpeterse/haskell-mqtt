@@ -21,7 +21,7 @@ main  = do
     message :: M.Message
     message = M.Message {
         M.msgTopic = "ahsdjkha/def/hij"
-      , M.msgBody = "ahsjdkhajskdhaksjdhakjshd"
-      , M.msgQos = M.Qos1
+      , M.msgPayload = "ahsjdkhajskdhaksjdhakjshd"
+      , M.msgQoS = M.QoS1
       , M.msgRetain = M.Retain True
       }

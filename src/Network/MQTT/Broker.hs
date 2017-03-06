@@ -50,12 +50,11 @@ import           Network.MQTT.Authentication           (AuthenticationException,
                                                         principalPublishPermissions,
                                                         principalQuota,
                                                         principalSubscribePermissions)
-import           Network.MQTT.Message                  (ClientIdentifier, ConnectionRejectReason (..),
+import           Network.MQTT.Message                  (ClientIdentifier, RejectReason (..),
                                                         Message (..),
                                                         PacketIdentifier,
                                                         SessionPresent (..))
 import qualified Network.MQTT.Message                  as Message
-import           Network.MQTT.Message.QualityOfService (QualityOfService)
 import           Network.MQTT.Message.Topic
 import qualified Network.MQTT.RetainedMessages         as RM
 import qualified Network.MQTT.RoutingTree              as R
@@ -95,7 +94,7 @@ new authenticator = do
     , brokerState         = st
     }
 
-withSession :: forall auth. (Authenticator auth) => Broker auth -> ConnectionRequest -> (ConnectionRejectReason -> IO ()) -> (Session.Session auth -> SessionPresent -> IO ()) -> IO ()
+withSession :: forall auth. (Authenticator auth) => Broker auth -> ConnectionRequest -> (RejectReason -> IO ()) -> (Session.Session auth -> SessionPresent -> IO ()) -> IO ()
 withSession broker request sessionRejectHandler sessionAcceptHandler =
   (try $ authenticate (brokerAuthenticator broker) request :: IO (Either (AuthenticationException auth) (Maybe PrincipalIdentifier))) >>= \case
     Left _ -> sessionRejectHandler ServerUnavailable
@@ -272,7 +271,7 @@ publish broker session msg = do
     else
       SS.accountMessageDropped (Session.sessionStatistics session)
 
-subscribe :: Broker auth -> Session.Session auth -> PacketIdentifier -> [(Filter, QualityOfService)] -> IO ()
+subscribe :: Broker auth -> Session.Session auth -> PacketIdentifier -> [(Filter, Message.QoS)] -> IO ()
 subscribe broker session pid filters = do
   principal <- readMVar (Session.sessionPrincipal session)
   checkedFilters <- mapM (checkPermission principal) filters

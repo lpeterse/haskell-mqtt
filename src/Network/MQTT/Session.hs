@@ -41,7 +41,7 @@ data Session auth = Session
   , sessionConnection       :: !(MVar Connection)
   , sessionPrincipal        :: !(MVar Principal)
   , sessionSemaphore        :: !PrioritySemaphore
-  , sessionSubscriptions    :: !(MVar (R.RoutingTree QualityOfService))
+  , sessionSubscriptions    :: !(MVar (R.RoutingTree QoS))
   , sessionQueue            :: !(MVar ServerQueue)
   , sessionQueuePending     :: !(MVar ())
   , sessionStatistics       :: SS.Statistics
@@ -73,12 +73,12 @@ data ServerQueue
   = ServerQueue
   { queuePids       :: !(Seq.Seq PacketIdentifier)
   , outputBuffer    :: !(Seq.Seq ServerPacket)
-  , queueQos0       :: !(Seq.Seq Message)
-  , queueQos1       :: !(Seq.Seq Message)
-  , queueQos2       :: !(Seq.Seq Message)
-  , notAcknowledged :: !(IM.IntMap Message) -- We sent a `Qos1` message and have not yet received the @PUBACK@.
-  , notReceived     :: !(IM.IntMap Message) -- We sent a `Qos2` message and have not yet received the @PUBREC@.
-  , notReleased     :: !(IM.IntMap Message) -- We received as `Qos2` message, sent the @PUBREC@ and wait for the @PUBREL@.
+  , queueQoS0       :: !(Seq.Seq Message)
+  , queueQoS1       :: !(Seq.Seq Message)
+  , queueQoS2       :: !(Seq.Seq Message)
+  , notAcknowledged :: !(IM.IntMap Message) -- We sent a `QoS1` message and have not yet received the @PUBACK@.
+  , notReceived     :: !(IM.IntMap Message) -- We sent a `QoS2` message and have not yet received the @PUBREC@.
+  , notReleased     :: !(IM.IntMap Message) -- We received as `QoS2` message, sent the @PUBREC@ and wait for the @PUBREL@.
   , notComplete     :: !IS.IntSet           -- We sent a @PUBREL@ and have not yet received the @PUBCOMP@.
   }
 
@@ -86,9 +86,9 @@ emptyServerQueue :: Int -> ServerQueue
 emptyServerQueue i = ServerQueue
   { queuePids         = Seq.fromList $ fmap PacketIdentifier [0 .. min i 65535]
   , outputBuffer      = mempty
-  , queueQos0         = mempty
-  , queueQos1         = mempty
-  , queueQos2         = mempty
+  , queueQoS0         = mempty
+  , queueQoS1         = mempty
+  , queueQoS2         = mempty
   , notAcknowledged   = mempty
   , notReceived       = mempty
   , notReleased       = mempty
@@ -114,7 +114,7 @@ publishMessage session msg = do
   subscriptions <- readMVar (sessionSubscriptions session)
   case R.findMaxBounded (msgTopic msg) subscriptions of
     Nothing  -> pure ()
-    Just qos -> enqueueMessage session msg { msgQos = qos }
+    Just qos -> enqueueMessage session msg { msgQoS = qos }
 
 publishMessages :: Foldable t => Session auth -> t Message -> IO ()
 publishMessages session msgs =
@@ -135,11 +135,11 @@ enqueueMessage :: Session auth -> Message -> IO ()
 enqueueMessage session msg = do
   quota <- principalQuota <$> getPrincipal session
   modifyMVar_ (sessionQueue session) $ \queue->
-    pure $! case msgQos msg of
-      Qos0 -> queue { queueQos0 = Seq.take (fromIntegral $ quotaMaxQueueSizeQos0 quota) $ queueQos0 queue Seq.|> msg }
+    pure $! case msgQoS msg of
+      QoS0 -> queue { queueQoS0 = Seq.take (fromIntegral $ quotaMaxQueueSizeQoS0 quota) $ queueQoS0 queue Seq.|> msg }
       -- TODO: Terminate session on queue overflow!
-      Qos1 -> queue { queueQos1 = queueQos1 queue Seq.|> msg }
-      Qos2 -> queue { queueQos2 = queueQos2 queue Seq.|> msg }
+      QoS1 -> queue { queueQoS1 = queueQoS1 queue Seq.|> msg }
+      QoS2 -> queue { queueQoS2 = queueQoS2 queue Seq.|> msg }
   -- IMPORTANT: Notify the sending thread that something has been enqueued!
   notePending session
 
@@ -148,7 +148,7 @@ enqueueMessages :: Foldable t => Session auth -> t Message -> IO ()
 enqueueMessages session msgs =
   forM_ msgs (enqueueMessage session)
 
-enqueueSubscribeAcknowledged :: Session auth -> PacketIdentifier -> [Maybe QualityOfService] -> IO ()
+enqueueSubscribeAcknowledged :: Session auth -> PacketIdentifier -> [Maybe QoS] -> IO ()
 enqueueSubscribeAcknowledged session pid mqoss = do
   modifyMVar_ (sessionQueue session) $ \queue->
     pure $! queue { outputBuffer = outputBuffer queue Seq.|> ServerSubscribeAcknowledged pid mqoss }
@@ -167,7 +167,7 @@ dequeue session =
   modifyMVar (sessionQueue session) $ \queue-> do
     let q = normalizeQueue queue
     if | not (Seq.null $ outputBuffer q) -> pure (q { outputBuffer = mempty }, outputBuffer q)
-       | not (Seq.null $ queueQos0    q) -> pure (q { queueQos0    = mempty }, fmap (ServerPublish (PacketIdentifier (-1)) (Duplicate False)) (queueQos0 q))
+       | not (Seq.null $ queueQoS0    q) -> pure (q { queueQoS0    = mempty }, fmap (ServerPublish (PacketIdentifier (-1)) (Duplicate False)) (queueQoS0 q))
        | otherwise                       -> clearPending >> pure (q, mempty)
   where
     -- | In case all queues are empty, we need to clear the `pending` variable.
@@ -181,23 +181,23 @@ dequeue session =
 --   Different handling depending on message qos.
 processPublish :: Session auth -> PacketIdentifier -> Duplicate -> Message -> (Message -> IO ()) -> IO ()
 processPublish session pid@(PacketIdentifier p) _dup msg forward =
-  case msgQos msg of
-    Qos0 ->
+  case msgQoS msg of
+    QoS0 ->
       forward msg
-    Qos1 -> do
+    QoS1 -> do
       forward msg
       modifyMVar_ (sessionQueue session) $ \q-> pure $! q {
           outputBuffer = outputBuffer q Seq.|> ServerPublishAcknowledged pid
         }
       notePending session
-    Qos2 -> do
+    QoS2 -> do
       modifyMVar_ (sessionQueue session) $ \q-> pure $! q {
           outputBuffer = outputBuffer q Seq.|> ServerPublishReceived pid
         , notReleased  = IM.insert p msg (notReleased q)
         }
       notePending session
 
--- | Note that a Qos1 message has been received by the peer.
+-- | Note that a QoS1 message has been received by the peer.
 --
 --   This shall be called when a @PUBACK@ has been received by the peer.
 --   We release the message from our buffer and the transaction is then complete.
@@ -211,7 +211,7 @@ processPublishAcknowledged session (PacketIdentifier pid) = do
   -- See code of `processPublishComplete` for explanation.
   notePending session
 
--- | Note that a Qos2 message has been received by the peer.
+-- | Note that a QoS2 message has been received by the peer.
 --
 --   This shall be called when a @PUBREC@ has been received from the peer.
 --   This is the completion of the second step in a 4-way handshake.
@@ -227,7 +227,7 @@ processPublishReceived session (PacketIdentifier pid) = do
     }
   notePending session
 
--- | Release a `Qos2` message.
+-- | Release a `QoS2` message.
 --
 --   This shall be called when @PUBREL@ has been received from the peer.
 --   It enqueues an outgoing @PUBCOMP@.
@@ -247,7 +247,7 @@ processPublishRelease session (PacketIdentifier pid) upstream = do
                   }
   notePending session
 
--- | Complete the transmission of a Qos2 message.
+-- | Complete the transmission of a QoS2 message.
 --
 --   This shall be called when a @PUBCOMP@ has been received from the peer
 --   to finally free the packet identifier.
@@ -265,7 +265,7 @@ processPublishComplete session (PacketIdentifier pid) = do
   -- them once and immediately sleep again.
   notePending session
 
-getSubscriptions :: Session auth -> IO (R.RoutingTree QualityOfService)
+getSubscriptions :: Session auth -> IO (R.RoutingTree QoS)
 getSubscriptions session =
   readMVar (sessionSubscriptions session)
 
@@ -283,47 +283,47 @@ getFreePacketIdentifiers session =
 
 resetQueue :: ServerQueue -> ServerQueue
 resetQueue q = q {
-    outputBuffer = (rePublishQos1 . rePublishQos2 . reReleaseQos2) mempty
+    outputBuffer = (rePublishQoS1 . rePublishQoS2 . reReleaseQoS2) mempty
   }
   where
-    rePublishQos1 s = IM.foldlWithKey (\s' pid msg-> s' Seq.|> ServerPublish         (PacketIdentifier pid) (Duplicate True) msg) s (notAcknowledged q)
-    rePublishQos2 s = IM.foldlWithKey (\s' pid msg-> s' Seq.|> ServerPublish         (PacketIdentifier pid) (Duplicate True) msg) s (notReceived     q)
-    reReleaseQos2 s = IS.foldl        (\s' pid->     s' Seq.|> ServerPublishRelease  (PacketIdentifier pid)                     ) s (notComplete     q)
+    rePublishQoS1 s = IM.foldlWithKey (\s' pid msg-> s' Seq.|> ServerPublish         (PacketIdentifier pid) (Duplicate True) msg) s (notAcknowledged q)
+    rePublishQoS2 s = IM.foldlWithKey (\s' pid msg-> s' Seq.|> ServerPublish         (PacketIdentifier pid) (Duplicate True) msg) s (notReceived     q)
+    reReleaseQoS2 s = IS.foldl        (\s' pid->     s' Seq.|> ServerPublishRelease  (PacketIdentifier pid)                     ) s (notComplete     q)
 
 -- | This function fills the output buffer with as many messages
 --   as possible (this is limited by the available packet identifiers).
 normalizeQueue :: ServerQueue -> ServerQueue
-normalizeQueue = takeQos1 . takeQos2
+normalizeQueue = takeQoS1 . takeQoS2
   where
-    takeQos1 q
+    takeQoS1 q
       | Seq.null msgs     = q
       | otherwise         = q
         { outputBuffer    = outputBuffer q <> Seq.zipWith (flip ServerPublish (Duplicate False)) pids' msgs'
         , queuePids       = pids''
-        , queueQos1       = msgs''
+        , queueQoS1       = msgs''
         , notAcknowledged = foldr (\(PacketIdentifier pid, msg)-> IM.insert pid msg)
                                   (notAcknowledged q)
                                   (Seq.zipWith (,) pids' msgs')
         }
       where
         pids              = queuePids q
-        msgs              = queueQos1 q
+        msgs              = queueQoS1 q
         n                 = min (Seq.length pids) (Seq.length msgs)
         (pids', pids'')   = Seq.splitAt n pids
         (msgs', msgs'')   = Seq.splitAt n msgs
-    takeQos2 q
+    takeQoS2 q
       | Seq.null msgs     = q
       | otherwise         = q
         { outputBuffer    = outputBuffer q <> Seq.zipWith (flip ServerPublish (Duplicate False)) pids' msgs'
         , queuePids       = pids''
-        , queueQos2       = msgs''
+        , queueQoS2       = msgs''
         , notReceived     = foldr (\(PacketIdentifier pid, msg)-> IM.insert pid msg)
                                   (notReceived q)
                                   (Seq.zipWith (,) pids' msgs')
         }
       where
         pids              = queuePids q
-        msgs              = queueQos2 q
+        msgs              = queueQoS2 q
         n                 = min (Seq.length pids) (Seq.length msgs)
         (pids', pids'')   = Seq.splitAt n pids
         (msgs', msgs'')   = Seq.splitAt n msgs

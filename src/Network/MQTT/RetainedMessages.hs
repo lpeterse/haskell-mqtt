@@ -33,11 +33,12 @@ store  :: Message.Message -> RetainedStore -> IO ()
 store msg (RetainedStore mvar)
   | retain = modifyMVar_ mvar $ \tree->
       -- The seq ($!) is important for not leaking memory!
-      pure $! if BSL.null (Message.msgBody msg)
+      pure $! if BSL.null body
         then delete msg tree
         else insert msg tree
   | otherwise = pure ()
   where
+    Message.Payload body = Message.msgPayload msg
     Message.Retain retain = Message.msgRetain msg
 
 retrieve :: Topic.Filter -> RetainedStore -> IO (S.Set Message.Message)

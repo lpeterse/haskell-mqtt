@@ -9,19 +9,19 @@
 -- Stability   :  experimental
 --------------------------------------------------------------------------------
 module Network.MQTT.Message.Topic
-  ( -- * Topic
+  ( -- ** Topic
     Topic ()
   , topicLevels
   , topicLength
   , topicParser
   , topicBuilder
-  -- * Filter
+  -- ** Filter
   , Filter ()
   , filterLevels
   , filterLength
   , filterParser
   , filterBuilder
-  -- * Level
+  -- ** Level
   , Level ()
   , levelParser
   , multiLevelWildcard

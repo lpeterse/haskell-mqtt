@@ -12,41 +12,46 @@
 -- Stability   :  experimental
 --------------------------------------------------------------------------------
 module Network.MQTT.Message (
-  -- * ClientPacket
-    ClientPacket (..)
+  -- * Message
+   Message (..)
+  , module Network.MQTT.Message.Topic
+  -- ** QoS
+  , QoS (..)
+  -- ** Retain
+  , Retain (..)
+  -- ** Payload
+  , Payload (..)
+
+  -- * Packet
+  -- ** ClientPacket
+  , ClientPacket (..)
   , clientPacketBuilder
   , clientPacketParser
-  -- * ServerPacket
+  -- ** ServerPacket
   , ServerPacket (..)
   , serverPacketBuilder
   , serverPacketParser
-  -- * Other types
+
   -- ** PacketIdentifier
   , PacketIdentifier (..)
   -- ** ClientIdentifier
   , ClientIdentifier (..)
-  -- ** SessionPresent
-  , SessionPresent (..)
-  -- ** CleanSession
-  , CleanSession (..)
-  -- ** Retain
-  , Retain (..)
-  -- ** Duplicate
-  , Duplicate (..)
-  -- ** KeepAliveInterval
-  , KeepAliveInterval (..)
   -- ** Username
   , Username (..)
   -- ** Password
   , Password (..)
-  -- ** QualityOfService
-  , QualityOfService (..)
-  -- ** ConnectionRejectReason
-  , ConnectionRejectReason (..)
-  -- ** Topic / Filter
-  , module Network.MQTT.Message.Topic
-  , Message (..)
-  -- ** Other (internal) exports
+  -- ** CleanSession
+  , CleanSession (..)
+  -- ** SessionPresent
+  , SessionPresent (..)
+  -- ** RejectReason
+  , RejectReason (..)
+  -- ** Duplicate
+  , Duplicate (..)
+  -- ** KeepAliveInterval
+  , KeepAliveInterval (..)
+
+  -- * Other (internal) exports
   , lengthParser
   , lengthBuilder
   , utf8Parser
@@ -69,13 +74,14 @@ import qualified Data.Text.Encoding                    as T
 import           Data.Word
 import           GHC.Generics
 
-import           Network.MQTT.Message.QualityOfService
+import           Network.MQTT.Message.QoS
 import           Network.MQTT.Message.Topic
 import qualified Network.MQTT.Message.Topic            as TF
 
 newtype SessionPresent    = SessionPresent Bool      deriving (Eq, Ord, Show)
 newtype CleanSession      = CleanSession Bool        deriving (Eq, Ord, Show)
 newtype Retain            = Retain Bool              deriving (Eq, Ord, Show)
+newtype Payload              = Payload BSL.ByteString      deriving (Eq, Ord, Show, IsString)
 newtype Duplicate         = Duplicate Bool           deriving (Eq, Ord, Show)
 newtype KeepAliveInterval = KeepAliveInterval Word16 deriving (Eq, Ord, Show, Num)
 newtype Username          = Username T.Text          deriving (Eq, Ord, Show, IsString)
@@ -88,7 +94,7 @@ instance Show Password where
 
 instance B.Binary ClientIdentifier
 
-data ConnectionRejectReason
+data RejectReason
    = UnacceptableProtocolVersion
    | IdentifierRejected
    | ServerUnavailable
@@ -98,10 +104,10 @@ data ConnectionRejectReason
 
 data Message
    = Message
-   { msgTopic  :: !TF.Topic
-   , msgBody   :: !BSL.ByteString
-   , msgQos    :: !QualityOfService
-   , msgRetain :: !Retain
+   { msgTopic   :: !TF.Topic
+   , msgQoS     :: !QoS
+   , msgRetain  :: !Retain
+   , msgPayload :: !Payload
    } deriving (Eq, Ord, Show)
 
 data ClientPacket
@@ -118,7 +124,7 @@ data ClientPacket
    | ClientPublishReceived       {-# UNPACK #-} !PacketIdentifier
    | ClientPublishRelease        {-# UNPACK #-} !PacketIdentifier
    | ClientPublishComplete       {-# UNPACK #-} !PacketIdentifier
-   | ClientSubscribe             {-# UNPACK #-} !PacketIdentifier ![(TF.Filter, QualityOfService)]
+   | ClientSubscribe             {-# UNPACK #-} !PacketIdentifier ![(TF.Filter, QoS)]
    | ClientUnsubscribe           {-# UNPACK #-} !PacketIdentifier ![TF.Filter]
    | ClientPingRequest
    | ClientDisconnect
@@ -126,13 +132,13 @@ data ClientPacket
 
 data ServerPacket
    = ServerConnectionAccepted                            !SessionPresent
-   | ServerConnectionRejected                            !ConnectionRejectReason
+   | ServerConnectionRejected                            !RejectReason
    | ServerPublish                        {-# UNPACK #-} !PacketIdentifier !Duplicate !Message
    | ServerPublishAcknowledged            {-# UNPACK #-} !PacketIdentifier
    | ServerPublishReceived                {-# UNPACK #-} !PacketIdentifier
    | ServerPublishRelease                 {-# UNPACK #-} !PacketIdentifier
    | ServerPublishComplete                {-# UNPACK #-} !PacketIdentifier
-   | ServerSubscribeAcknowledged          {-# UNPACK #-} !PacketIdentifier ![Maybe QualityOfService]
+   | ServerSubscribeAcknowledged          {-# UNPACK #-} !PacketIdentifier ![Maybe QoS]
    | ServerUnsubscribeAcknowledged        {-# UNPACK #-} !PacketIdentifier
    | ServerPingResponse
    deriving (Eq, Show)
@@ -184,13 +190,13 @@ connectParser = do
         else Just <$> do
           topic      <- fst <$> topicAndLengthParser
           bodyLen    <- fromIntegral <$> SG.getWord16be
-          body       <- SG.getLazyByteString bodyLen
+          payload    <- Payload <$> SG.getLazyByteString bodyLen
           qos        <- case y .&. 0x18 of
-            0x00 -> pure Qos0
-            0x08 -> pure Qos1
-            0x10 -> pure Qos2
+            0x00 -> pure QoS0
+            0x08 -> pure QoS1
+            0x10 -> pure QoS2
             _    -> fail "connectParser: Violation of [MQTT-3.1.2-14]."
-          pure $ Message topic body qos retain
+          pure $ Message topic qos retain payload
       cred  <- if y .&. 0x80 == 0
         then pure Nothing
         else Just <$> ( (,)
@@ -234,18 +240,18 @@ publishParser publish = do
       body <- SG.getLazyByteString $ fromIntegral ( len - topicLen )
       pure $ publish (PacketIdentifier (-1)) dup Message {
             msgTopic     = topic
-          , msgBody      = body
-          , msgQos       = Qos0
+          , msgPayload      = Payload body
+          , msgQoS       = QoS0
           , msgRetain    = ret
         }
     else do
-      let qos = if qosBits == 0x02 then Qos1 else Qos2
+      let qos = if qosBits == 0x02 then QoS1 else QoS2
       pid  <- PacketIdentifier . fromIntegral <$> SG.getWord16be
       body <- SG.getLazyByteString $ fromIntegral ( len - topicLen - 2 )
       pure $ publish pid dup Message {
           msgTopic     = topic
-        , msgBody      = body
-        , msgQos       = qos
+        , msgPayload      = Payload body
+        , msgQoS       = qos
         , msgRetain    = ret
         }
 
@@ -269,9 +275,9 @@ subscribeParser = do
           qos <- getQoS
           parseFilters ( r - 1 - len ) ( ( filtr, qos ) : accum )
     getQoS = SG.getWord8 >>= \w-> case w of
-        0x00 -> pure Qos0
-        0x01 -> pure Qos1
-        0x02 -> pure Qos2
+        0x00 -> pure QoS0
+        0x01 -> pure QoS1
+        0x02 -> pure QoS2
         _    -> fail "clientSubscribeParser: Violation of [MQTT-3.8.3-4]."
 
 unsubscribeParser :: SG.Get ClientPacket
@@ -294,9 +300,9 @@ subscribeAcknowledgedParser = do
   pid  <- PacketIdentifier . fromIntegral <$> SG.getWord16be
   ServerSubscribeAcknowledged pid <$> (map f . BS.unpack <$> SG.getByteString (rlen - 2))
   where
-    f 0x00 = Just Qos0
-    f 0x01 = Just Qos1
-    f 0x02 = Just Qos2
+    f 0x00 = Just QoS0
+    f 0x01 = Just QoS1
+    f 0x02 = Just QoS2
     f    _ = Nothing
 
 pingRequestParser :: SG.Get ClientPacket
@@ -335,13 +341,13 @@ clientPacketBuilder (ClientConnect
     (willBuilder, willLen, willFlag) = case will of
       Nothing ->
         (mempty, 0, 0x00)
-      Just (Message t b q (Retain r))->
+      Just (Message t q (Retain r) (Payload b))->
        let tlen  = TF.topicLength t
            blen  = fromIntegral (BSL.length b)
            qflag = case q of
-             Qos0 -> 0x04
-             Qos1 -> 0x0c
-             Qos2 -> 0x14
+             QoS0 -> 0x04
+             QoS1 -> 0x0c
+             QoS2 -> 0x14
            rflag = if r then 0x20 else 0x00
            x1 = BS.word16BE (fromIntegral tlen)
            x2 = TF.topicBuilder t
@@ -387,9 +393,9 @@ clientPacketBuilder (ClientSubscribe (PacketIdentifier pid) filters) =
         fb = TF.filterBuilder f
         fl = TF.filterLength  f
         qb = BS.word8 $ case q of
-          Qos0 -> 0x00
-          Qos1 -> 0x01
-          Qos2 -> 0x02
+          QoS0 -> 0x00
+          QoS1 -> 0x01
+          QoS2 -> 0x02
     len  = 2  + sum ( map ( (+3) . TF.filterLength . fst ) filters )
 clientPacketBuilder (ClientUnsubscribe (PacketIdentifier pid) filters) =
   BS.word8 0xa2 <> lengthBuilder len <> BS.word16BE (fromIntegral pid)
@@ -431,9 +437,9 @@ serverPacketBuilder (ServerSubscribeAcknowledged (PacketIdentifier pid) rcs) =
     <> BS.word16BE (fromIntegral pid) <> mconcat ( map ( BS.word8 . f ) rcs )
   where
     f Nothing     = 0x80
-    f (Just Qos0) = 0x00
-    f (Just Qos1) = 0x01
-    f (Just Qos2) = 0x02
+    f (Just QoS0) = 0x00
+    f (Just QoS1) = 0x01
+    f (Just QoS2) = 0x02
 serverPacketBuilder (ServerUnsubscribeAcknowledged (PacketIdentifier pid)) =
   BS.word16BE 0xb002 <> BS.word16BE (fromIntegral pid)
 serverPacketBuilder ServerPingResponse =
@@ -445,20 +451,21 @@ publishBuilder (PacketIdentifier pid) (Duplicate dup) msg =
   <> lengthBuilder len
   <> BS.word16BE (fromIntegral topicLen)
   <> topicBuilder'
-  <> bool (BS.word16BE $ fromIntegral pid) mempty (msgQos msg == Qos0)
-  <> BS.lazyByteString (msgBody msg)
+  <> bool (BS.word16BE $ fromIntegral pid) mempty (msgQoS msg == QoS0)
+  <> BS.lazyByteString body
   where
+    Payload body      = msgPayload msg
     topicLen       = TF.topicLength  (msgTopic msg)
     topicBuilder'  = TF.topicBuilder (msgTopic msg)
-    len            = 2 + topicLen + fromIntegral (BSL.length $ msgBody msg)
-                   + bool 2 0 (msgQos msg == Qos0)
+    len            = 2 + topicLen + fromIntegral (BSL.length body)
+                   + bool 2 0 (msgQoS msg == QoS0)
     h              = 0x30
                   .|. bool 0x00 0x01 retain
                   .|. bool 0x00 0x08 dup
-                  .|. case msgQos msg of
-                        Qos0 -> 0x00
-                        Qos1 -> 0x02
-                        Qos2 -> 0x04
+                  .|. case msgQoS msg of
+                        QoS0 -> 0x00
+                        QoS1 -> 0x02
+                        QoS2 -> 0x04
       where
         Retain retain = msgRetain msg
 

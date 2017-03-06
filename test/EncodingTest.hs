@@ -50,8 +50,8 @@ instance Arbitrary ClientPacket where
           <*> oneof [ pure Nothing, Just <$> elements [ Password "", Password "password" ] ] ]
       arbitraryPublish = do
         msg <- arbitrary
-        dup <- Duplicate <$> if msgQos msg == Qos0 then pure False else arbitrary
-        pid <- PacketIdentifier <$> if msgQos msg == Qos0 then pure (-1) else choose (0, 65535)
+        dup <- Duplicate <$> if msgQoS msg == QoS0 then pure False else arbitrary
+        pid <- PacketIdentifier <$> if msgQoS msg == QoS0 then pure (-1) else choose (0, 65535)
         pure (ClientPublish pid dup msg)
       arbitrarySubscribe = ClientSubscribe
         <$> arbitrary
@@ -66,8 +66,8 @@ instance Arbitrary ServerPacket where
     , ServerConnectionRejected      <$> arbitrary
     , do
         msg <- arbitrary
-        dup <- Duplicate <$> if msgQos msg == Qos0 then pure False else arbitrary
-        pid <- PacketIdentifier <$> if msgQos msg == Qos0 then pure (-1) else choose (0, 65535)
+        dup <- Duplicate <$> if msgQoS msg == QoS0 then pure False else arbitrary
+        pid <- PacketIdentifier <$> if msgQoS msg == QoS0 then pure (-1) else choose (0, 65535)
         pure (ServerPublish pid dup msg)
     , ServerPublishAcknowledged     <$> arbitrary
     , ServerPublishReceived         <$> arbitrary
@@ -81,7 +81,7 @@ instance Arbitrary ServerPacket where
 instance Arbitrary Message where
   arbitrary = Message
     <$> arbitrary
-    <*> elements [ "", "shortTopic", BSL.replicate 345 23 ]
+    <*> elements [ "", "shortTopic", Payload $ BSL.replicate 345 23 ]
     <*> arbitrary
     <*> arbitrary
 
@@ -100,7 +100,7 @@ instance Arbitrary Retain where
 instance Arbitrary KeepAliveInterval where
   arbitrary = KeepAliveInterval <$> arbitrary
 
-instance Arbitrary ConnectionRejectReason where
+instance Arbitrary RejectReason where
   arbitrary = elements
     [ UnacceptableProtocolVersion
     , IdentifierRejected
@@ -109,8 +109,8 @@ instance Arbitrary ConnectionRejectReason where
     , NotAuthorized
     ]
 
-instance Arbitrary QualityOfService where
-  arbitrary = elements [ Qos0, Qos1, Qos2 ]
+instance Arbitrary QoS where
+  arbitrary = elements [ QoS0, QoS1, QoS2 ]
 
 instance Arbitrary Topic.Topic where
   arbitrary = elements

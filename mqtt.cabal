@@ -32,7 +32,7 @@ library
                        Network.MQTT.Session,
                        Network.MQTT.SessionStatistics
   other-modules:       Control.Concurrent.PrioritySemaphore,
-                       Network.MQTT.Message.QualityOfService,
+                       Network.MQTT.Message.QoS,
                        Network.MQTT.Message.Topic
   build-depends:       async,
                        attoparsec,

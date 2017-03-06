@@ -88,7 +88,7 @@ instance (SS.StreamServerStack transport) => SS.ServerStack (MQTT transport) whe
   data ServerException (MQTT transport)
     = ProtocolViolation String
     | MessageTooLong
-    | ConnectionRejected ConnectionRejectReason
+    | ConnectionRejected RejectReason
     | KeepAliveTimeoutException
     deriving (Eq, Ord, Show, Typeable)
   withServer config handle =
