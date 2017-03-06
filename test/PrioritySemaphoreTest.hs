@@ -5,7 +5,6 @@ import           Control.Monad ( void )
 import           Control.Exception
 import           Control.Concurrent
 import           Control.Concurrent.Async
-import           Control.Concurrent.MVar
 import qualified Control.Concurrent.PrioritySemaphore as PrioritySemaphore
 import           Test.Tasty
 import           Test.Tasty.HUnit

@@ -118,6 +118,7 @@ test-suite test
     , network-uri
     , deepseq
     , containers
+    , uuid
 
 test-suite priority-semaphore
   type:
