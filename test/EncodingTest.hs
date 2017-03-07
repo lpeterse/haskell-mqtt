@@ -1,15 +1,16 @@
 {-# LANGUAGE OverloadedStrings #-}
 module EncodingTest (tests) where
 
+import qualified Data.Binary.Get         as SG
 import qualified Data.ByteString.Builder as BS
 import qualified Data.ByteString.Lazy    as BSL
-import qualified Data.Binary.Get         as SG
-import           Network.MQTT.Message
-import qualified Network.MQTT.Message      as Topic
 import           Prelude                 hiding (head)
 import           Test.Tasty
 import           Test.Tasty.HUnit
 import           Test.Tasty.QuickCheck   as QC
+
+import           Network.MQTT.Message
+import qualified Network.MQTT.Message    as Topic
 
 tests :: TestTree
 tests = testGroup "Encoding / Decoding"

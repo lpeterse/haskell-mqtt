@@ -4,7 +4,7 @@ module Main where
 import           Control.Monad                        (forM_)
 
 import qualified Network.MQTT.Message                 as M
-import qualified Network.MQTT.Server.RetainedMessages as Retained
+import qualified Network.MQTT.Broker.RetainedMessages as Retained
 
 -- | This shall test whether inserting into the RetainedStore
 --   leaks memory by building up unevaluated thunks.

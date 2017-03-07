@@ -25,15 +25,16 @@ library
                        Network.MQTT.Client,
                        Network.MQTT.Message,
                        Network.MQTT.Trie,
+                       Network.MQTT.Broker,
                        Network.MQTT.Server,
-                       Network.MQTT.Server.Authentication,
-                       Network.MQTT.Server.Broker,
-                       Network.MQTT.Server.RetainedMessages,
-                       Network.MQTT.Server.Session,
-                       Network.MQTT.Server.SessionStatistics
+                       Network.MQTT.Broker.Authentication,
+                       Network.MQTT.Broker.RetainedMessages,
+                       Network.MQTT.Broker.Session,
+                       Network.MQTT.Broker.SessionStatistics
   other-modules:       Control.Concurrent.PrioritySemaphore,
                        Network.MQTT.Message.QoS,
-                       Network.MQTT.Message.Topic
+                       Network.MQTT.Message.Topic,
+                       Network.MQTT.Broker.Internal
   build-depends:       async,
                        attoparsec,
                        base >=4.8 && <5,

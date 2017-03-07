@@ -29,9 +29,9 @@ import qualified System.Log.Logger                  as Log
 import qualified System.Socket                      as S
 
 import           Network.MQTT.Message
-import           Network.MQTT.Server.Authentication
-import qualified Network.MQTT.Server.Broker         as Broker
-import qualified Network.MQTT.Server.Session        as Session
+import           Network.MQTT.Broker.Authentication
+import qualified Network.MQTT.Broker                as Broker
+import qualified Network.MQTT.Broker.Session        as Session
 
 instance (Typeable transport) => E.Exception (SS.ServerException (MQTT transport))
 

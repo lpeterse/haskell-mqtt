@@ -5,9 +5,10 @@ import           Control.Monad ( void )
 import           Control.Exception
 import           Control.Concurrent
 import           Control.Concurrent.Async
-import qualified Control.Concurrent.PrioritySemaphore as PrioritySemaphore
 import           Test.Tasty
 import           Test.Tasty.HUnit
+
+import qualified Control.Concurrent.PrioritySemaphore as PrioritySemaphore
 
 main :: IO ()
 main = defaultMain $ testGroup "Control.Concurrent.PrioritySemaphore"

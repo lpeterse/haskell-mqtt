@@ -4,14 +4,14 @@
 {-# LANGUAGE TupleSections     #-}
 --------------------------------------------------------------------------------
 -- |
--- Module      :  Network.MQTT.Session
+-- Module      :  Network.MQTT.Broker.Session
 -- Copyright   :  (c) Lars Petersen 2016
 -- License     :  MIT
 --
 -- Maintainer  :  info@lars-petersen.net
 -- Stability   :  experimental
 --------------------------------------------------------------------------------
-module Network.MQTT.Server.Session where
+module Network.MQTT.Broker.Session where
 
 import           Control.Concurrent.MVar
 import           Control.Concurrent.PrioritySemaphore
@@ -28,8 +28,8 @@ import           GHC.Generics                          (Generic)
 
 import           Network.MQTT.Message
 import qualified Network.MQTT.Trie              as R
-import           Network.MQTT.Server.Authentication    hiding (getPrincipal)
-import qualified Network.MQTT.Server.SessionStatistics as SS
+import           Network.MQTT.Broker.Authentication    hiding (getPrincipal)
+import qualified Network.MQTT.Broker.SessionStatistics as SS
 
 type Identifier = Int
 

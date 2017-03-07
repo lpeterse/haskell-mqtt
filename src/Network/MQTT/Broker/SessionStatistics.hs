@@ -1,5 +1,14 @@
 {-# LANGUAGE DeriveGeneric #-}
-module Network.MQTT.Server.SessionStatistics
+--------------------------------------------------------------------------------
+-- |
+-- Module      :  Network.MQTT.Broker.SessionStatistics
+-- Copyright   :  (c) Lars Petersen 2017
+-- License     :  MIT
+--
+-- Maintainer  :  info@lars-petersen.net
+-- Stability   :  experimental
+--------------------------------------------------------------------------------
+module Network.MQTT.Broker.SessionStatistics
   ( Statistics ()
   , StatisticsSnapshot (..)
   , new
