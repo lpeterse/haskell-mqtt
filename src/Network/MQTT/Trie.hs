@@ -4,17 +4,17 @@
 {-# LANGUAGE TypeFamilies      #-}
 --------------------------------------------------------------------------------
 -- |
--- Module      :  Network.MQTT.RoutingTree
+-- Module      :  Network.MQTT.Trie
 -- Copyright   :  (c) Lars Petersen 2016
 -- License     :  MIT
 --
 -- Maintainer  :  info@lars-petersen.net
 -- Stability   :  experimental
 --------------------------------------------------------------------------------
-module Network.MQTT.RoutingTree (
-  -- * RoutingTree
-    RoutingTree (..)
-  , RoutingTreeValue (..)
+module Network.MQTT.Trie (
+  -- * Trie
+    Trie (..)
+  , TrieValue (..)
   -- ** null
   , null
   -- ** empty
@@ -65,7 +65,7 @@ import           Prelude                    hiding (lookup, map, null)
 
 import           Network.MQTT.Message.Topic
 
--- | The `RoutingTree` is a map-like data structure designed to hold elements
+-- | The `Trie` is a map-like data structure designed to hold elements
 --   that can efficiently be queried according to the matching rules specified
 --   by MQTT.
 --   The primary purpose is to manage client subscriptions, but it can just
@@ -73,62 +73,62 @@ import           Network.MQTT.Message.Topic
 --
 --   The tree consists of nodes that may or may not contain values. The edges
 --   are filter components. As some value types have the concept of a null
---   (i.e. an empty set) the `RoutingTreeValue` is a class defining the data
---   family `RoutingTreeNode`. This is a performance and size optimization to
+--   (i.e. an empty set) the `TrieValue` is a class defining the data
+--   family `TrieNode`. This is a performance and size optimization to
 --   avoid unnecessary boxing and case distinction.
-newtype RoutingTree a = RoutingTree { branches :: M.Map Level (RoutingTreeNode a) }
+newtype Trie a = Trie { branches :: M.Map Level (TrieNode a) }
 
-class RoutingTreeValue a where
-  data RoutingTreeNode a
-  node                 :: RoutingTree a -> Maybe a -> RoutingTreeNode a
+class TrieValue a where
+  data TrieNode a
+  node                 :: Trie a -> Maybe a -> TrieNode a
   nodeNull             :: a -> Bool
-  nodeTree             :: RoutingTreeNode a -> RoutingTree a
-  nodeValue            :: RoutingTreeNode a -> Maybe a
+  nodeTree             :: TrieNode a -> Trie a
+  nodeValue            :: TrieNode a -> Maybe a
 
-instance (RoutingTreeValue a, Monoid a) => Monoid (RoutingTree a) where
+instance (TrieValue a, Monoid a) => Monoid (Trie a) where
   mempty  = empty
   mappend = unionWith mappend
 
-instance (RoutingTreeValue a, Eq a) => Eq (RoutingTree a) where
-  RoutingTree m1 == RoutingTree m2 =
+instance (TrieValue a, Eq a) => Eq (Trie a) where
+  Trie m1 == Trie m2 =
     M.size m1 == M.size m2 && and (zipWith f (M.toAscList m1) (M.toAscList m2))
     where
       f (l1,n1) (l2,n2) = l1 == l2 && nodeValue n1 == nodeValue n2 && nodeTree n1 == nodeTree n2
 
-instance (RoutingTreeValue a, Show a) => Show (RoutingTree a) where
-  show (RoutingTree m) = "RoutingTree [" ++ L.intercalate ", " (f <$> M.toAscList m) ++ "]"
+instance (TrieValue a, Show a) => Show (Trie a) where
+  show (Trie m) = "Trie [" ++ L.intercalate ", " (f <$> M.toAscList m) ++ "]"
     where
       f (l,n) = "(" ++ show l ++ ", Node (" ++ show (nodeValue n) ++ ") (" ++ show (nodeTree n) ++ ")"
 
-empty :: RoutingTree a
-empty  = RoutingTree mempty
+empty :: Trie a
+empty  = Trie mempty
 
-null  :: RoutingTree a -> Bool
-null (RoutingTree m) = M.null m
+null  :: Trie a -> Bool
+null (Trie m) = M.null m
 
-size  :: RoutingTreeValue a => RoutingTree a -> Int
-size (RoutingTree m) = M.foldl' f 0 m
+size  :: TrieValue a => Trie a -> Int
+size (Trie m) = M.foldl' f 0 m
   where
     f accum n = 1 + accum + size (nodeTree n)
 
-singleton :: RoutingTreeValue a => Filter -> a -> RoutingTree a
+singleton :: TrieValue a => Filter -> a -> Trie a
 singleton tf = singleton' (filterLevels tf)
   where
     singleton' (x:|xs) a
       | nodeNull a  = empty
-      | otherwise   = RoutingTree $ M.singleton x $ case xs of
+      | otherwise   = Trie $ M.singleton x $ case xs of
           []     -> node empty (Just a)
           (y:ys) -> node (singleton' (y:|ys) a) Nothing
 
-insert :: RoutingTreeValue a => Filter -> a -> RoutingTree a -> RoutingTree a
+insert :: TrieValue a => Filter -> a -> Trie a -> Trie a
 insert  = insertWith const
 
-insertWith :: RoutingTreeValue a => (a -> a -> a) -> Filter -> a -> RoutingTree a -> RoutingTree a
+insertWith :: TrieValue a => (a -> a -> a) -> Filter -> a -> Trie a -> Trie a
 insertWith f tf a = insertWith' (filterLevels tf)
   where
-    insertWith' (x:|xs) (RoutingTree m)
-      | nodeNull a  = RoutingTree m
-      | otherwise   = RoutingTree $ M.alter g x m
+    insertWith' (x:|xs) (Trie m)
+      | nodeNull a  = Trie m
+      | otherwise   = Trie $ M.alter g x m
       where
         g mn = Just $ case xs of
           []     -> case mn of
@@ -136,13 +136,13 @@ insertWith f tf a = insertWith' (filterLevels tf)
             Just n  -> node (nodeTree n) $ (f a <$> nodeValue n) <|> Just a
           (y:ys) -> node (insertWith' (y:|ys) $ fromMaybe empty $ nodeTree <$> mn) Nothing
 
-insertFoldable :: (RoutingTreeValue a, Foldable t) => t (Filter, a) -> RoutingTree a -> RoutingTree a
+insertFoldable :: (TrieValue a, Foldable t) => t (Filter, a) -> Trie a -> Trie a
 insertFoldable  = flip $ foldr $ uncurry insert
 
-delete :: RoutingTreeValue a => Filter -> RoutingTree a -> RoutingTree a
+delete :: TrieValue a => Filter -> Trie a -> Trie a
 delete tf = delete' (filterLevels tf)
   where
-    delete' (x:|xs) (RoutingTree m) = RoutingTree $ M.update g x m
+    delete' (x:|xs) (Trie m) = Trie $ M.update g x m
       where
         g n = case xs of
           [] | null (nodeTree n) -> Nothing
@@ -153,38 +153,38 @@ delete tf = delete' (filterLevels tf)
                      | otherwise -> Just $ node t Nothing
              Just v -> Just $ node t (Just v)
 
-map :: (RoutingTreeValue a, RoutingTreeValue b) => (a -> b) -> RoutingTree a -> RoutingTree b
-map f (RoutingTree m) = RoutingTree $ fmap g m
+map :: (TrieValue a, TrieValue b) => (a -> b) -> Trie a -> Trie b
+map f (Trie m) = Trie $ fmap g m
   where
     g n = let t = map f (nodeTree n) in node t (f <$> nodeValue n)
 
 -- FIXME: Review. Does not honour invariants!
-mapMaybe :: (RoutingTreeValue a, RoutingTreeValue b) => (a -> Maybe b) -> RoutingTree a -> RoutingTree b
-mapMaybe f (RoutingTree m) = RoutingTree $ fmap g m
+mapMaybe :: (TrieValue a, TrieValue b) => (a -> Maybe b) -> Trie a -> Trie b
+mapMaybe f (Trie m) = Trie $ fmap g m
   where
     g n = let t = mapMaybe f (nodeTree n) in node t (nodeValue n >>= f)
 
-foldl'  :: (RoutingTreeValue b) => (a -> b -> a) -> a -> RoutingTree b -> a
-foldl' f acc (RoutingTree m) = M.foldl' g acc m
+foldl'  :: (TrieValue b) => (a -> b -> a) -> a -> Trie b -> a
+foldl' f acc (Trie m) = M.foldl' g acc m
   where
     g acc' n = flip (foldl' f) (nodeTree n) $! case nodeValue n of
       Nothing    -> acc'
       Just value -> f acc' value
 
-union     :: (RoutingTreeValue a, Monoid a) => RoutingTree a -> RoutingTree a -> RoutingTree a
-union (RoutingTree m1) (RoutingTree m2) = RoutingTree (M.unionWith g m1 m2)
+union     :: (TrieValue a, Monoid a) => Trie a -> Trie a -> Trie a
+union (Trie m1) (Trie m2) = Trie (M.unionWith g m1 m2)
   where
     g n1 n2 = node (nodeTree n1 `union` nodeTree n2) (nodeValue n1 <> nodeValue n2)
 
-unionWith :: (RoutingTreeValue a) => (a -> a -> a) -> RoutingTree a -> RoutingTree a -> RoutingTree a
-unionWith f (RoutingTree m1) (RoutingTree m2) = RoutingTree (M.unionWith g m1 m2)
+unionWith :: (TrieValue a) => (a -> a -> a) -> Trie a -> Trie a -> Trie a
+unionWith f (Trie m1) (Trie m2) = Trie (M.unionWith g m1 m2)
   where
     g n1 n2 = node (unionWith f (nodeTree n1) (nodeTree n2)) (nodeValue n1 `merge` nodeValue n2)
     merge (Just v1) (Just v2) = Just (f v1 v2)
     merge      mv1       mv2  = mv1 <|> mv2
 
-differenceWith :: (RoutingTreeValue a, RoutingTreeValue b) => (a -> b -> Maybe a) -> RoutingTree a -> RoutingTree b -> RoutingTree a
-differenceWith f (RoutingTree m1) (RoutingTree m2) = RoutingTree (M.differenceWith g m1 m2)
+differenceWith :: (TrieValue a, TrieValue b) => (a -> b -> Maybe a) -> Trie a -> Trie b -> Trie a
+differenceWith f (Trie m1) (Trie m2) = Trie (M.differenceWith g m1 m2)
   where
     g n1 n2 = k (differenceWith f (nodeTree n1) (nodeTree n2)) (d (nodeValue n1) (nodeValue n2))
     d (Just v1) (Just v2) = f v1 v2
@@ -197,16 +197,16 @@ differenceWith f (RoutingTree m1) (RoutingTree m2) = RoutingTree (M.differenceWi
 
 -- | Collect all values of nodes that match a given topic (according to the
 --   matching rules specified by the MQTT protocol).
-lookup :: (RoutingTreeValue a, Monoid a) => Topic -> RoutingTree a -> a
+lookup :: (TrieValue a, Monoid a) => Topic -> Trie a -> a
 lookup tf = fromMaybe mempty . lookupHead (topicLevels tf)
   where
     -- If the first level starts with $ then it must not be matched against + and #.
-    lookupHead (x:|xs) t@(RoutingTree m)
+    lookupHead (x:|xs) t@(Trie m)
       | startsWithDollar x = case xs of
           []     -> M.lookup x m >>= nodeValue
           (y:ys) -> M.lookup x m >>= lookupTail y ys . nodeTree
       | otherwise = lookupTail x xs t
-    lookupTail x [] (RoutingTree m) =
+    lookupTail x [] (Trie m) =
       matchSingleLevelWildcard <> matchMultiLevelWildcard <> matchComponent
       where
         matchSingleLevelWildcard = M.lookup singleLevelWildcard m >>= nodeValue
@@ -217,22 +217,22 @@ lookup tf = fromMaybe mempty . lookupHead (topicLevels tf)
             Nothing -> nodeValue n
             -- component match and multiLevelWildcard match below
             Just n' -> nodeValue n <> nodeValue n'
-    lookupTail x (y:ys) (RoutingTree m) =
+    lookupTail x (y:ys) (Trie m) =
       matchSingleLevelWildcard <> matchMultiLevelWildcard <> matchComponent
       where
         matchSingleLevelWildcard = M.lookup singleLevelWildcard m >>= lookupTail y ys . nodeTree
         matchMultiLevelWildcard  = M.lookup multiLevelWildcard  m >>= nodeValue
         matchComponent           = M.lookup                   x m >>= lookupTail y ys . nodeTree
 
-findMaxBounded :: (RoutingTreeValue a, Ord a, Bounded a) => Topic -> RoutingTree a -> Maybe a
+findMaxBounded :: (TrieValue a, Ord a, Bounded a) => Topic -> Trie a -> Maybe a
 findMaxBounded topic = findHead (topicLevels topic)
   where
-    findHead (x:|xs) t@(RoutingTree m)
+    findHead (x:|xs) t@(Trie m)
       | startsWithDollar x = case xs of
           []     -> M.lookup x m >>= nodeValue
           (y:ys) -> M.lookup x m >>= findTail y ys . nodeTree
       | otherwise = findTail x xs t
-    findTail x [] (RoutingTree m) =
+    findTail x [] (Trie m) =
       matchSingleLevelWildcard `maxBounded` matchMultiLevelWildcard `maxBounded` matchComponent
       where
         matchSingleLevelWildcard = M.lookup singleLevelWildcard m >>= nodeValue
@@ -243,7 +243,7 @@ findMaxBounded topic = findHead (topicLevels topic)
             Nothing -> nodeValue n
             -- component match and multiLevelWildcard match below
             Just n' -> nodeValue n `maxBounded` nodeValue n'
-    findTail x (y:ys) (RoutingTree m) =
+    findTail x (y:ys) (Trie m) =
       matchSingleLevelWildcard `maxBounded` matchMultiLevelWildcard `maxBounded` matchComponent
       where
         matchSingleLevelWildcard = M.lookup singleLevelWildcard m >>= findTail y ys . nodeTree
@@ -255,13 +255,13 @@ findMaxBounded topic = findHead (topicLevels topic)
       | a == Just maxBound = a
       | otherwise          = max a b
 
--- | Match a `Topic` against a `RoutingTree`.
+-- | Match a `Topic` against a `Trie`.
 --
 --   The function returns true iff the tree contains at least one node that
 --   matches the topic /and/ contains a value (including nodes that are
 --   indirectly matched by wildcard characters like `+` and `#` as described
 --   in the MQTT specification).
-matchTopic :: RoutingTreeValue a => Topic -> RoutingTree a -> Bool
+matchTopic :: TrieValue a => Topic -> Trie a -> Bool
 matchTopic tf = matchTopicHead (topicLevels tf)
   where
     -- The '#' is always a terminal node and therefore does not contain subtrees.
@@ -270,17 +270,17 @@ matchTopic tf = matchTopicHead (topicLevels tf)
     -- existence.
     -- A '+' node on the other hand may contain subtrees and may not carry a value
     -- itself. This needs to be checked.
-    matchTopicHead (x:|xs) t@(RoutingTree m)
+    matchTopicHead (x:|xs) t@(Trie m)
       | startsWithDollar x = case xs of
           []     -> matchExact x m
           (y:ys) -> fromMaybe False $ matchTopicTail y ys . nodeTree <$> M.lookup x m
       | otherwise = matchTopicTail x xs t
-    matchTopicTail x [] (RoutingTree m) =
+    matchTopicTail x [] (Trie m) =
       matchExact x m  || matchPlus || matchHash
       where
         matchPlus = isJust ( nodeValue =<< M.lookup singleLevelWildcard m )
         matchHash = M.member multiLevelWildcard m
-    matchTopicTail x (y:ys) (RoutingTree m) =
+    matchTopicTail x (y:ys) (Trie m) =
       M.member multiLevelWildcard m || case M.lookup x m of
         -- Same is true for '#' node here. In case no '#' hash node is present it is
         -- first tried to match the exact topic and then to match any '+' node.
@@ -295,9 +295,9 @@ matchTopic tf = matchTopicHead (topicLevels tf)
     -- always also match the parent node.
     matchExact x m = case M.lookup x m of
       Nothing -> False
-      Just n  -> isJust (nodeValue n) || let RoutingTree m' = nodeTree n in  M.member multiLevelWildcard m'
+      Just n  -> isJust (nodeValue n) || let Trie m' = nodeTree n in  M.member multiLevelWildcard m'
 
--- | Match a `Filter` against a `RoutingTree`.
+-- | Match a `Filter` against a `Trie`.
 --
 --   The function returns true iff the tree contains a path that is
 --   /less or equally specific/ than the filter and the terminal node contains
@@ -315,10 +315,10 @@ matchTopic tf = matchTopicHead (topicLevels tf)
 --   > match (singleton "a") "b"     = False
 --   > match (singleton "a") "+"     = False
 --   > match (singleton "a") "#"     = False
-matchFilter :: RoutingTreeValue a => Filter -> RoutingTree a -> Bool
+matchFilter :: TrieValue a => Filter -> Trie a -> Bool
 matchFilter tf = matchFilter' (filterLevels tf)
   where
-    matchFilter' (x:|[]) (RoutingTree m)
+    matchFilter' (x:|[]) (Trie m)
       | x == multiLevelWildcard  = matchMultiLevelWildcard
       | x == singleLevelWildcard = matchMultiLevelWildcard || matchSingleLevelWildcard
       | otherwise                = matchMultiLevelWildcard || matchSingleLevelWildcard || matchExact
@@ -327,8 +327,8 @@ matchFilter tf = matchFilter' (filterLevels tf)
         matchSingleLevelWildcard = isJust ( nodeValue =<< M.lookup singleLevelWildcard m )
         matchExact               = case M.lookup x m of
           Nothing -> False
-          Just n' -> isJust (nodeValue n') || let RoutingTree m' = nodeTree n' in M.member multiLevelWildcard m'
-    matchFilter' (x:|y:zs) (RoutingTree m)
+          Just n' -> isJust (nodeValue n') || let Trie m' = nodeTree n' in M.member multiLevelWildcard m'
+    matchFilter' (x:|y:zs) (Trie m)
       | x == multiLevelWildcard  = matchMultiLevelWildcard
       | x == singleLevelWildcard = matchMultiLevelWildcard || matchSingleLevelWildcard
       | otherwise                = matchMultiLevelWildcard || matchSingleLevelWildcard || matchExact
@@ -341,24 +341,24 @@ matchFilter tf = matchFilter' (filterLevels tf)
 -- Specialised nodeTree implemenations using data families
 --------------------------------------------------------------------------------
 
-instance RoutingTreeValue IS.IntSet where
-  data RoutingTreeNode IS.IntSet = IntSetRoutingTreeNode !(RoutingTree IS.IntSet) !IS.IntSet
-  node t                                = IntSetRoutingTreeNode t . fromMaybe mempty
+instance TrieValue IS.IntSet where
+  data TrieNode IS.IntSet = IntSetTrieNode !(Trie IS.IntSet) !IS.IntSet
+  node t                                = IntSetTrieNode t . fromMaybe mempty
   nodeNull                              = IS.null
-  nodeTree (IntSetRoutingTreeNode t _)  = t
-  nodeValue (IntSetRoutingTreeNode _ v) | nodeNull v = Nothing
+  nodeTree (IntSetTrieNode t _)  = t
+  nodeValue (IntSetTrieNode _ v) | nodeNull v = Nothing
                                         | otherwise = Just v
 
-instance RoutingTreeValue (Identity a) where
-  data RoutingTreeNode (Identity a) = IdentityNode !(RoutingTree (Identity a)) !(Maybe (Identity a))
+instance TrieValue (Identity a) where
+  data TrieNode (Identity a) = IdentityNode !(Trie (Identity a)) !(Maybe (Identity a))
   node t n@Nothing  = IdentityNode t n
   node t n@(Just v) = v `seq` IdentityNode t n
   nodeNull                      = const False
   nodeTree  (IdentityNode t _)  = t
   nodeValue (IdentityNode _ mv) = mv
 
-instance RoutingTreeValue () where
-  data RoutingTreeNode ()  = UnitNode {-# UNPACK #-} !Int !(RoutingTree ())
+instance TrieValue () where
+  data TrieNode ()  = UnitNode {-# UNPACK #-} !Int !(Trie ())
   node t Nothing = UnitNode 0 t
   node t _       = UnitNode 1 t
   nodeNull                 = const False
@@ -366,8 +366,8 @@ instance RoutingTreeValue () where
   nodeValue (UnitNode 0 _) = Nothing
   nodeValue (UnitNode _ _) = Just ()
 
-instance RoutingTreeValue Bool where
-  data RoutingTreeNode Bool = BoolNode {-# UNPACK #-} !Int !(RoutingTree Bool)
+instance TrieValue Bool where
+  data TrieNode Bool = BoolNode {-# UNPACK #-} !Int !(Trie Bool)
   node t Nothing      = BoolNode 0 t
   node t (Just False) = BoolNode 1 t
   node t (Just True)  = BoolNode 2 t

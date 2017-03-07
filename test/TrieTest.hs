@@ -1,6 +1,6 @@
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE OverloadedStrings #-}
-module RoutingTreeTest ( tests ) where
+module TrieTest ( tests ) where
 
 import qualified Data.IntSet              as IS
 import           Prelude                  hiding (head)
@@ -8,10 +8,10 @@ import           Prelude                  hiding (head)
 import           Test.Tasty
 import           Test.Tasty.HUnit
 
-import qualified Network.MQTT.RoutingTree as R
+import qualified Network.MQTT.Trie as R
 
 tests :: TestTree
-tests = testGroup "RoutingTree"
+tests = testGroup "Trie"
   [ testGroup "null"
     [ testCase "! null                  $ singleton \"a\"      ()"   $ assertBool "" $ not $ R.null $ R.singleton "a" ()
     , testCase "! null                  $ singleton \"a/b\"    ()"   $ assertBool "" $ not $ R.null $ R.singleton "a/b" ()
@@ -20,7 +20,7 @@ tests = testGroup "RoutingTree"
     [ testCase "  null empty" $ assertBool "not null" $ R.null R.empty
     ]
   , testGroup "size"
-    [ testCase "size empty ==  0"                                    $ R.size (R.empty :: R.RoutingTree ()) @?=  0
+    [ testCase "size empty ==  0"                                    $ R.size (R.empty :: R.Trie ()) @?=  0
     , testCase "size tree1 == 11"                                    $ R.size tree1                         @?= 11
     , testCase "size tree2 ==  3"                                    $ R.size tree2                         @?=  3
     ]
@@ -106,7 +106,7 @@ tests = testGroup "RoutingTree"
   , testGroup "differenceWith" [  ]
   ]
 
-tree1 :: R.RoutingTree IS.IntSet
+tree1 :: R.Trie IS.IntSet
 tree1
   = R.insertWith IS.union "#"        (IS.singleton 0)
   $ R.insertWith IS.union "+"        (IS.singleton 1)
@@ -119,7 +119,7 @@ tree1
   $ R.insertWith IS.union "$SYS/+/a" (IS.singleton 8)
   $! R.empty
 
-tree2 :: R.RoutingTree IS.IntSet
+tree2 :: R.Trie IS.IntSet
 tree2
   = R.insert "a/b"    (IS.singleton 3)
   $ R.insert "a/b/c"  (IS.singleton 2)

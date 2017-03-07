@@ -8,7 +8,7 @@ import qualified Data.Map                 as M
 import           System.Random            ( randomIO )
 
 import           Network.MQTT.Message
-import           Network.MQTT.RoutingTree as R
+import           Network.MQTT.Trie as R
 
 -- | This test shall assure that the memory consumption of the subscription
 --   tree stays within certain limits.
@@ -19,16 +19,16 @@ import           Network.MQTT.RoutingTree as R
 --   We allow for some deviation, but it should not exceed 100MB heap space.
 main :: IO ()
 main  = do
-  r <- randomTree 6 10 :: IO (RoutingTree IS.IntSet)
+  r <- randomTree 6 10 :: IO (Trie IS.IntSet)
   -- We need to to something with `r` or it won't be evaluated.
   when (R.size r == 0) (error "should not be 0")
 
-randomTree :: Int -> Int -> IO (RoutingTree IS.IntSet)
-randomTree 0     _         = RoutingTree <$> pure mempty
-randomTree depth branching = RoutingTree <$> foldM (\m e->
+randomTree :: Int -> Int -> IO (Trie IS.IntSet)
+randomTree 0     _         = Trie <$> pure mempty
+randomTree depth branching = Trie <$> foldM (\m e->
   flip (M.insert e) m <$> (R.node
   <$> randomTree (depth - 1) branching
-  <*> randomSet :: IO (RoutingTreeNode IS.IntSet))) M.empty
+  <*> randomSet :: IO (TrieNode IS.IntSet))) M.empty
         (take branching randomTreeElements)
   where
     randomSet :: IO (Maybe IS.IntSet)

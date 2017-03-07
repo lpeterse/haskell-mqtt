@@ -27,7 +27,7 @@ import qualified Data.Sequence                         as Seq
 import           GHC.Generics                          (Generic)
 
 import           Network.MQTT.Message
-import qualified Network.MQTT.RoutingTree              as R
+import qualified Network.MQTT.Trie              as R
 import           Network.MQTT.Server.Authentication    hiding (getPrincipal)
 import qualified Network.MQTT.Server.SessionStatistics as SS
 
@@ -41,7 +41,7 @@ data Session auth = Session
   , sessionConnection          :: !(MVar Connection)
   , sessionPrincipal           :: !(MVar Principal)
   , sessionSemaphore           :: !PrioritySemaphore
-  , sessionSubscriptions       :: !(MVar (R.RoutingTree QoS))
+  , sessionSubscriptions       :: !(MVar (R.Trie QoS))
   , sessionQueue               :: !(MVar ServerQueue)
   , sessionQueuePending        :: !(MVar ())
   , sessionStatistics          :: SS.Statistics
@@ -265,7 +265,7 @@ processPublishComplete session (PacketIdentifier pid) = do
   -- them once and immediately sleep again.
   notePending session
 
-getSubscriptions :: Session auth -> IO (R.RoutingTree QoS)
+getSubscriptions :: Session auth -> IO (R.Trie QoS)
 getSubscriptions session =
   readMVar (sessionSubscriptions session)
 

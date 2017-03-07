@@ -12,7 +12,7 @@ import           Data.UUID                          (UUID)
 
 import           Network.MQTT.Message
 import qualified Network.MQTT.Message               as Message
-import qualified Network.MQTT.RoutingTree           as R
+import qualified Network.MQTT.Trie           as R
 import           Network.MQTT.Server.Authentication
 import qualified Network.MQTT.Server.Broker         as Broker
 import qualified Network.MQTT.Server.Session        as Session

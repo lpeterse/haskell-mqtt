@@ -10,7 +10,7 @@
 --------------------------------------------------------------------------------
 module Network.MQTT.Message.QoS where
 
-import Network.MQTT.RoutingTree
+import Network.MQTT.Trie
 
 -- | The quality of service defines the guarantees given wrt to message reception.
 data QoS
@@ -19,8 +19,8 @@ data QoS
   | QoS2 -- ^ Message is guaranteed to be delivered exactly once.
   deriving (Eq, Ord, Show, Enum, Bounded)
 
-instance RoutingTreeValue QoS where
-  data RoutingTreeNode QoS = QosNode {-# UNPACK #-} !Int !(RoutingTree QoS)
+instance TrieValue QoS where
+  data TrieNode QoS = QosNode {-# UNPACK #-} !Int !(Trie QoS)
   node t (Just QoS0)           = QosNode 0 t
   node t (Just QoS1)           = QosNode 1 t
   node t (Just QoS2)           = QosNode 2 t

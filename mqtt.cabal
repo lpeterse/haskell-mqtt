@@ -24,7 +24,7 @@ library
   exposed-modules:     Network.Stack.Server,
                        Network.MQTT.Client,
                        Network.MQTT.Message,
-                       Network.MQTT.RoutingTree,
+                       Network.MQTT.Trie,
                        Network.MQTT.Server,
                        Network.MQTT.Server.Authentication,
                        Network.MQTT.Server.Broker,
@@ -101,7 +101,7 @@ test-suite test
   other-modules:
     BrokerTest,
     EncodingTest,
-    RoutingTreeTest,
+    TrieTest,
     TopicTest
   build-depends:
       base >= 4.8 && < 5
@@ -170,7 +170,7 @@ test-suite routing-tree-size-test
   ghc-options:
     -Wall "-with-rtsopts=-M100m -s"
   main-is:
-    test/RoutingTreeSizeTest.hs
+    test/TrieSizeTest.hs
   build-depends:
     base >= 4.8 && <5,
     containers,

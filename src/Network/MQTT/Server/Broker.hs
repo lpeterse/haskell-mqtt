@@ -47,7 +47,7 @@ import           Network.MQTT.Message                  (ClientIdentifier,
                                                         SessionPresent (..))
 import qualified Network.MQTT.Message                  as Message
 import           Network.MQTT.Message.Topic
-import qualified Network.MQTT.RoutingTree              as R
+import qualified Network.MQTT.Trie              as R
 import           Network.MQTT.Server.Authentication    (AuthenticationException,
                                                         Authenticator,
                                                         ConnectionRequest (..),
@@ -73,7 +73,7 @@ data Broker auth
 data BrokerState auth
    = BrokerState
    { brokerMaxSessionIdentifier   :: !Session.Identifier
-   , brokerSubscriptions          :: !(R.RoutingTree IS.IntSet)
+   , brokerSubscriptions          :: !(R.Trie IS.IntSet)
    , brokerSessions               :: !(IM.IntMap (Session.Session auth))
    , brokerSessionsByPrincipals   :: !(M.Map (PrincipalIdentifier, ClientIdentifier) Int)
    }
@@ -319,5 +319,5 @@ getUptime broker = do
 getSessions      :: Broker auth -> IO (IM.IntMap (Session.Session auth))
 getSessions broker = brokerSessions <$> readMVar (brokerState broker)
 
-getSubscriptions :: Broker auth -> IO (R.RoutingTree IS.IntSet)
+getSubscriptions :: Broker auth -> IO (R.Trie IS.IntSet)
 getSubscriptions broker = brokerSubscriptions <$> readMVar (brokerState broker)

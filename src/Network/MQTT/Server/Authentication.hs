@@ -23,7 +23,7 @@ import qualified Data.X509                as X509
 import           GHC.Generics
 
 import           Network.MQTT.Message
-import           Network.MQTT.RoutingTree as R
+import           Network.MQTT.Trie as R
 
 -- | A peer identity optionally associated with connection/session
 --   specific information.
@@ -58,8 +58,8 @@ data Principal
    = Principal
    { principalUsername             :: Maybe Username
    , principalQuota                :: Quota
-   , principalPublishPermissions   :: R.RoutingTree ()
-   , principalSubscribePermissions :: R.RoutingTree ()
+   , principalPublishPermissions   :: R.Trie ()
+   , principalSubscribePermissions :: R.Trie ()
    } deriving (Eq, Show)
 
 data Quota
