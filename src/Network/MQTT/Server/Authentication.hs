@@ -4,14 +4,14 @@
 {-# LANGUAGE TypeFamilies      #-}
 --------------------------------------------------------------------------------
 -- |
--- Module      :  Network.MQTT.Authentication
+-- Module      :  Network.MQTT.Server.Authentication
 -- Copyright   :  (c) Lars Petersen 2016
 -- License     :  MIT
 --
 -- Maintainer  :  info@lars-petersen.net
 -- Stability   :  experimental
 --------------------------------------------------------------------------------
-module Network.MQTT.Authentication where
+module Network.MQTT.Server.Authentication where
 
 import           Control.Exception
 import qualified Data.Binary              as B

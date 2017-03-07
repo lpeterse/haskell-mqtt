@@ -1,5 +1,5 @@
 {-# LANGUAGE DeriveGeneric #-}
-module Network.MQTT.SessionStatistics
+module Network.MQTT.Server.SessionStatistics
   ( Statistics ()
   , StatisticsSnapshot (..)
   , new

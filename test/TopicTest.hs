@@ -3,9 +3,10 @@ module TopicTest ( tests ) where
 
 import qualified Data.Attoparsec.ByteString as A
 import           Data.List.NonEmpty         (NonEmpty (..))
-import           Network.MQTT.Message
 import           Test.Tasty
 import           Test.Tasty.HUnit
+
+import           Network.MQTT.Message
 
 tests :: TestTree
 tests = testGroup "Topic / Filter / Level"

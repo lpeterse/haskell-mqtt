@@ -1,7 +1,7 @@
+{-# LANGUAGE DeriveGeneric     #-}
 {-# LANGUAGE MultiWayIf        #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE TupleSections     #-}
-{-# LANGUAGE DeriveGeneric     #-}
 --------------------------------------------------------------------------------
 -- |
 -- Module      :  Network.MQTT.Session
@@ -11,40 +11,40 @@
 -- Maintainer  :  info@lars-petersen.net
 -- Stability   :  experimental
 --------------------------------------------------------------------------------
-module Network.MQTT.Session where
+module Network.MQTT.Server.Session where
 
 import           Control.Concurrent.MVar
 import           Control.Concurrent.PrioritySemaphore
 import           Control.Monad
+import qualified Data.Binary                           as B
 import           Data.Bool
-import qualified Data.ByteString                      as BS
+import qualified Data.ByteString                       as BS
 import           Data.Int
-import qualified Data.IntMap                          as IM
-import qualified Data.IntSet                          as IS
+import qualified Data.IntMap                           as IM
+import qualified Data.IntSet                           as IS
 import           Data.Monoid
-import qualified Data.Sequence                        as Seq
-import           GHC.Generics                      (Generic)
-import qualified Data.Binary                          as B
+import qualified Data.Sequence                         as Seq
+import           GHC.Generics                          (Generic)
 
-import           Network.MQTT.Authentication hiding (getPrincipal)
 import           Network.MQTT.Message
-import qualified Network.MQTT.RoutingTree             as R
-import qualified Network.MQTT.SessionStatistics       as SS
+import qualified Network.MQTT.RoutingTree              as R
+import           Network.MQTT.Server.Authentication    hiding (getPrincipal)
+import qualified Network.MQTT.Server.SessionStatistics as SS
 
 type Identifier = Int
 
 data Session auth = Session
-  { sessionIdentifier       :: !Identifier
-  , sessionClientIdentifier :: !ClientIdentifier
+  { sessionIdentifier          :: !Identifier
+  , sessionClientIdentifier    :: !ClientIdentifier
   , sessionPrincipalIdentifier :: !PrincipalIdentifier
-  , sessionCreatedAt        :: !Int64
-  , sessionConnection       :: !(MVar Connection)
-  , sessionPrincipal        :: !(MVar Principal)
-  , sessionSemaphore        :: !PrioritySemaphore
-  , sessionSubscriptions    :: !(MVar (R.RoutingTree QoS))
-  , sessionQueue            :: !(MVar ServerQueue)
-  , sessionQueuePending     :: !(MVar ())
-  , sessionStatistics       :: SS.Statistics
+  , sessionCreatedAt           :: !Int64
+  , sessionConnection          :: !(MVar Connection)
+  , sessionPrincipal           :: !(MVar Principal)
+  , sessionSemaphore           :: !PrioritySemaphore
+  , sessionSubscriptions       :: !(MVar (R.RoutingTree QoS))
+  , sessionQueue               :: !(MVar ServerQueue)
+  , sessionQueuePending        :: !(MVar ())
+  , sessionStatistics          :: SS.Statistics
   }
 
 data Connection = Connection

@@ -1,14 +1,14 @@
 {-# LANGUAGE OverloadedStrings #-}
 --------------------------------------------------------------------------------
 -- |
--- Module      :  Network.MQTT.Message
+-- Module      :  Network.MQTT.Server.RetainedMessages
 -- Copyright   :  (c) Lars Petersen 2016
 -- License     :  MIT
 --
 -- Maintainer  :  info@lars-petersen.net
 -- Stability   :  experimental
 --------------------------------------------------------------------------------
-module Network.MQTT.RetainedMessages where
+module Network.MQTT.Server.RetainedMessages where
 
 import           Control.Applicative        hiding (empty)
 import           Control.Concurrent.MVar

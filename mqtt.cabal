@@ -22,15 +22,15 @@ source-repository head
 library
   ghc-options:         -Wall
   exposed-modules:     Network.Stack.Server,
-                       Network.MQTT.Authentication,
                        Network.MQTT.Client,
                        Network.MQTT.Message,
-                       Network.MQTT.RetainedMessages,
-                       Network.MQTT.Broker,
                        Network.MQTT.RoutingTree,
                        Network.MQTT.Server,
-                       Network.MQTT.Session,
-                       Network.MQTT.SessionStatistics
+                       Network.MQTT.Server.Authentication,
+                       Network.MQTT.Server.Broker,
+                       Network.MQTT.Server.RetainedMessages,
+                       Network.MQTT.Server.Session,
+                       Network.MQTT.Server.SessionStatistics
   other-modules:       Control.Concurrent.PrioritySemaphore,
                        Network.MQTT.Message.QoS,
                        Network.MQTT.Message.Topic

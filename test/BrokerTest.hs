@@ -6,16 +6,16 @@ module BrokerTest ( getTestTree ) where
 import           Control.Concurrent.MVar
 import           Control.Exception
 import           Data.Monoid
-import qualified Data.Sequence               as Seq
+import qualified Data.Sequence                      as Seq
 import           Data.Typeable
-import           Data.UUID                   (UUID)
+import           Data.UUID                          (UUID)
 
-import           Network.MQTT.Authentication
-import qualified Network.MQTT.Broker         as Broker
 import           Network.MQTT.Message
-import qualified Network.MQTT.Message        as Message
-import qualified Network.MQTT.RoutingTree    as R
-import qualified Network.MQTT.Session        as Session
+import qualified Network.MQTT.Message               as Message
+import qualified Network.MQTT.RoutingTree           as R
+import           Network.MQTT.Server.Authentication
+import qualified Network.MQTT.Server.Broker         as Broker
+import qualified Network.MQTT.Server.Session        as Session
 
 import           Test.Tasty
 import           Test.Tasty.HUnit

@@ -4,14 +4,14 @@
 {-# LANGUAGE TupleSections       #-}
 --------------------------------------------------------------------------------
 -- |
--- Module      :  Network.MQTT.Broker
+-- Module      :  Network.MQTT.Server.Broker
 -- Copyright   :  (c) Lars Petersen 2016
 -- License     :  MIT
 --
 -- Maintainer  :  info@lars-petersen.net
 -- Stability   :  experimental
 --------------------------------------------------------------------------------
-module Network.MQTT.Broker
+module Network.MQTT.Server.Broker
   ( Broker ( brokerAuthenticator )
   , new
   , publishUpstream
@@ -40,7 +40,15 @@ import           Data.Maybe
 import           System.Clock
 import qualified System.Log.Logger                     as Log
 
-import           Network.MQTT.Authentication           (AuthenticationException,
+import           Network.MQTT.Message                  (ClientIdentifier,
+                                                        Message (..),
+                                                        PacketIdentifier,
+                                                        RejectReason (..),
+                                                        SessionPresent (..))
+import qualified Network.MQTT.Message                  as Message
+import           Network.MQTT.Message.Topic
+import qualified Network.MQTT.RoutingTree              as R
+import           Network.MQTT.Server.Authentication    (AuthenticationException,
                                                         Authenticator,
                                                         ConnectionRequest (..),
                                                         PrincipalIdentifier,
@@ -50,16 +58,9 @@ import           Network.MQTT.Authentication           (AuthenticationException,
                                                         principalPublishPermissions,
                                                         principalQuota,
                                                         principalSubscribePermissions)
-import           Network.MQTT.Message                  (ClientIdentifier, RejectReason (..),
-                                                        Message (..),
-                                                        PacketIdentifier,
-                                                        SessionPresent (..))
-import qualified Network.MQTT.Message                  as Message
-import           Network.MQTT.Message.Topic
-import qualified Network.MQTT.RetainedMessages         as RM
-import qualified Network.MQTT.RoutingTree              as R
-import qualified Network.MQTT.Session                  as Session
-import qualified Network.MQTT.SessionStatistics        as SS
+import qualified Network.MQTT.Server.RetainedMessages  as RM
+import qualified Network.MQTT.Server.Session           as Session
+import qualified Network.MQTT.Server.SessionStatistics as SS
 
 data Broker auth
    = Broker

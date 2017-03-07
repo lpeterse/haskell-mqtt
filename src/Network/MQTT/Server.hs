@@ -16,22 +16,22 @@ module Network.MQTT.Server where
 
 import           Control.Concurrent
 import           Control.Concurrent.Async
-import qualified Control.Exception           as E
+import qualified Control.Exception                  as E
 import           Control.Monad
-import qualified Data.Binary.Get             as SG
-import qualified Data.ByteString             as BS
+import qualified Data.Binary.Get                    as SG
+import qualified Data.ByteString                    as BS
 import           Data.Int
 import           Data.IORef
 import           Data.Typeable
-import qualified Network.Stack.Server        as SS
-import qualified Network.WebSockets          as WS
-import qualified System.Log.Logger           as Log
-import qualified System.Socket               as S
+import qualified Network.Stack.Server               as SS
+import qualified Network.WebSockets                 as WS
+import qualified System.Log.Logger                  as Log
+import qualified System.Socket                      as S
 
-import           Network.MQTT.Authentication
-import qualified Network.MQTT.Broker         as Broker
 import           Network.MQTT.Message
-import qualified Network.MQTT.Session        as Session
+import           Network.MQTT.Server.Authentication
+import qualified Network.MQTT.Server.Broker         as Broker
+import qualified Network.MQTT.Server.Session        as Session
 
 instance (Typeable transport) => E.Exception (SS.ServerException (MQTT transport))
 
