@@ -3,6 +3,7 @@
 {-# LANGUAGE OverloadedStrings  #-}
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE TypeFamilies       #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 --------------------------------------------------------------------------------
 -- |
 -- Module      :  Network.Stack.Server
@@ -35,7 +36,6 @@ data TLS a
 data WebSocket a
 
 class (Typeable a) => ServerStack a where
-  --type ServerMessage a
   data Server a
   data ServerConfig a
   data ServerException a
@@ -126,10 +126,6 @@ instance (StreamServerStack a) => StreamServerStack (WebSocket a) where
   sendStreamLazy connection lbs = WS.sendBinaryData (wsConnection connection) lbs >> pure (BSL.length lbs)
   receiveStreamLazy connection _ = WS.receiveData   (wsConnection connection)
 
-deriving instance Show (S.SocketAddress f) => Show (ServerConnectionInfo (S.Socket f t p))
-deriving instance Show (ServerConnectionInfo a) => Show (ServerConnectionInfo (TLS a))
-deriving instance Show (ServerConnectionInfo a) => Show (ServerConnectionInfo (WebSocket a))
-
 instance (S.Family f, S.Type t, S.Protocol p, Typeable f, Typeable t, Typeable p) => ServerStack (S.Socket f t p) where
   data Server (S.Socket f t p) = SocketServer
     { socketServer       :: !(S.Socket f t p)
@@ -153,7 +149,7 @@ instance (S.Family f, S.Type t, S.Protocol p, Typeable f, Typeable t, Typeable p
     E.bracketOnError (S.accept (socketServer server)) (S.close . fst) $ \(connection, addr)->
       async (handle (SocketServerConnection connection) (SocketServerConnectionInfo addr) `E.finally` S.close connection)
 
-instance (StreamServerStack a) => ServerStack (TLS a) where
+instance (StreamServerStack a, Typeable a) => ServerStack (TLS a) where
   data Server (TLS a) = TlsServer
     { tlsTransportServer            :: Server a
     , tlsServerConfig               :: ServerConfig (TLS a)
@@ -162,7 +158,9 @@ instance (StreamServerStack a) => ServerStack (TLS a) where
     { tlsTransportConfig            :: ServerConfig a
     , tlsServerParams               :: TLS.ServerParams
     }
-  data ServerException (TLS a) = TlsServerException
+  data ServerException (TLS a) =
+    TlsServerEndOfStreamException
+    deriving (Eq, Ord, Show)
   data ServerConnection (TLS a) = TlsServerConnection
     { tlsTransportConnection        :: ServerConnection a
     , tlsContext                    :: TLS.Context
@@ -188,7 +186,7 @@ instance (StreamServerStack a) => ServerStack (TLS a) where
         -- TODO: Use bytestring builder for concatenation.
         -- TODO: Fix TLS library upstream. The interface is awkward for a
         -- networking lib.
-        , TLS.backendRecv  = receiveExactly connection mempty
+        , TLS.backendRecv = flip (receiveExactly connection) mempty
         }
       mvar <- newEmptyMVar
       let srvParams = tlsServerParams $ tlsServerConfig server
@@ -208,12 +206,17 @@ instance (StreamServerStack a) => ServerStack (TLS a) where
       TLS.bye context
       pure x
     where
-      receiveExactly connection accum bytes = do
+      receiveExactly connection bytes accum = do
         bs <- receiveStream connection bytes
-        let accum' = accum `mappend` bs
+        -- TCP sockets signal a graceful end of the stream by returning zero bytes.
+        -- This function is not allowed to return less than the bytes
+        -- request and we shall not loop forever here (we did!). There is no
+        -- other option than throwing an exception here.
+        when (BS.null bs) $
+          E.throwIO (TlsServerEndOfStreamException :: ServerException (TLS a))
         if BS.length bs < bytes
-          then accum' `seq` receiveExactly connection accum' (bytes - BS.length bs)
-          else pure accum'
+          then receiveExactly connection (bytes - BS.length bs) $! accum `mappend` bs
+          else pure $! accum `mappend` bs
 
 instance (StreamServerStack a) => ServerStack (WebSocket a) where
   data Server (WebSocket a) = WebSocketServer
@@ -247,3 +250,9 @@ instance (StreamServerStack a) => ServerStack (WebSocket a) where
         (WebSocketServerConnectionInfo info $ WS.pendingRequest pendingConnection)
       WS.sendClose acceptedConnection ("Thank you for flying Haskell." :: BS.ByteString)
       pure x
+
+deriving instance Show (S.SocketAddress f) => Show (ServerConnectionInfo (S.Socket f t p))
+deriving instance Show (ServerConnectionInfo a) => Show (ServerConnectionInfo (TLS a))
+deriving instance Show (ServerConnectionInfo a) => Show (ServerConnectionInfo (WebSocket a))
+
+instance Typeable a => E.Exception (ServerException (TLS a))
