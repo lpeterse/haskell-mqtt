@@ -49,7 +49,8 @@ import           Network.MQTT.Broker.Authentication    (AuthenticationException,
                                                         getPrincipal,
                                                         principalPublishPermissions,
                                                         principalQuota,
-                                                        principalSubscribePermissions)
+                                                        principalSubscribePermissions,
+                                                        principalRetainPermissions)
 import qualified Network.MQTT.Broker.RetainedMessages  as RM
 import qualified Network.MQTT.Broker.Session           as Session
 import qualified Network.MQTT.Broker.SessionStatistics as SS
@@ -267,10 +268,18 @@ publish broker session msg = do
   -- A topic is permitted if it yields a match in the publish permission tree.
   if R.matchTopic (Message.msgTopic msg) (principalPublishPermissions principal)
     then do
+      if R.matchTopic (Message.msgTopic msg) (principalRetainPermissions principal)
+        then do
+          RM.store msg (brokerRetainedStore broker)
+          SS.accountRetentionsAccepted stats 1
+        else
+          SS.accountRetentionsAccepted stats 1
       publishUpstream broker msg
-      SS.accountMessagePublished (Session.sessionStatistics session)
+      SS.accountPublicationsAccepted stats 1
     else
-      SS.accountMessageDropped (Session.sessionStatistics session)
+      SS.accountPublicationsDropped stats 1
+  where
+    stats = Session.sessionStatistics session
 
 subscribe :: Broker auth -> Session.Session auth -> PacketIdentifier -> [(Filter, Message.QoS)] -> IO ()
 subscribe broker session pid filters = do
@@ -279,6 +288,12 @@ subscribe broker session pid filters = do
   let subscribeFilters = mapMaybe (\(filtr,mqos)->(filtr,) <$> mqos) checkedFilters
       qosTree = R.insertFoldable subscribeFilters R.empty
       sidTree = R.map (const $ IS.singleton $ Session.sessionIdentifier session) qosTree
+  -- Do the accounting for the session statistics.
+  -- TODO: Do this as a transaction below.
+  let countAccepted = length subscribeFilters
+  let countDenied   = length filters - countAccepted
+  SS.accountSubscriptionsAccepted (Session.sessionStatistics session) $ fromIntegral countAccepted
+  SS.accountSubscriptionsDenied   (Session.sessionStatistics session) $ fromIntegral countDenied
   -- Force the `qosTree` in order to lock the broker as little as possible.
   -- The `sidTree` is left lazy.
   qosTree `seq` do

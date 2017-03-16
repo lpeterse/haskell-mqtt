@@ -60,7 +60,8 @@ data Principal
    , principalQuota                :: Quota
    , principalPublishPermissions   :: R.Trie ()
    , principalSubscribePermissions :: R.Trie ()
-   } deriving (Eq, Show)
+   , principalRetainPermissions    :: R.Trie ()
+   } deriving (Eq, Show, Generic)
 
 data Quota
    = Quota
@@ -72,6 +73,7 @@ data Quota
    } deriving (Eq, Ord, Show, Generic)
 
 instance B.Binary Quota
+instance B.Binary Principal
 
 -- | This class defines how the information gathered from a
 --   connection request looks like. An `Authenticator` may use

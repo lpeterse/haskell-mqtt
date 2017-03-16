@@ -2,13 +2,14 @@
 {-# LANGUAGE OverloadedStrings #-}
 module TrieTest ( tests ) where
 
-import qualified Data.IntSet              as IS
-import           Prelude                  hiding (head)
+import           Data.Functor.Identity
+import qualified Data.IntSet           as IS
+import           Prelude               hiding (head)
 
 import           Test.Tasty
 import           Test.Tasty.HUnit
 
-import qualified Network.MQTT.Trie as R
+import qualified Network.MQTT.Trie     as R
 
 tests :: TestTree
 tests = testGroup "Trie"
@@ -84,7 +85,50 @@ tests = testGroup "Trie"
       testCase "parameter order (new, old)" $ ( R.lookup "a" $ R.insertWith const "a" (IS.singleton 2) $ R.singleton "a" (IS.singleton 1) ) @?= IS.fromList [2]
     ]
   , testGroup "map" [ ]
-  , testGroup "mapMaybe" [ ]
+  , testGroup "mapMaybe" [
+      testCase "Trie (Identity [Int]) -> Trie (): #1" $
+        let trie = R.insert "abc/#" (Identity [1 :: Int]) $ R.singleton "abc/def" (Identity [2])
+            f (Identity xs)
+              | 1 `elem` xs   = Just ()
+              | otherwise     = Nothing
+        in  R.mapMaybe f trie @?= R.singleton "abc/#" ()
+    , testCase "Trie (Identity [Int]) -> Trie (): #2" $
+        let trie = R.insert "abc/#" (Identity [1 :: Int]) $ R.singleton "abc/def" (Identity [2])
+            f (Identity xs)
+              | 2 `elem` xs   = Just ()
+              | otherwise     = Nothing
+        in  R.mapMaybe f trie @?= R.singleton "abc/def" ()
+    , testCase "Trie (Identity [Int]) -> Trie (): #3" $
+        let trie = R.insert "abc/#" (Identity [1 :: Int]) $ R.singleton "abc/def" (Identity [2])
+            f (Identity xs)
+              | 3 `elem` xs   = Just ()
+              | otherwise     = Nothing
+        in  R.mapMaybe f trie @?= R.empty
+    , testCase "Trie (Identity [Int]) -> Trie (): #4" $
+        let trie = R.insert "abc" (Identity [1 :: Int]) $ R.insert "abc/hij" (Identity [2]) $ R.singleton "abc/def" (Identity [3])
+            f (Identity xs)
+              | 1 `elem` xs   = Just ()
+              | otherwise     = Nothing
+        in  R.mapMaybe f trie @?= R.singleton "abc" ()
+    , testCase "Trie (Identity [Int]) -> Trie (): #5" $
+        let trie = R.insert "abc" (Identity [1 :: Int]) $ R.insert "abc/hij" (Identity [2]) $ R.singleton "abc/def" (Identity [3])
+            f (Identity xs)
+              | 2 `elem` xs   = Just ()
+              | otherwise     = Nothing
+        in  R.mapMaybe f trie @?= R.singleton "abc/hij" ()
+    , testCase "Trie (Identity [Int]) -> Trie (): #6" $
+        let trie = R.insert "abc" (Identity [1 :: Int]) $ R.insert "abc/def" (Identity [2]) $ R.singleton "abc/def/hij" (Identity [1])
+            f (Identity xs)
+              | 1 `elem` xs   = Just ()
+              | otherwise     = Nothing
+        in  R.mapMaybe f trie @?= (R.insert "abc" () $ R.singleton "abc/def/hij" ())
+    , testCase "Trie (Identity [Int]) -> Trie (): #7" $
+        let trie = R.insert "abc" (Identity [1 :: Int]) $ R.insert "abc/def" (Identity [2]) $ R.singleton "abc/def/hij" (Identity [1])
+            f (Identity xs)
+              | 2 `elem` xs   = Just ()
+              | otherwise     = Nothing
+        in  R.mapMaybe f trie @?= R.singleton "abc/def" ()
+    ]
   , testGroup "adjust" [ ]
   , testGroup "delete" [ ]
   , testGroup "union" [

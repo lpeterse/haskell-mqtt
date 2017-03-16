@@ -169,8 +169,9 @@ handleConnection broker cfg conn connInfo = do
           -- | This part is where the threads for a connection are created
           --   (one for input, one for output and one watchdog thread).
           sessionAcceptHandler session sessionPresent@(SessionPresent sp) = do
+            principal <- Session.getPrincipal session
             Log.infoM "Server.connection" $ "Connection accepted: Associated "
-              ++ show (Session.sessionPrincipalIdentifier session) ++ (if sp then " with existing session "
+              ++ show principal ++ (if sp then " with existing session "
               ++ show (Session.sessionIdentifier session) ++  "." else " with new session.")
             void $ SS.sendMessage conn (ServerConnectionAccepted sessionPresent)
             foldl1 race_

@@ -54,6 +54,7 @@ module Network.MQTT.Trie (
   ) where
 
 import           Control.Applicative        ((<|>))
+import qualified Data.Binary                as B
 import           Data.Functor.Identity
 import qualified Data.IntSet                as IS
 import qualified Data.List                  as L
@@ -99,6 +100,10 @@ instance (TrieValue a, Show a) => Show (Trie a) where
   show (Trie m) = "Trie [" ++ L.intercalate ", " (f <$> M.toAscList m) ++ "]"
     where
       f (l,n) = "(" ++ show l ++ ", Node (" ++ show (nodeValue n) ++ ") (" ++ show (nodeTree n) ++ ")"
+
+instance B.Binary (Trie ()) where
+  put _ = pure ()
+  get = pure empty
 
 empty :: Trie a
 empty  = Trie mempty
@@ -158,11 +163,16 @@ map f (Trie m) = Trie $ fmap g m
   where
     g n = let t = map f (nodeTree n) in node t (f <$> nodeValue n)
 
--- FIXME: Review. Does not honour invariants!
+-- | Applies a functor to a try and removes nodes for which the mapping
+--   function returns `Nothing`.
 mapMaybe :: (TrieValue a, TrieValue b) => (a -> Maybe b) -> Trie a -> Trie b
-mapMaybe f (Trie m) = Trie $ fmap g m
+mapMaybe f (Trie m) = Trie (M.mapMaybe g m)
   where
-    g n = let t = mapMaybe f (nodeTree n) in node t (nodeValue n >>= f)
+    g n | isNothing v' && null t' = Nothing
+        | otherwise               = Just (node t' v')
+      where
+        v' = nodeValue n >>= f
+        t' = mapMaybe f $ nodeTree n
 
 foldl'  :: (TrieValue b) => (a -> b -> a) -> a -> Trie b -> a
 foldl' f acc (Trie m) = M.foldl' g acc m

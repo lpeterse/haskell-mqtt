@@ -84,7 +84,7 @@ newtype Retain            = Retain Bool              deriving (Eq, Ord, Show)
 newtype Payload              = Payload BSL.ByteString      deriving (Eq, Ord, Show, IsString)
 newtype Duplicate         = Duplicate Bool           deriving (Eq, Ord, Show)
 newtype KeepAliveInterval = KeepAliveInterval Word16 deriving (Eq, Ord, Show, Num)
-newtype Username          = Username T.Text          deriving (Eq, Ord, Show, IsString)
+newtype Username          = Username T.Text          deriving (Eq, Ord, Show, IsString, Generic)
 newtype Password          = Password BS.ByteString   deriving (Eq)
 newtype ClientIdentifier  = ClientIdentifier T.Text  deriving (Eq, Ord, Show, IsString, Generic)
 newtype PacketIdentifier  = PacketIdentifier Int     deriving (Eq, Ord, Show)
@@ -93,6 +93,7 @@ instance Show Password where
   show = const "*********"
 
 instance B.Binary ClientIdentifier
+instance B.Binary Username
 
 data RejectReason
    = UnacceptableProtocolVersion
