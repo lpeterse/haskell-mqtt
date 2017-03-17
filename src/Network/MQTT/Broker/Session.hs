@@ -44,25 +44,21 @@ module Network.MQTT.Broker.Session
 import           Control.Concurrent.MVar
 import           Control.Concurrent.PrioritySemaphore
 import           Control.Monad
-import Data.Maybe
-import Data.Functor.Identity
-import qualified Data.Binary                           as B
 import           Data.Bool
-import qualified Data.ByteString                       as BS
-import           Data.Int
+import           Data.Functor.Identity
 import qualified Data.IntMap                           as IM
 import qualified Data.IntSet                           as IS
+import qualified Data.Map.Strict                       as M
+import           Data.Maybe
 import           Data.Monoid
 import qualified Data.Sequence                         as Seq
-import           GHC.Generics                          (Generic)
-import qualified Data.Map.Strict                       as M
 
+import           Network.MQTT.Broker.Authentication    hiding (getPrincipal)
+import           Network.MQTT.Broker.Internal
 import qualified Network.MQTT.Broker.RetainedMessages  as RM
+import qualified Network.MQTT.Broker.SessionStatistics as SS
 import           Network.MQTT.Message
 import qualified Network.MQTT.Trie                     as R
-import           Network.MQTT.Broker.Internal
-import           Network.MQTT.Broker.Authentication    hiding (getPrincipal)
-import qualified Network.MQTT.Broker.SessionStatistics as SS
 
 publish :: Session auth -> Message -> IO ()
 publish session msg = do
@@ -132,8 +128,8 @@ unsubscribe session pid filters =
 -- | Disconnect a session.
 disconnect :: Session auth -> IO ()
 disconnect session =
-  -- This assures that the client gets disconnected. The code is executed
-  -- _after_ the current client handler that has terminated.
+  -- This assures that the client gets disconnected by interrupting
+  -- the current client handler thread (if any).
   exclusively (sessionSemaphore session) (pure ())
 
 -- | Terminate a session.

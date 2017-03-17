@@ -18,8 +18,8 @@ import Control.Concurrent
 --   another thread can interrupt an ongoing computation and take over.
 newtype PrioritySemaphore = PrioritySemaphore (MVar (), MVar ThreadId)
 
-new :: IO PrioritySemaphore
-new = PrioritySemaphore <$> ((,) <$> newMVar () <*> newEmptyMVar)
+newPrioritySemaphore :: IO PrioritySemaphore
+newPrioritySemaphore = PrioritySemaphore <$> ((,) <$> newMVar () <*> newEmptyMVar)
 
 -- | Enter a critial section with exlusivity and kill any currently running thread.
 --

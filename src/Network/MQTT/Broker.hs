@@ -1,5 +1,5 @@
-{-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE LambdaCase          #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TupleSections       #-}
 module Network.MQTT.Broker
   ( Broker (brokerAuthenticator)
@@ -14,12 +14,8 @@ module Network.MQTT.Broker
 
 import           Control.Concurrent.MVar
 import           Control.Concurrent.PrioritySemaphore
-import qualified Control.Concurrent.PrioritySemaphore  as PrioritySemaphore
 import           Control.Exception
 import           Control.Monad
-import qualified Data.ByteString                       as BS
-import qualified Data.Binary                           as B
-import           Data.Functor.Identity
 import           Data.Int
 import qualified Data.IntMap.Strict                    as IM
 import qualified Data.IntSet                           as IS
@@ -27,34 +23,14 @@ import qualified Data.Map.Strict                       as M
 import           Data.Maybe
 import           System.Clock
 import qualified System.Log.Logger                     as Log
-import           GHC.Generics                          (Generic)
-import qualified Data.Sequence                         as Seq
 
-import           Network.MQTT.Broker.Authentication    hiding (getPrincipal)
-import           Network.MQTT.Broker.Authentication    (AuthenticationException,
-                                                        Authenticator,
-                                                        ConnectionRequest (..),
-                                                        PrincipalIdentifier,
-                                                        Quota (..),
-                                                        authenticate,
-                                                        getPrincipal,
-                                                        principalPublishPermissions,
-                                                        principalQuota,
-                                                        principalRetainPermissions,
-                                                        principalSubscribePermissions)
+import           Network.MQTT.Broker.Authentication
+import           Network.MQTT.Broker.Internal
 import qualified Network.MQTT.Broker.RetainedMessages  as RM
-import qualified Network.MQTT.Broker.Session as Session
+import qualified Network.MQTT.Broker.Session           as Session
 import qualified Network.MQTT.Broker.SessionStatistics as SS
-import           Network.MQTT.Message                  (ClientIdentifier,
-                                                        Message (..),
-                                                        PacketIdentifier,
-                                                        RejectReason (..),
-                                                        SessionPresent (..))
 import           Network.MQTT.Message
-import qualified Network.MQTT.Message                  as Message
-import           Network.MQTT.Message.Topic
 import qualified Network.MQTT.Trie                     as R
-import Network.MQTT.Broker.Internal
 
 newBroker :: auth -> IO (Broker auth)
 newBroker authenticator = do
@@ -101,7 +77,7 @@ withSession broker request sessionRejectHandler sessionAcceptHandler =
             (\case
                 Nothing -> sessionRejectHandler NotAuthorized
                 Just (session, sessionPresent)->
-                  PrioritySemaphore.exclusively (sessionSemaphore session) $ do
+                  exclusively (sessionSemaphore session) $ do
                     now <- sec <$> getTime Realtime
                     let connection = Connection {
                         connectionCreatedAt = now
@@ -141,7 +117,7 @@ getSession broker pcid@(pid, cid) =
         Nothing -> pure (st, Nothing)
         Just principal -> do
           now <- sec <$> getTime Realtime
-          semaphore <- PrioritySemaphore.new
+          semaphore <- newPrioritySemaphore
           subscriptions <- newMVar R.empty
           queue <- newMVar (emptyServerQueue $ fromIntegral $ quotaMaxInflightMessages $ principalQuota principal)
           queuePending <- newEmptyMVar

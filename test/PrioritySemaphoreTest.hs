@@ -13,7 +13,7 @@ import qualified Control.Concurrent.PrioritySemaphore as PrioritySemaphore
 main :: IO ()
 main = defaultMain $ testGroup "Control.Concurrent.PrioritySemaphore"
   [ testCase "2 threads, subsequently" $ do
-      sem <- PrioritySemaphore.new
+      sem <- PrioritySemaphore.newPrioritySemaphore
       m1  <- newEmptyMVar :: IO (MVar Int)
       m2  <- newEmptyMVar :: IO (MVar Int)
       PrioritySemaphore.exclusively sem $
@@ -24,7 +24,7 @@ main = defaultMain $ testGroup "Control.Concurrent.PrioritySemaphore"
       assertEqual "m2" 2 =<< takeMVar m2
 
   , testCase "2 threads, one interrupting the other" $ do
-      sem <- PrioritySemaphore.new
+      sem <- PrioritySemaphore.newPrioritySemaphore
       m1  <- newEmptyMVar :: IO (MVar Int)
       m2  <- newEmptyMVar :: IO (MVar Int)
       m3  <- newEmptyMVar :: IO (MVar Int)

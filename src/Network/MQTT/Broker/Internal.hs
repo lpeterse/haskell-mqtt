@@ -1,8 +1,8 @@
+{-# LANGUAGE DeriveGeneric       #-}
 {-# LANGUAGE LambdaCase          #-}
 {-# LANGUAGE OverloadedStrings   #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TupleSections       #-}
-{-# LANGUAGE DeriveGeneric     #-}
 --------------------------------------------------------------------------------
 -- |
 -- Module      :  Network.MQTT.Broker.Internal
@@ -16,44 +16,20 @@ module Network.MQTT.Broker.Internal where
 
 import           Control.Concurrent.MVar
 import           Control.Concurrent.PrioritySemaphore
-import qualified Control.Concurrent.PrioritySemaphore  as PrioritySemaphore
-import           Control.Exception
 import           Control.Monad
-import qualified Data.ByteString                       as BS
 import qualified Data.Binary                           as B
-import           Data.Functor.Identity
+import qualified Data.ByteString                       as BS
 import           Data.Int
 import qualified Data.IntMap.Strict                    as IM
 import qualified Data.IntSet                           as IS
 import qualified Data.Map.Strict                       as M
-import           Data.Maybe
-import           System.Clock
-import qualified System.Log.Logger                     as Log
-import           GHC.Generics                          (Generic)
 import qualified Data.Sequence                         as Seq
+import           GHC.Generics                          (Generic)
 
 import           Network.MQTT.Broker.Authentication    hiding (getPrincipal)
-import           Network.MQTT.Broker.Authentication    (AuthenticationException,
-                                                        Authenticator,
-                                                        ConnectionRequest (..),
-                                                        PrincipalIdentifier,
-                                                        Quota (..),
-                                                        authenticate,
-                                                        getPrincipal,
-                                                        principalPublishPermissions,
-                                                        principalQuota,
-                                                        principalRetainPermissions,
-                                                        principalSubscribePermissions)
 import qualified Network.MQTT.Broker.RetainedMessages  as RM
 import qualified Network.MQTT.Broker.SessionStatistics as SS
-import           Network.MQTT.Message                  (ClientIdentifier,
-                                                        Message (..),
-                                                        PacketIdentifier,
-                                                        RejectReason (..),
-                                                        SessionPresent (..))
 import           Network.MQTT.Message
-import qualified Network.MQTT.Message                  as Message
-import           Network.MQTT.Message.Topic
 import qualified Network.MQTT.Trie                     as R
 
 data Broker auth
