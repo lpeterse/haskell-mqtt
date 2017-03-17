@@ -213,6 +213,7 @@ authenticatorConfigAllAccess = TestAuthenticatorConfig
      , principalQuota = quota
      , principalPublishPermissions = R.singleton "#" ()
      , principalSubscribePermissions = R.singleton "#" ()
+     , principalRetainPermissions = R.singleton "#" ()
      }
     quota = Quota {
        quotaSessionTTL = 60

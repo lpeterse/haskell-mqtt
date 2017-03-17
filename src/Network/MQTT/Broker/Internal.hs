@@ -268,18 +268,19 @@ publish broker session msg = do
   -- A topic is permitted if it yields a match in the publish permission tree.
   if R.matchTopic (Message.msgTopic msg) (principalPublishPermissions principal)
     then do
-      if R.matchTopic (Message.msgTopic msg) (principalRetainPermissions principal)
+      if retain && R.matchTopic (Message.msgTopic msg) (principalRetainPermissions principal)
         then do
           RM.store msg (brokerRetainedStore broker)
           SS.accountRetentionsAccepted stats 1
         else
-          SS.accountRetentionsAccepted stats 1
+          SS.accountRetentionsDropped stats 1
       publishUpstream broker msg
       SS.accountPublicationsAccepted stats 1
     else
       SS.accountPublicationsDropped stats 1
   where
     stats = Session.sessionStatistics session
+    Message.Retain retain = msgRetain msg
 
 subscribe :: Broker auth -> Session.Session auth -> PacketIdentifier -> [(Filter, Message.QoS)] -> IO ()
 subscribe broker session pid filters = do
