@@ -246,10 +246,10 @@ handleConnection broker cfg conn connInfo = do
             Session.processPublishComplete session pid
             pure False
           ClientSubscribe pid filters -> do
-            Broker.subscribe broker session pid filters
+            Session.subscribe session pid filters
             pure False
           ClientUnsubscribe pid filters -> do
-            Broker.unsubscribe broker session pid filters
+            Session.unsubscribe session pid filters
             pure False
           ClientPingRequest -> do
             Log.debugM "Server.connection.handleInput" $ "Session " ++ show (Session.sessionIdentifier session) ++ ": Received ping."

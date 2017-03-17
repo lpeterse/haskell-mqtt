@@ -12,13 +12,16 @@
 -- Stability   :  experimental
 --------------------------------------------------------------------------------
 module Network.MQTT.Broker.Session
-  ( disconnect
+  ( publish
+  , subscribe
+  , unsubscribe
+  , disconnect
   , terminate
-  , publish
 
   , getSubscriptions
   , getConnection
   , getPrincipal
+  , getFreePacketIdentifiers
 
     -- TODO: private
   , reset
@@ -41,6 +44,8 @@ module Network.MQTT.Broker.Session
 import           Control.Concurrent.MVar
 import           Control.Concurrent.PrioritySemaphore
 import           Control.Monad
+import Data.Maybe
+import Data.Functor.Identity
 import qualified Data.Binary                           as B
 import           Data.Bool
 import qualified Data.ByteString                       as BS
@@ -58,6 +63,71 @@ import qualified Network.MQTT.Trie                     as R
 import           Network.MQTT.Broker.Internal
 import           Network.MQTT.Broker.Authentication    hiding (getPrincipal)
 import qualified Network.MQTT.Broker.SessionStatistics as SS
+
+publish :: Session auth -> Message -> IO ()
+publish session msg = do
+  principal <- readMVar (sessionPrincipal session)
+  -- A topic is permitted if it yields a match in the publish permission tree.
+  if R.matchTopic (msgTopic msg) (principalPublishPermissions principal)
+    then do
+      if retain && R.matchTopic (msgTopic msg) (principalRetainPermissions principal)
+        then do
+          RM.store msg (brokerRetainedStore $ sessionBroker session)
+          SS.accountRetentionsAccepted stats 1
+        else
+          SS.accountRetentionsDropped stats 1
+      publishUpstream (sessionBroker session) msg
+      SS.accountPublicationsAccepted stats 1
+    else
+      SS.accountPublicationsDropped stats 1
+  where
+    stats = sessionStatistics session
+    Retain retain = msgRetain msg
+
+subscribe :: Session auth -> PacketIdentifier -> [(Filter, QoS)] -> IO ()
+subscribe session pid filters = do
+  principal <- readMVar (sessionPrincipal session)
+  checkedFilters <- mapM (checkPermission principal) filters
+  let subscribeFilters = mapMaybe (\(filtr,mqos)->(filtr,) <$> mqos) checkedFilters
+      qosTree = R.insertFoldable subscribeFilters R.empty
+      sidTree = R.map (const $ IS.singleton $ sessionIdentifier session) qosTree
+  -- Do the accounting for the session statistics.
+  -- TODO: Do this as a transaction below.
+  let countAccepted = length subscribeFilters
+  let countDenied   = length filters - countAccepted
+  SS.accountSubscriptionsAccepted (sessionStatistics session) $ fromIntegral countAccepted
+  SS.accountSubscriptionsDenied   (sessionStatistics session) $ fromIntegral countDenied
+  -- Force the `qosTree` in order to lock the broker as little as possible.
+  -- The `sidTree` is left lazy.
+  qosTree `seq` do
+    modifyMVarMasked_ (brokerState $ sessionBroker session) $ \bst-> do
+      modifyMVarMasked_
+        ( sessionSubscriptions session )
+        ( pure . R.unionWith max qosTree )
+      pure $ bst { brokerSubscriptions = R.unionWith IS.union (brokerSubscriptions bst) sidTree }
+    enqueueSubscribeAcknowledged session pid (fmap snd checkedFilters)
+    forM_ checkedFilters $ \(filtr,_qos)->
+      publishMessages session =<< RM.retrieve filtr (brokerRetainedStore $ sessionBroker session)
+  where
+    checkPermission principal (filtr, qos) = do
+      let isPermitted = R.matchFilter filtr (principalSubscribePermissions principal)
+      pure (filtr, if isPermitted then Just qos else Nothing)
+
+unsubscribe :: Session auth -> PacketIdentifier -> [Filter] -> IO ()
+unsubscribe session pid filters =
+  -- Force the `unsubBrokerTree` first in order to lock the broker as little as possible.
+  unsubBrokerTree `seq` do
+    modifyMVarMasked_ (brokerState $ sessionBroker session) $ \bst-> do
+      modifyMVarMasked_
+        ( sessionSubscriptions session )
+        ( pure . flip (R.differenceWith (const . const Nothing)) unsubBrokerTree )
+      pure $ bst { brokerSubscriptions = R.differenceWith
+                    (\is (Identity i)-> Just (IS.delete i is))
+                    (brokerSubscriptions bst) unsubBrokerTree }
+    enqueueUnsubscribeAcknowledged session pid
+  where
+    unsubBrokerTree  = R.insertFoldable
+      ( fmap (,Identity $ sessionIdentifier session) filters ) R.empty
 
 -- | Disconnect a session.
 disconnect :: Session auth -> IO ()
@@ -100,26 +170,6 @@ terminate session =
               (\b _-> Just (IS.delete (sessionIdentifier session) b) )
               ( brokerSubscriptions st ) subscriptions
           }
-
-publish :: Session auth -> Message -> IO ()
-publish session msg = do
-  principal <- readMVar (sessionPrincipal session)
-  -- A topic is permitted if it yields a match in the publish permission tree.
-  if R.matchTopic (msgTopic msg) (principalPublishPermissions principal)
-    then do
-      if retain && R.matchTopic (msgTopic msg) (principalRetainPermissions principal)
-        then do
-          RM.store msg (brokerRetainedStore $ sessionBroker session)
-          SS.accountRetentionsAccepted stats 1
-        else
-          SS.accountRetentionsDropped stats 1
-      publishUpstream (sessionBroker session) msg
-      SS.accountPublicationsAccepted stats 1
-    else
-      SS.accountPublicationsDropped stats 1
-  where
-    stats = sessionStatistics session
-    Retain retain = msgRetain msg
 
 -- | Reset the session state after a reconnect.
 --

@@ -6,8 +6,6 @@ module Network.MQTT.Broker
   , newBroker
   , publishUpstream
   , publishDownstream
-  , subscribe
-  , unsubscribe
   , withSession
   , getUptime
   , getSessions
@@ -172,53 +170,6 @@ getSession broker pcid@(pid, cid) =
                }
           Log.infoM "Broker.createSession" $ "Creating new session with id " ++ show newSessionIdentifier ++ " for " ++ show pid ++ "."
           pure (newBrokerState, Just (newSession, SessionPresent False))
-
-
-
-subscribe :: Broker auth -> Session auth -> PacketIdentifier -> [(Filter, Message.QoS)] -> IO ()
-subscribe broker session pid filters = do
-  principal <- readMVar (sessionPrincipal session)
-  checkedFilters <- mapM (checkPermission principal) filters
-  let subscribeFilters = mapMaybe (\(filtr,mqos)->(filtr,) <$> mqos) checkedFilters
-      qosTree = R.insertFoldable subscribeFilters R.empty
-      sidTree = R.map (const $ IS.singleton $ sessionIdentifier session) qosTree
-  -- Do the accounting for the session statistics.
-  -- TODO: Do this as a transaction below.
-  let countAccepted = length subscribeFilters
-  let countDenied   = length filters - countAccepted
-  SS.accountSubscriptionsAccepted (sessionStatistics session) $ fromIntegral countAccepted
-  SS.accountSubscriptionsDenied   (sessionStatistics session) $ fromIntegral countDenied
-  -- Force the `qosTree` in order to lock the broker as little as possible.
-  -- The `sidTree` is left lazy.
-  qosTree `seq` do
-    modifyMVarMasked_ (brokerState broker) $ \bst-> do
-      modifyMVarMasked_
-        ( sessionSubscriptions session )
-        ( pure . R.unionWith max qosTree )
-      pure $ bst { brokerSubscriptions = R.unionWith IS.union (brokerSubscriptions bst) sidTree }
-    Session.enqueueSubscribeAcknowledged session pid (fmap snd checkedFilters)
-    forM_ checkedFilters $ \(filtr,_qos)->
-       Session.publishMessages session =<< RM.retrieve filtr (brokerRetainedStore broker)
-  where
-    checkPermission principal (filtr, qos) = do
-      let isPermitted = R.matchFilter filtr (principalSubscribePermissions principal)
-      pure (filtr, if isPermitted then Just qos else Nothing)
-
-unsubscribe :: Broker auth -> Session auth -> PacketIdentifier -> [Filter] -> IO ()
-unsubscribe broker session pid filters =
-  -- Force the `unsubBrokerTree` first in order to lock the broker as little as possible.
-  unsubBrokerTree `seq` do
-    modifyMVarMasked_ (brokerState broker) $ \bst-> do
-      modifyMVarMasked_
-        ( sessionSubscriptions session )
-        ( pure . flip (R.differenceWith (const . const Nothing)) unsubBrokerTree )
-      pure $ bst { brokerSubscriptions = R.differenceWith
-                    (\is (Identity i)-> Just (IS.delete i is))
-                    (brokerSubscriptions bst) unsubBrokerTree }
-    Session.enqueueUnsubscribeAcknowledged session pid
-  where
-    unsubBrokerTree  = R.insertFoldable
-      ( fmap (,Identity $ sessionIdentifier session) filters ) R.empty
 
 getUptime        :: Broker auth -> IO Int64
 getUptime broker = do
