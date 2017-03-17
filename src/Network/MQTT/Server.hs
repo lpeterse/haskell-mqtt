@@ -30,6 +30,7 @@ import qualified System.Socket                      as S
 
 import           Network.MQTT.Message
 import           Network.MQTT.Broker.Authentication
+import qualified Network.MQTT.Broker.Internal       as Session
 import qualified Network.MQTT.Broker                as Broker
 import qualified Network.MQTT.Broker.Session        as Session
 
@@ -230,7 +231,7 @@ handleConnection broker cfg conn connInfo = do
           ClientConnectUnsupported ->
             E.throwIO (ProtocolViolation "Unexpected CONN packet (of unsupported protocol version)." :: SS.ServerException (MQTT transport))
           ClientPublish pid dup msg -> do
-            Session.processPublish session pid dup msg (Broker.publish broker session)
+            Session.processPublish session pid dup msg
             pure False
           ClientPublishAcknowledged pid -> do
             Session.processPublishAcknowledged session pid
@@ -239,7 +240,7 @@ handleConnection broker cfg conn connInfo = do
             Session.processPublishReceived session pid
             pure False
           ClientPublishRelease pid -> do
-            Session.processPublishRelease session pid (Broker.publish broker session)
+            Session.processPublishRelease session pid
             pure False
           ClientPublishComplete pid -> do
             Session.processPublishComplete session pid

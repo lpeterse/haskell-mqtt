@@ -11,7 +11,32 @@
 -- Maintainer  :  info@lars-petersen.net
 -- Stability   :  experimental
 --------------------------------------------------------------------------------
-module Network.MQTT.Broker.Session where
+module Network.MQTT.Broker.Session
+  ( disconnect
+  , terminate
+  , publish
+
+  , getSubscriptions
+  , getConnection
+  , getPrincipal
+
+    -- TODO: private
+  , reset
+  , notePending
+  , waitPending
+  , publishMessage
+  , publishMessages
+  , enqueuePingResponse
+  , enqueueMessage
+  , enqueueSubscribeAcknowledged
+  , enqueueUnsubscribeAcknowledged
+  , dequeue
+  , processPublish
+  , processPublishRelease
+  , processPublishReceived
+  , processPublishComplete
+  , processPublishAcknowledged
+  ) where
 
 import           Control.Concurrent.MVar
 import           Control.Concurrent.PrioritySemaphore
@@ -25,75 +50,76 @@ import qualified Data.IntSet                           as IS
 import           Data.Monoid
 import qualified Data.Sequence                         as Seq
 import           GHC.Generics                          (Generic)
+import qualified Data.Map.Strict                       as M
 
+import qualified Network.MQTT.Broker.RetainedMessages  as RM
 import           Network.MQTT.Message
-import qualified Network.MQTT.Trie              as R
+import qualified Network.MQTT.Trie                     as R
+import           Network.MQTT.Broker.Internal
 import           Network.MQTT.Broker.Authentication    hiding (getPrincipal)
 import qualified Network.MQTT.Broker.SessionStatistics as SS
 
-type Identifier = Int
+-- | Disconnect a session.
+disconnect :: Session auth -> IO ()
+disconnect session =
+  -- This assures that the client gets disconnected. The code is executed
+  -- _after_ the current client handler that has terminated.
+  exclusively (sessionSemaphore session) (pure ())
 
-data Session auth = Session
-  { sessionIdentifier          :: !Identifier
-  , sessionClientIdentifier    :: !ClientIdentifier
-  , sessionPrincipalIdentifier :: !PrincipalIdentifier
-  , sessionCreatedAt           :: !Int64
-  , sessionConnection          :: !(MVar Connection)
-  , sessionPrincipal           :: !(MVar Principal)
-  , sessionSemaphore           :: !PrioritySemaphore
-  , sessionSubscriptions       :: !(MVar (R.Trie QoS))
-  , sessionQueue               :: !(MVar ServerQueue)
-  , sessionQueuePending        :: !(MVar ())
-  , sessionStatistics          :: SS.Statistics
-  }
+-- | Terminate a session.
+--
+--   * An eventually connected client gets disconnected.
+--   * The session subscriptions are removed from the subscription tree
+--     which means that it will receive no more messages.
+--   * The session will be unlinked from the broker which means
+--     that clients cannot resume it anymore under this client identifier.
+terminate :: Session auth -> IO ()
+terminate session =
+  -- This assures that the client gets disconnected. The code is executed
+  -- _after_ the current client handler that has terminated.
+  -- TODO Race: New clients may try to connect while we are in here.
+  -- This would not make the state inconsistent, but kill this thread.
+  -- What we need is another `exclusivelyUninterruptible` function for
+  -- the priority semaphore.
+  exclusively (sessionSemaphore session) $
+    modifyMVarMasked_ (brokerState $ sessionBroker session) $ \st->
+      withMVarMasked (sessionSubscriptions session) $ \subscriptions->
+        pure st
+          { brokerSessions = IM.delete
+              ( sessionIdentifier session )
+              ( brokerSessions st )
+            -- Remove the session id from the (principal, client) -> sessionid
+            -- mapping. Remove empty leaves in this mapping, too.
+          , brokerSessionsByPrincipals = M.delete
+              ( sessionPrincipalIdentifier session
+              , sessionClientIdentifier session)
+              (brokerSessionsByPrincipals st)
+            -- Remove the session id from each set that the session
+            -- subscription tree has a corresponding value for (which is ignored).
+          , brokerSubscriptions = R.differenceWith
+              (\b _-> Just (IS.delete (sessionIdentifier session) b) )
+              ( brokerSubscriptions st ) subscriptions
+          }
 
-data Connection = Connection
-  { connectionCreatedAt     :: !Int64
-  , connectionCleanSession  :: !Bool
-  , connectionSecure        :: !Bool
-  , connectionWebSocket     :: !Bool
-  , connectionRemoteAddress :: !(Maybe BS.ByteString)
-  } deriving (Eq, Ord, Show, Generic)
-
-instance B.Binary Connection
-
-instance Eq (Session auth) where
-  (==) s1 s2 = (==) (sessionIdentifier s1) (sessionIdentifier s2)
-
-instance Ord (Session auth) where
-  compare s1 s2 = compare (sessionIdentifier s1) (sessionIdentifier s2)
-
-instance Show (Session auth) where
-  show session =
-    "Session { identifier = " ++ show (sessionIdentifier session)
-    ++ ", principal = " ++ show (sessionPrincipalIdentifier session)
-    ++ ", client = " ++ show (sessionClientIdentifier session) ++ " }"
-
-data ServerQueue
-  = ServerQueue
-  { queuePids       :: !(Seq.Seq PacketIdentifier)
-  , outputBuffer    :: !(Seq.Seq ServerPacket)
-  , queueQoS0       :: !(Seq.Seq Message)
-  , queueQoS1       :: !(Seq.Seq Message)
-  , queueQoS2       :: !(Seq.Seq Message)
-  , notAcknowledged :: !(IM.IntMap Message) -- We sent a `QoS1` message and have not yet received the @PUBACK@.
-  , notReceived     :: !(IM.IntMap Message) -- We sent a `QoS2` message and have not yet received the @PUBREC@.
-  , notReleased     :: !(IM.IntMap Message) -- We received as `QoS2` message, sent the @PUBREC@ and wait for the @PUBREL@.
-  , notComplete     :: !IS.IntSet           -- We sent a @PUBREL@ and have not yet received the @PUBCOMP@.
-  }
-
-emptyServerQueue :: Int -> ServerQueue
-emptyServerQueue i = ServerQueue
-  { queuePids         = Seq.fromList $ fmap PacketIdentifier [0 .. min i 65535]
-  , outputBuffer      = mempty
-  , queueQoS0         = mempty
-  , queueQoS1         = mempty
-  , queueQoS2         = mempty
-  , notAcknowledged   = mempty
-  , notReceived       = mempty
-  , notReleased       = mempty
-  , notComplete       = mempty
-  }
+publish :: Session auth -> Message -> IO ()
+publish session msg = do
+  principal <- readMVar (sessionPrincipal session)
+  -- A topic is permitted if it yields a match in the publish permission tree.
+  if R.matchTopic (msgTopic msg) (principalPublishPermissions principal)
+    then do
+      if retain && R.matchTopic (msgTopic msg) (principalRetainPermissions principal)
+        then do
+          RM.store msg (brokerRetainedStore $ sessionBroker session)
+          SS.accountRetentionsAccepted stats 1
+        else
+          SS.accountRetentionsDropped stats 1
+      publishUpstream (sessionBroker session) msg
+      SS.accountPublicationsAccepted stats 1
+    else
+      SS.accountPublicationsDropped stats 1
+  where
+    stats = sessionStatistics session
+    Retain retain = msgRetain msg
 
 -- | Reset the session state after a reconnect.
 --
@@ -102,23 +128,6 @@ emptyServerQueue i = ServerQueue
 reset :: Session auth -> IO ()
 reset session =
   modifyMVar_ (sessionQueue session) (\q-> pure $! resetQueue q)
-
-notePending   :: Session auth -> IO ()
-notePending    = void . flip tryPutMVar () . sessionQueuePending
-
-waitPending   :: Session auth -> IO ()
-waitPending    = void . readMVar . sessionQueuePending
-
-publishMessage :: Session auth -> Message -> IO ()
-publishMessage session msg = do
-  subscriptions <- readMVar (sessionSubscriptions session)
-  case R.findMaxBounded (msgTopic msg) subscriptions of
-    Nothing  -> pure ()
-    Just qos -> enqueueMessage session msg { msgQoS = qos }
-
-publishMessages :: Foldable t => Session auth -> t Message -> IO ()
-publishMessages session msgs =
-  forM_ msgs (publishMessage session)
 
 -- | Enqueue a PINGRESP to be sent as soon as the output thread is available.
 --
@@ -129,24 +138,6 @@ enqueuePingResponse session = do
     pure $! queue { outputBuffer = ServerPingResponse Seq.<| outputBuffer queue }
   -- IMPORTANT: Notify the sending thread that something has been enqueued!
   notePending session
-
--- | This enqueues a message for transmission to the client. This operation does not block.
-enqueueMessage :: Session auth -> Message -> IO ()
-enqueueMessage session msg = do
-  quota <- principalQuota <$> getPrincipal session
-  modifyMVar_ (sessionQueue session) $ \queue->
-    pure $! case msgQoS msg of
-      QoS0 -> queue { queueQoS0 = Seq.take (fromIntegral $ quotaMaxQueueSizeQoS0 quota) $ queueQoS0 queue Seq.|> msg }
-      -- TODO: Terminate session on queue overflow!
-      QoS1 -> queue { queueQoS1 = queueQoS1 queue Seq.|> msg }
-      QoS2 -> queue { queueQoS2 = queueQoS2 queue Seq.|> msg }
-  -- IMPORTANT: Notify the sending thread that something has been enqueued!
-  notePending session
-
--- TODO: make more efficient
-enqueueMessages :: Foldable t => Session auth -> t Message -> IO ()
-enqueueMessages session msgs =
-  forM_ msgs (enqueueMessage session)
 
 enqueueSubscribeAcknowledged :: Session auth -> PacketIdentifier -> [Maybe QoS] -> IO ()
 enqueueSubscribeAcknowledged session pid mqoss = do
@@ -179,13 +170,13 @@ dequeue session =
 -- | Process a @PUB@ message received from the peer.
 --
 --   Different handling depending on message qos.
-processPublish :: Session auth -> PacketIdentifier -> Duplicate -> Message -> (Message -> IO ()) -> IO ()
-processPublish session pid@(PacketIdentifier p) _dup msg forward =
+processPublish :: Session auth -> PacketIdentifier -> Duplicate -> Message -> IO ()
+processPublish session pid@(PacketIdentifier p) _dup msg =
   case msgQoS msg of
     QoS0 ->
-      forward msg
+      publish session msg
     QoS1 -> do
-      forward msg
+      publish session msg
       modifyMVar_ (sessionQueue session) $ \q-> pure $! q {
           outputBuffer = outputBuffer q Seq.|> ServerPublishAcknowledged pid
         }
@@ -234,14 +225,14 @@ processPublishReceived session (PacketIdentifier pid) = do
 --   The message is only released if the handler returned without exception.
 --   The handler is only executed if there still is a message (it is a valid scenario
 --   that it might already have been released).
-processPublishRelease :: Session auth -> PacketIdentifier -> (Message -> IO ()) -> IO ()
-processPublishRelease session (PacketIdentifier pid) upstream = do
+processPublishRelease :: Session auth -> PacketIdentifier -> IO ()
+processPublishRelease session (PacketIdentifier pid) = do
   modifyMVar_ (sessionQueue session) $ \q->
     case IM.lookup pid (notReleased q) of
       Nothing  ->
         pure q
       Just msg -> do
-        upstream msg
+        publish session msg
         pure $! q { notReleased  = IM.delete pid (notReleased q)
                   , outputBuffer = outputBuffer q Seq.|> ServerPublishComplete (PacketIdentifier pid)
                   }
