@@ -39,6 +39,9 @@ module Network.MQTT.Broker.Session
   , processPublishReceived
   , processPublishComplete
   , processPublishAcknowledged
+  , Session (..)
+  , SessionIdentifier (..)
+  , Connection (..)
   ) where
 
 import           Control.Concurrent.MVar

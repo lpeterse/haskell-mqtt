@@ -49,7 +49,7 @@ data BrokerState auth
    , brokerSessionsByPrincipals   :: !(M.Map (PrincipalIdentifier, ClientIdentifier) SessionIdentifier)
    }
 
-newtype SessionIdentifier = SessionIdentifier Int deriving (Eq, Ord, Show, Enum)
+newtype SessionIdentifier = SessionIdentifier Int deriving (Eq, Ord, Show, Enum, Generic)
 
 data Session auth
    = Session
@@ -89,6 +89,7 @@ data ServerQueue
    , notComplete     :: !IS.IntSet           -- We sent a @PUBREL@ and have not yet received the @PUBCOMP@.
    }
 
+instance B.Binary SessionIdentifier
 instance B.Binary Connection
 
 instance Eq (Session auth) where
