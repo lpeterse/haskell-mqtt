@@ -1,6 +1,15 @@
 {-# LANGUAGE LambdaCase          #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TupleSections       #-}
+--------------------------------------------------------------------------------
+-- |
+-- Module      :  Network.MQTT.Broker
+-- Copyright   :  (c) Lars Petersen 2016
+-- License     :  MIT
+--
+-- Maintainer  :  info@lars-petersen.net
+-- Stability   :  experimental
+--------------------------------------------------------------------------------
 module Network.MQTT.Broker
   ( Broker (brokerAuthenticator)
   , newBroker
@@ -10,6 +19,7 @@ module Network.MQTT.Broker
   , getUptime
   , getSessions
   , getSubscriptions
+  , lookupSession
   ) where
 
 import           Control.Concurrent.MVar
@@ -37,7 +47,7 @@ newBroker authenticator = do
   now <- sec <$> getTime Realtime
   rm <- RM.new
   st <-newMVar BrokerState
-    { brokerMaxSessionIdentifier = 0
+    { brokerMaxSessionIdentifier = SessionIdentifier 0
     , brokerSubscriptions        = mempty
     , brokerSessions             = mempty
     , brokerSessionsByPrincipals = mempty
@@ -92,6 +102,11 @@ withSession broker request sessionRejectHandler sessionAcceptHandler =
                       ( sessionAcceptHandler session sessionPresent )
             )
 
+lookupSession :: SessionIdentifier -> Broker auth -> IO (Maybe (Session auth))
+lookupSession (SessionIdentifier sid) broker =
+  withMVar (brokerState broker) $ \st->
+    pure $ IM.lookup sid (brokerSessions st)
+
 -- | Either lookup or create a session if none is present (yet).
 --
 --   Principal is only looked up initially. Reconnects won't update the
@@ -101,7 +116,7 @@ getSession :: Authenticator auth => Broker auth -> (PrincipalIdentifier, ClientI
 getSession broker pcid@(pid, cid) =
   modifyMVar (brokerState broker) $ \st->
     case M.lookup pcid (brokerSessionsByPrincipals st) of
-      Just sid ->
+      Just (SessionIdentifier sid) ->
         case IM.lookup sid (brokerSessions st) of
           -- Resuming an existing session..
           Just session ->
@@ -124,10 +139,11 @@ getSession broker pcid@(pid, cid) =
           mconnection <- newEmptyMVar
           mprincipal <- newMVar principal
           stats <- SS.new
-          let newSessionIdentifier = brokerMaxSessionIdentifier st + 1
+          let SessionIdentifier maxSessionIdentifier = brokerMaxSessionIdentifier st
+              newSessionIdentifier = maxSessionIdentifier + 1
               newSession = Session
                { sessionBroker           = broker
-               , sessionIdentifier       = newSessionIdentifier
+               , sessionIdentifier       = SessionIdentifier newSessionIdentifier
                , sessionClientIdentifier = cid
                , sessionPrincipalIdentifier = pid
                , sessionCreatedAt        = now
@@ -140,9 +156,9 @@ getSession broker pcid@(pid, cid) =
                , sessionStatistics       = stats
                }
               newBrokerState = st
-               { brokerMaxSessionIdentifier = newSessionIdentifier
+               { brokerMaxSessionIdentifier = SessionIdentifier newSessionIdentifier
                , brokerSessions             = IM.insert newSessionIdentifier newSession (brokerSessions st)
-               , brokerSessionsByPrincipals = M.insert pcid newSessionIdentifier (brokerSessionsByPrincipals st)
+               , brokerSessionsByPrincipals = M.insert pcid (SessionIdentifier newSessionIdentifier) (brokerSessionsByPrincipals st)
                }
           Log.infoM "Broker.createSession" $ "Creating new session with id " ++ show newSessionIdentifier ++ " for " ++ show pid ++ "."
           pure (newBrokerState, Just (newSession, SessionPresent False))

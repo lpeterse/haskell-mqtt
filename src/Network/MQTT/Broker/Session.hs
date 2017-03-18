@@ -86,7 +86,7 @@ subscribe session pid filters = do
   checkedFilters <- mapM (checkPermission principal) filters
   let subscribeFilters = mapMaybe (\(filtr,mqos)->(filtr,) <$> mqos) checkedFilters
       qosTree = R.insertFoldable subscribeFilters R.empty
-      sidTree = R.map (const $ IS.singleton $ sessionIdentifier session) qosTree
+      sidTree = R.map (const $ IS.singleton sid) qosTree
   -- Do the accounting for the session statistics.
   -- TODO: Do this as a transaction below.
   let countAccepted = length subscribeFilters
@@ -105,6 +105,7 @@ subscribe session pid filters = do
     forM_ checkedFilters $ \(filtr,_qos)->
       publishMessages session =<< RM.retrieve filtr (brokerRetainedStore $ sessionBroker session)
   where
+    SessionIdentifier sid = sessionIdentifier session
     checkPermission principal (filtr, qos) = do
       let isPermitted = R.matchFilter filtr (principalSubscribePermissions principal)
       pure (filtr, if isPermitted then Just qos else Nothing)
@@ -122,8 +123,8 @@ unsubscribe session pid filters =
                     (brokerSubscriptions bst) unsubBrokerTree }
     enqueueUnsubscribeAcknowledged session pid
   where
-    unsubBrokerTree  = R.insertFoldable
-      ( fmap (,Identity $ sessionIdentifier session) filters ) R.empty
+    SessionIdentifier sid = sessionIdentifier session
+    unsubBrokerTree  = R.insertFoldable ( fmap (,Identity sid) filters ) R.empty
 
 -- | Disconnect a session.
 disconnect :: Session auth -> IO ()
@@ -151,9 +152,7 @@ terminate session =
     modifyMVarMasked_ (brokerState $ sessionBroker session) $ \st->
       withMVarMasked (sessionSubscriptions session) $ \subscriptions->
         pure st
-          { brokerSessions = IM.delete
-              ( sessionIdentifier session )
-              ( brokerSessions st )
+          { brokerSessions = IM.delete sid ( brokerSessions st )
             -- Remove the session id from the (principal, client) -> sessionid
             -- mapping. Remove empty leaves in this mapping, too.
           , brokerSessionsByPrincipals = M.delete
@@ -163,9 +162,11 @@ terminate session =
             -- Remove the session id from each set that the session
             -- subscription tree has a corresponding value for (which is ignored).
           , brokerSubscriptions = R.differenceWith
-              (\b _-> Just (IS.delete (sessionIdentifier session) b) )
+              (\b _-> Just (IS.delete sid b) )
               ( brokerSubscriptions st ) subscriptions
           }
+  where
+    SessionIdentifier sid = sessionIdentifier session
 
 -- | Reset the session state after a reconnect.
 --

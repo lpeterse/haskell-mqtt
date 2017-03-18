@@ -3,6 +3,7 @@
 {-# LANGUAGE OverloadedStrings   #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TupleSections       #-}
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
 --------------------------------------------------------------------------------
 -- |
 -- Module      :  Network.MQTT.Broker.Internal
@@ -45,10 +46,10 @@ data BrokerState auth
    { brokerMaxSessionIdentifier   :: !SessionIdentifier
    , brokerSubscriptions          :: !(R.Trie IS.IntSet)
    , brokerSessions               :: !(IM.IntMap (Session auth))
-   , brokerSessionsByPrincipals   :: !(M.Map (PrincipalIdentifier, ClientIdentifier) Int)
+   , brokerSessionsByPrincipals   :: !(M.Map (PrincipalIdentifier, ClientIdentifier) SessionIdentifier)
    }
 
-type SessionIdentifier = Int
+newtype SessionIdentifier = SessionIdentifier Int deriving (Eq, Ord, Show, Enum)
 
 data Session auth
    = Session
