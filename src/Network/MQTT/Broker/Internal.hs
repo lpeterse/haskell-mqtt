@@ -155,20 +155,65 @@ publishMessages :: Foldable t => Session auth -> t Message -> IO ()
 publishMessages session msgs =
  forM_ msgs (publishMessage session)
 
--- | This enqueues a message for transmission to the client. This operation does not block.
+-- | This enqueues a message for transmission to the client.
+--
+--   * This operations eventually terminates the session on queue overflow.
+--     The caller will not notice this and the operation will not throw an exception.
 enqueueMessage :: Session auth -> Message -> IO ()
 enqueueMessage session msg = do
- quota <- principalQuota <$> readMVar (sessionPrincipal session)
- modifyMVar_ (sessionQueue session) $ \queue->
-   pure $! case msgQoS msg of
-     QoS0 -> queue { queueQoS0 = Seq.take (fromIntegral $ quotaMaxQueueSizeQoS0 quota) $ queueQoS0 queue Seq.|> msg }
-     -- TODO: Terminate session on queue overflow!
-     QoS1 -> queue { queueQoS1 = queueQoS1 queue Seq.|> msg }
-     QoS2 -> queue { queueQoS2 = queueQoS2 queue Seq.|> msg }
- -- IMPORTANT: Notify the sending thread that something has been enqueued!
- notePending session
+  quota <- principalQuota <$> readMVar (sessionPrincipal session)
+  success <- modifyMVar (sessionQueue session) $ \queue-> case msgQoS msg of
+    QoS0 -> if (fromIntegral $ quotaMaxQueueSizeQoS0 quota) > Seq.length (queueQoS0 queue)
+      then pure $ (, True) $! queue { queueQoS0 = queueQoS0 queue Seq.|> msg }
+      else pure $ (, True) $! queue { queueQoS0 = Seq.drop 1 $ queueQoS0 queue Seq.|> msg }
+    QoS1 -> if (fromIntegral $ quotaMaxQueueSizeQoS1 quota) > Seq.length (queueQoS1 queue)
+      then pure $ (, True) $! queue { queueQoS1 = queueQoS1 queue Seq.|> msg }
+      else pure (queue, False)
+    QoS2 -> if (fromIntegral $ quotaMaxQueueSizeQoS2 quota) > Seq.length (queueQoS2 queue)
+      then pure $ (, True) $! queue { queueQoS2 = queueQoS2 queue Seq.|> msg }
+      else pure (queue, False)
+  if success
+    -- Notify the sending thread that something has been enqueued!
+    then notePending session
+    -- Kill the session.
+    else terminate session
 
 -- TODO: make more efficient
 enqueueMessages :: Foldable t => Session auth -> t Message -> IO ()
 enqueueMessages session msgs =
  forM_ msgs (enqueueMessage session)
+
+-- | Terminate a session.
+--
+--   * An eventually connected client gets disconnected.
+--   * The session subscriptions are removed from the subscription tree
+--     which means that it will receive no more messages.
+--   * The session will be unlinked from the broker which means
+--     that clients cannot resume it anymore under this client identifier.
+terminate :: Session auth -> IO ()
+terminate session =
+  -- This assures that the client gets disconnected. The code is executed
+  -- _after_ the current client handler that has terminated.
+  -- TODO Race: New clients may try to connect while we are in here.
+  -- This would not make the state inconsistent, but kill this thread.
+  -- What we need is another `exclusivelyUninterruptible` function for
+  -- the priority semaphore.
+  exclusively (sessionSemaphore session) $
+    modifyMVarMasked_ (brokerState $ sessionBroker session) $ \st->
+      withMVarMasked (sessionSubscriptions session) $ \subscriptions->
+        pure st
+          { brokerSessions = IM.delete sid ( brokerSessions st )
+            -- Remove the session id from the (principal, client) -> sessionid
+            -- mapping. Remove empty leaves in this mapping, too.
+          , brokerSessionsByPrincipals = M.delete
+              ( sessionPrincipalIdentifier session
+              , sessionClientIdentifier session)
+              (brokerSessionsByPrincipals st)
+            -- Remove the session id from each set that the session
+            -- subscription tree has a corresponding value for (which is ignored).
+          , brokerSubscriptions = R.differenceWith
+              (\b _-> Just (IS.delete sid b) )
+              ( brokerSubscriptions st ) subscriptions
+          }
+  where
+    SessionIdentifier sid = sessionIdentifier session

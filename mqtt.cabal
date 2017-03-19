@@ -105,7 +105,8 @@ test-suite test
     TrieTest,
     TopicTest
   build-depends:
-      base >= 4.8 && < 5
+      async
+    , base >= 4.8 && < 5
     , binary
     , tasty >= 0.11
     , tasty-hunit

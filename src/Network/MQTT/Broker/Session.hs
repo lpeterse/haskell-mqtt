@@ -51,7 +51,6 @@ import           Data.Bool
 import           Data.Functor.Identity
 import qualified Data.IntMap                           as IM
 import qualified Data.IntSet                           as IS
-import qualified Data.Map.Strict                       as M
 import           Data.Maybe
 import           Data.Monoid
 import qualified Data.Sequence                         as Seq
@@ -135,41 +134,6 @@ disconnect session =
   -- This assures that the client gets disconnected by interrupting
   -- the current client handler thread (if any).
   exclusively (sessionSemaphore session) (pure ())
-
--- | Terminate a session.
---
---   * An eventually connected client gets disconnected.
---   * The session subscriptions are removed from the subscription tree
---     which means that it will receive no more messages.
---   * The session will be unlinked from the broker which means
---     that clients cannot resume it anymore under this client identifier.
-terminate :: Session auth -> IO ()
-terminate session =
-  -- This assures that the client gets disconnected. The code is executed
-  -- _after_ the current client handler that has terminated.
-  -- TODO Race: New clients may try to connect while we are in here.
-  -- This would not make the state inconsistent, but kill this thread.
-  -- What we need is another `exclusivelyUninterruptible` function for
-  -- the priority semaphore.
-  exclusively (sessionSemaphore session) $
-    modifyMVarMasked_ (brokerState $ sessionBroker session) $ \st->
-      withMVarMasked (sessionSubscriptions session) $ \subscriptions->
-        pure st
-          { brokerSessions = IM.delete sid ( brokerSessions st )
-            -- Remove the session id from the (principal, client) -> sessionid
-            -- mapping. Remove empty leaves in this mapping, too.
-          , brokerSessionsByPrincipals = M.delete
-              ( sessionPrincipalIdentifier session
-              , sessionClientIdentifier session)
-              (brokerSessionsByPrincipals st)
-            -- Remove the session id from each set that the session
-            -- subscription tree has a corresponding value for (which is ignored).
-          , brokerSubscriptions = R.differenceWith
-              (\b _-> Just (IS.delete sid b) )
-              ( brokerSubscriptions st ) subscriptions
-          }
-  where
-    SessionIdentifier sid = sessionIdentifier session
 
 -- | Reset the session state after a reconnect.
 --

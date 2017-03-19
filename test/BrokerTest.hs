@@ -3,9 +3,12 @@
 {-# LANGUAGE TypeFamilies      #-}
 module BrokerTest ( getTestTree ) where
 
-import           Control.Concurrent.MVar
+import           Control.Concurrent
+import           Control.Concurrent.Async
 import           Control.Exception
 import           Data.Monoid
+import           Data.String
+import           Control.Monad
 import qualified Data.Sequence                      as Seq
 import           Data.Typeable
 import           Data.UUID                          (UUID)
@@ -97,6 +100,95 @@ getTestTree =
             queue1 <- (<>) <$> Session.dequeue session1 <*> Session.dequeue session1
             queue1 @?= Seq.fromList [ ServerSubscribeAcknowledged (PacketIdentifier 23) [Just QoS0] ]
       ]
+
+    , testGroup "Queue overflow handling"
+
+      [ testCase "Barrel shift on overflowing QoS0 queue" $ do
+          let msgs = [ Message.Message "topic" QoS0 (Retain False) (fromString $ show x) | x <- [1..] ]
+          broker <- Broker.newBroker $ TestAuthenticator authenticatorConfigAllAccess
+          t1 <- newEmptyMVar
+          t2 <- newEmptyMVar
+          t3 <- newEmptyMVar
+          t4 <- newEmptyMVar
+          t5 <- newEmptyMVar
+          let h session _ = do {
+              Session.subscribe session (PacketIdentifier 0) [("topic", QoS0)];
+              putMVar t1 ();
+              takeMVar t2;
+              void $ Session.dequeue session; -- subscribe acknowledge
+              putMVar t3 =<< Session.dequeue session;
+              takeMVar t4;
+              putMVar t5 =<< Session.dequeue session;
+            }
+          let w = Broker.withSession broker connectionRequest (const $ pure ()) h
+          withAsync w $ \_-> do
+            takeMVar t1
+            forM_ (take 10 msgs) $ Broker.publishDownstream broker
+            putMVar t2 ()
+            p <- takeMVar t3
+            assertEqual "Expect 10 packets being dequeued (first time)."
+              (Seq.fromList $ fmap (ServerPublish (PacketIdentifier (-1)) (Duplicate False)) $ take 10 msgs) p
+            forM_ (take 11 msgs) $ Broker.publishDownstream broker
+            putMVar t4 ()
+            q <- takeMVar t5
+            assertEqual "Expect 10 packets being dequeued (second time)."
+              (Seq.fromList $ fmap (ServerPublish (PacketIdentifier (-1)) (Duplicate False)) $ take 10 $ drop 1 msgs) q
+
+      , testCase "Terminate session on overflowing QoS1 queue" $ do
+          let msgs = [ Message.Message "topic" QoS1 (Retain False) (fromString $ show x) | x <- [1..] ]
+          broker <- Broker.newBroker $ TestAuthenticator authenticatorConfigAllAccess
+          t1 <- newEmptyMVar
+          t2 <- newEmptyMVar
+          t3 <- newEmptyMVar
+          t4 <- newEmptyMVar
+          t5 <- newEmptyMVar
+          let h session _ = do {
+              Session.subscribe session (PacketIdentifier 0) [("topic", QoS1)];
+              putMVar t1 ();
+              takeMVar t2;
+              putMVar t3 =<< (Seq.drop 1 <$> Session.dequeue session); -- cut off subscribe acknowledge
+              takeMVar t4;
+              putMVar t5 =<< Session.dequeue session;
+            }
+          let w = Broker.withSession broker connectionRequest (const $ pure ()) h
+          withAsync w $ \as-> do
+            takeMVar t1
+            forM_ (take 10 msgs) $ Broker.publishDownstream broker
+            putMVar t2 ()
+            p <- takeMVar t3
+            assertEqual "Expect 10 packets being dequeued (first time)."
+              (Seq.fromList $ zipWith (\i m-> ServerPublish (PacketIdentifier i) (Duplicate False) m) [0..] $ take 10 msgs) p
+            forM_ (take 11 msgs) $ Broker.publishDownstream broker
+            assertEqual "Expect session handler thread to be killed." "Left thread killed" =<< (show <$> waitCatch as)
+
+      , testCase "overflowing Qos2 queue (session termination)" $ do
+          let msgs = [ Message.Message "topic" QoS2 (Retain False) (fromString $ show x) | x <- [1..] ]
+          broker <- Broker.newBroker $ TestAuthenticator authenticatorConfigAllAccess
+          t1 <- newEmptyMVar
+          t2 <- newEmptyMVar
+          t3 <- newEmptyMVar
+          t4 <- newEmptyMVar
+          t5 <- newEmptyMVar
+          let h session _ = do {
+              Session.subscribe session (PacketIdentifier 0) [("topic", QoS2)];
+              putMVar t1 ();
+              takeMVar t2;
+              putMVar t3 =<< (Seq.drop 1 <$> Session.dequeue session); -- cut off subscribe acknowledge
+              takeMVar t4;
+              putMVar t5 =<< Session.dequeue session;
+            }
+          let w = Broker.withSession broker connectionRequest (const $ pure ()) h
+          withAsync w $ \as-> do
+            takeMVar t1
+            forM_ (take 10 msgs) $ Broker.publishDownstream broker
+            putMVar t2 ()
+            p <- takeMVar t3
+            assertEqual "Expect 10 packets being dequeued (first time)."
+              (Seq.fromList $ zipWith (\i m-> ServerPublish (PacketIdentifier i) (Duplicate False) m) [0..] $ take 10 msgs) p
+            forM_ (take 11 msgs) $ Broker.publishDownstream broker
+            assertEqual "Expect session handler thread to be killed." "Left thread killed" =<< (show <$> waitCatch as)
+      ]
+
     , testGroup "Quality of Service"
 
       [ testCase "transmit a QoS1 message and process acknowledgement" $ do
@@ -124,7 +216,6 @@ getTestTree =
             assertEqual "A subscribe acknowledgement shall be in the output queue." (Seq.fromList [ ServerSubscribeAcknowledged pid [Just QoS0] ]) queue1
             Session.processPublish session pid (Duplicate False) msg
             queue2 <- Session.dequeue session
-            Session.getSubscriptions session >>= print . R.findMaxBounded "topic"
             assertEqual "A publish acknowledgment and the (downgraded) message itself shall be in the output queue." (Seq.fromList [ ServerPublishAcknowledged pid ]) queue2
             queue3 <- Session.dequeue session
             assertEqual "The downgraded message queue shall be in the output queue." (Seq.fromList [ ServerPublish (PacketIdentifier (-1)) (Duplicate False) msg { msgQoS = QoS0} ]) queue3
