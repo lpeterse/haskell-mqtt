@@ -2,6 +2,7 @@
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE TypeFamilies      #-}
+{-# LANGUAGE BangPatterns      #-}
 --------------------------------------------------------------------------------
 -- |
 -- Module      :  Network.MQTT.Trie
@@ -21,6 +22,8 @@ module Network.MQTT.Trie (
   , empty
   -- ** size
   , size
+  -- ** sizeWith
+  , sizeWith
   -- ** singleton
   , singleton
   -- ** matchTopic
@@ -111,10 +114,22 @@ empty  = Trie mempty
 null  :: Trie a -> Bool
 null (Trie m) = M.null m
 
-size  :: TrieValue a => Trie a -> Int
-size (Trie m) = M.foldl' f 0 m
+-- | Count all trie nodes that are not `nodeNull`.
+size :: TrieValue a => Trie a -> Int
+size  = sizeWith (const 1)
+
+sizeWith :: TrieValue a => (a -> Int) -> Trie a -> Int
+sizeWith sz = countTrie 0
   where
-    f accum n = 1 + accum + size (nodeTree n)
+    -- Depth-first search through the tree.
+    -- This implementation uses an accumulator in order to not defer
+    -- the evaluation of the additions.
+    countTrie !accum t =
+      M.foldl' countNode accum (branches t)
+    countNode !accum n =
+      case nodeValue n of
+        Nothing -> countTrie accum (nodeTree n)
+        Just v  -> countTrie (accum + sz v) (nodeTree n)
 
 singleton :: TrieValue a => Filter -> a -> Trie a
 singleton tf = singleton' (filterLevels tf)
@@ -355,9 +370,10 @@ instance TrieValue IS.IntSet where
   data TrieNode IS.IntSet = IntSetTrieNode !(Trie IS.IntSet) !IS.IntSet
   node t                                = IntSetTrieNode t . fromMaybe mempty
   nodeNull                              = IS.null
-  nodeTree (IntSetTrieNode t _)  = t
-  nodeValue (IntSetTrieNode _ v) | nodeNull v = Nothing
-                                        | otherwise = Just v
+  nodeTree (IntSetTrieNode t _) = t
+  nodeValue (IntSetTrieNode _ v)
+    | nodeNull v = Nothing
+    | otherwise  = Just v
 
 instance TrieValue (Identity a) where
   data TrieNode (Identity a) = IdentityNode !(Trie (Identity a)) !(Maybe (Identity a))

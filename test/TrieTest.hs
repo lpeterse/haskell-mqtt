@@ -21,9 +21,17 @@ tests = testGroup "Trie"
     [ testCase "  null empty" $ assertBool "not null" $ R.null R.empty
     ]
   , testGroup "size"
-    [ testCase "size empty ==  0"                                    $ R.size (R.empty :: R.Trie ()) @?=  0
-    , testCase "size tree1 == 11"                                    $ R.size tree1                         @?= 11
-    , testCase "size tree2 ==  3"                                    $ R.size tree2                         @?=  3
+    [ testCase "size empty ==  0"                                    $ R.size (R.empty :: R.Trie ()) @?= 0
+    , testCase "size tree1 ==  9"                                    $ R.size tree1                  @?= 9
+    , testCase "size tree2 ==  2"                                    $ R.size tree2                  @?= 2
+    , testCase "size tree3 ==  2"                                    $ R.size tree3                  @?= 2
+    , testCase "size tree4 ==  3"                                    $ R.size tree4                  @?= 3
+    ]
+  , testGroup "sizeWith"
+    [ testCase "sizeWith IS.size empty ==  0"                        $ R.sizeWith IS.size R.empty    @?= 0
+    , testCase "sizeWith IS.size tree1 ==  9"                        $ R.sizeWith IS.size tree1      @?= 9
+    , testCase "sizeWith IS.size tree2 ==  2"                        $ R.sizeWith IS.size tree2      @?= 2
+    , testCase "sizeWith IS.size tree3 ==  7"                        $ R.sizeWith IS.size tree3      @?= 7
     ]
   , testGroup "singleton"
     [ testCase "  matchTopic \"a\"      $ singleton \"a\"      ()"   $ assertBool ""       $ R.matchTopic "a"     $ R.singleton "a" ()
@@ -77,8 +85,7 @@ tests = testGroup "Trie"
     , testCase "lookup \"$SYS/a/a\" tree1 == [5,7,8]"   $ R.lookup "$SYS/a/a" tree1 @?= IS.fromList [5,7,8]
     ]
   , testGroup "insert"
-    [ testCase "size tree2                == 3"         $ R.size tree2              @?= 3
-    , testCase "lookup \"a/b\"      tree2 == [3]"       $ R.lookup "a/b"      tree2 @?= IS.fromList [3]
+    [ testCase "lookup \"a/b\"      tree2 == [3]"       $ R.lookup "a/b"      tree2 @?= IS.fromList [3]
     , testCase "lookup \"a/b/c\"    tree2 == [2]"       $ R.lookup "a/b/c"    tree2 @?= IS.fromList [2]
     ]
   , testGroup "insertWith" [
@@ -161,11 +168,26 @@ tree1
   $ R.insertWith IS.union "$SYS/+"   (IS.singleton 6)
   $ R.insertWith IS.union "$SYS/a/#" (IS.singleton 7)
   $ R.insertWith IS.union "$SYS/+/a" (IS.singleton 8)
-  $! R.empty
+  $ R.empty
 
 tree2 :: R.Trie IS.IntSet
 tree2
   = R.insert "a/b"    (IS.singleton 3)
   $ R.insert "a/b/c"  (IS.singleton 2)
   $ R.insert "a/b/c"  (IS.singleton 1)
-  $! R.empty
+  $ R.empty
+
+tree3 :: R.Trie IS.IntSet
+tree3
+  = R.insert "a/b"      (IS.fromList [])
+  $ R.insert "a/b/c"    (IS.fromList [1,2,3,4])
+  $ R.insert "a/b/d"    (IS.fromList [5,6,7])
+  $ R.insert "a/b/d/e"  (IS.fromList [])
+  $ R.empty
+
+tree4 :: R.Trie ()
+tree4
+  = R.insert "a/b"     ()
+  $ R.insert "a/b/c/d" ()
+  $ R.insert "b/c/d"   ()
+  $ R.empty
