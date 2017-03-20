@@ -307,12 +307,12 @@ authenticatorConfigAllAccess = TestAuthenticatorConfig
      , principalRetainPermissions = R.singleton "#" ()
      }
     quota = Quota {
-       quotaMaxSessionTTL       = 60
-     , quotaMaxPacketSize       = 65535
-     , quotaMaxInflightMessages = 10
-     , quotaMaxQueueSizeQoS0    = 10
-     , quotaMaxQueueSizeQoS1    = 10
-     , quotaMaxQueueSizeQoS2    = 10
+       quotaMaxIdleSessionTTL    = 60
+     , quotaMaxPacketSize        = 65535
+     , quotaMaxPacketIdentifiers = 10
+     , quotaMaxQueueSizeQoS0     = 10
+     , quotaMaxQueueSizeQoS1     = 10
+     , quotaMaxQueueSizeQoS2     = 10
      }
 
 connectionRequest :: ConnectionRequest

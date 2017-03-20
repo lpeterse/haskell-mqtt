@@ -134,7 +134,7 @@ getSession broker pcid@(pid, cid) =
           now <- sec <$> getTime Realtime
           semaphore <- newPrioritySemaphore
           subscriptions <- newMVar R.empty
-          queue <- newMVar (emptyServerQueue $ fromIntegral $ quotaMaxInflightMessages $ principalQuota principal)
+          queue <- newMVar (emptyServerQueue $ fromIntegral $ quotaMaxPacketIdentifiers $ principalQuota principal)
           queuePending <- newEmptyMVar
           mconnection <- newEmptyMVar
           mprincipal <- newMVar principal

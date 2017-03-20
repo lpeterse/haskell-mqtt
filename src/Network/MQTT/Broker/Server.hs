@@ -16,6 +16,10 @@ module Network.MQTT.Broker.Server
   ( serveConnection
   , MQTT ()
   , MqttServerTransportStack (..)
+  , SS.Server ( .. )
+  , SS.ServerConfig ( .. )
+  , SS.ServerConnection ( .. )
+  , SS.ServerException ( .. )
   ) where
 
 import           Control.Concurrent
