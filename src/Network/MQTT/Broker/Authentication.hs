@@ -65,7 +65,8 @@ data Principal
 
 data Quota
    = Quota
-   { quotaSessionTTL           :: Word64
+   { quotaMaxSessionTTL        :: Word64
+   , quotaMaxPacketSize        :: Word64
    , quotaMaxInflightMessages  :: Word64
    , quotaMaxQueueSizeQoS0     :: Word64
    , quotaMaxQueueSizeQoS1     :: Word64

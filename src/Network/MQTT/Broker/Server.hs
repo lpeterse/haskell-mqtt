@@ -5,14 +5,18 @@
 {-# LANGUAGE TypeFamilies        #-}
 --------------------------------------------------------------------------------
 -- |
--- Module      :  Network.MQTT.Server
+-- Module      :  Network.MQTT.Broker.Server
 -- Copyright   :  (c) Lars Petersen 2016
 -- License     :  MIT
 --
 -- Maintainer  :  info@lars-petersen.net
 -- Stability   :  experimental
 --------------------------------------------------------------------------------
-module Network.MQTT.Server where
+module Network.MQTT.Broker.Server
+  ( serveConnection
+  , MQTT ()
+  , MqttServerTransportStack (..)
+  ) where
 
 import           Control.Concurrent
 import           Control.Concurrent.Async
@@ -37,7 +41,6 @@ import qualified Network.MQTT.Broker.Session        as Session
 instance (Typeable transport) => E.Exception (SS.ServerException (MQTT transport))
 
 data MQTT transport
-type RecentActivity = IORef Bool
 
 class SS.ServerStack a => MqttServerTransportStack a where
   getConnectionRequest :: SS.ServerConnectionInfo a -> IO ConnectionRequest
@@ -73,11 +76,9 @@ instance (SS.StreamServerStack a, MqttServerTransportStack a) => MqttServerTrans
 instance (SS.StreamServerStack transport) => SS.ServerStack (MQTT transport) where
   data Server (MQTT transport) = MqttServer
     { mqttTransportServer     :: SS.Server transport
-    , mqttConfig              :: SS.ServerConfig (MQTT transport)
     }
   data ServerConfig (MQTT transport) = MqttServerConfig
     { mqttTransportConfig     :: SS.ServerConfig transport
-    , mqttMaxMessageSize      :: Int64
     }
   data ServerConnection (MQTT transport) = MqttServerConnection
     { mqttTransportConnection :: SS.ServerConnection transport
@@ -94,7 +95,7 @@ instance (SS.StreamServerStack transport) => SS.ServerStack (MQTT transport) whe
     deriving (Eq, Ord, Show, Typeable)
   withServer config handle =
     SS.withServer (mqttTransportConfig config) $ \server->
-      handle (MqttServer server config)
+      handle (MqttServer server)
   withConnection server handler =
     SS.withConnection (mqttTransportServer server) $ \connection info->
       flip handler (MqttServerConnectionInfo info) =<< MqttServerConnection
@@ -149,11 +150,11 @@ instance (SS.StreamServerStack transport) => SS.MessageServerStack (MQTT transpo
 
 deriving instance Show (SS.ServerConnectionInfo transport) => Show (SS.ServerConnectionInfo (MQTT transport))
 
-handleConnection :: forall transport auth. (SS.StreamServerStack transport, MqttServerTransportStack transport, Authenticator auth) => Broker.Broker auth -> SS.ServerConfig (MQTT transport) -> SS.ServerConnection (MQTT transport) -> SS.ServerConnectionInfo (MQTT transport) -> IO ()
-handleConnection broker cfg conn connInfo = do
+serveConnection :: forall transport auth. (SS.StreamServerStack transport, MqttServerTransportStack transport, Authenticator auth) => Broker.Broker auth -> SS.ServerConnection (MQTT transport) -> SS.ServerConnectionInfo (MQTT transport) -> IO ()
+serveConnection broker conn connInfo = do
   recentActivity <- newIORef True
   req <- getConnectionRequest (mqttTransportServerConnectionInfo connInfo)
-  msg <- SS.receiveMessage conn (mqttMaxMessageSize cfg)
+  msg <- SS.receiveMessage conn maxInitialPacketSize
   case msg of
     ClientConnectUnsupported -> do
       Log.warningM "Server.connection" $ "Connection from "
@@ -198,13 +199,18 @@ handleConnection broker cfg conn connInfo = do
       Broker.withSession broker request sessionRejectHandler sessionAcceptHandler
     _ -> pure () -- TODO: Don't parse not-CONN packets in the first place!
   where
+    -- The size of the initial CONN packet shall somewhat be limited to a moderate size.
+    -- This value is assumed to make no problems while still protecting
+    -- the servers resources against exaustion attacks.
+    maxInitialPacketSize :: Int64
+    maxInitialPacketSize  = 65535
     -- The keep alive thread wakes up every `keepAlive/2` seconds.
     -- When it detects no recent activity, it sleeps one more full `keepAlive`
     -- interval and checks again. When it still finds no recent activity, it
     -- throws an exception.
     -- That way a timeout will be detected between 1.5 and 2 `keep alive`
     -- intervals after the last actual client activity.
-    keepAlive :: RecentActivity -> KeepAliveInterval -> Session.Session auth -> IO ()
+    keepAlive :: IORef Bool -> KeepAliveInterval -> Session.Session auth -> IO ()
     keepAlive recentActivity (KeepAliveInterval interval) session = forever $ do
       writeIORef recentActivity False
       threadDelay regularInterval
@@ -220,9 +226,20 @@ handleConnection broker cfg conn connInfo = do
           unless activity'' $ E.throwIO (KeepAliveTimeoutException :: SS.ServerException (MQTT transport))
       where
         regularInterval = fromIntegral interval *  500000
-    handleInput :: RecentActivity -> Session.Session auth -> IO ()
-    handleInput recentActivity session =
-      SS.consumeMessages conn (mqttMaxMessageSize cfg) $ \packet-> do
+    -- | This thread is responsible for continuously processing input.
+    --   It blocks on reading the input stream until input becomes available.
+    --   Input is consumed no faster than it can be processed.
+    --
+    --   * Read packet from the input stream.
+    --   * Note that there was activity (TODO: a timeout may occur when a packet
+    --     takes too long to transmit due to its size).
+    --   * Process and dispatch the message internally.
+    --   * Repeat and eventually wait again.
+    --   * Eventually throws `ServerException`s.
+    handleInput :: IORef Bool -> Session.Session auth -> IO ()
+    handleInput recentActivity session = do
+      maxPacketSize <- fromIntegral . quotaMaxPacketSize . principalQuota <$> Session.getPrincipal session
+      SS.consumeMessages conn maxPacketSize $ \packet-> do
         writeIORef recentActivity True
         --Log.debugM "Server.connection.handleInput" $ take 50 $ show packet
         case packet of
@@ -252,11 +269,22 @@ handleConnection broker cfg conn connInfo = do
             Session.unsubscribe session pid filters
             pure False
           ClientPingRequest -> do
-            Log.debugM "Server.connection.handleInput" $ "Session " ++ show (Session.sessionIdentifier session) ++ ": Received ping."
             Session.enqueuePingResponse session
             pure False
           ClientDisconnect ->
             pure True
+    -- | This thread is responsible for continuously transmitting to the client
+    --   and reading from the output queue.
+    --
+    --   * It blocks on Session.waitPending until output gets available.
+    --   * When output is available, it fetches a whole sequence of messages
+    --     from the output queue.
+    --   * It then uses the optimized SS.sendMessages operation which fills
+    --     a whole chunk with as many messages as possible and sends the chunks
+    --     each with a single system call. This is _very_ important for high
+    --     throughput.
+    --   * Afterwards, it repeats and eventually waits again.
+    handleOutput :: Session.Session auth -> IO ()
     handleOutput session = forever $ do
       -- The `waitPending` operation is blocking until messages get available.
       Session.waitPending session

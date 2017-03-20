@@ -26,9 +26,9 @@ library
                        Network.MQTT.Message,
                        Network.MQTT.Trie,
                        Network.MQTT.Broker,
-                       Network.MQTT.Server,
                        Network.MQTT.Broker.Authentication,
                        Network.MQTT.Broker.RetainedMessages,
+                       Network.MQTT.Broker.Server,
                        Network.MQTT.Broker.Session,
                        Network.MQTT.Broker.SessionStatistics
   other-modules:       Control.Concurrent.PrioritySemaphore,

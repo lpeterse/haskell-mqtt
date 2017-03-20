@@ -104,7 +104,7 @@ getTestTree =
     , testGroup "Queue overflow handling"
 
       [ testCase "Barrel shift on overflowing QoS0 queue" $ do
-          let msgs = [ Message.Message "topic" QoS0 (Retain False) (fromString $ show x) | x <- [1..] ]
+          let msgs = [ Message.Message "topic" QoS0 (Retain False) (fromString $ show x) | x <- [(1 :: Int)..] ]
           broker <- Broker.newBroker $ TestAuthenticator authenticatorConfigAllAccess
           t1 <- newEmptyMVar
           t2 <- newEmptyMVar
@@ -135,7 +135,7 @@ getTestTree =
               (Seq.fromList $ fmap (ServerPublish (PacketIdentifier (-1)) (Duplicate False)) $ take 10 $ drop 1 msgs) q
 
       , testCase "Terminate session on overflowing QoS1 queue" $ do
-          let msgs = [ Message.Message "topic" QoS1 (Retain False) (fromString $ show x) | x <- [1..] ]
+          let msgs = [ Message.Message "topic" QoS1 (Retain False) (fromString $ show x) | x <- [(1 :: Int)..] ]
           broker <- Broker.newBroker $ TestAuthenticator authenticatorConfigAllAccess
           t1 <- newEmptyMVar
           t2 <- newEmptyMVar
@@ -147,7 +147,7 @@ getTestTree =
               putMVar t1 ();
               takeMVar t2;
               putMVar t3 =<< (Seq.drop 1 <$> Session.dequeue session); -- cut off subscribe acknowledge
-              takeMVar t4;
+              void $ takeMVar t4;
               putMVar t5 =<< Session.dequeue session;
             }
           let w = Broker.withSession broker connectionRequest (const $ pure ()) h
@@ -162,7 +162,7 @@ getTestTree =
             assertEqual "Expect session handler thread to be killed." "Left thread killed" =<< (show <$> waitCatch as)
 
       , testCase "overflowing Qos2 queue (session termination)" $ do
-          let msgs = [ Message.Message "topic" QoS2 (Retain False) (fromString $ show x) | x <- [1..] ]
+          let msgs = [ Message.Message "topic" QoS2 (Retain False) (fromString $ show x) | x <- [(1 :: Int)..] ]
           broker <- Broker.newBroker $ TestAuthenticator authenticatorConfigAllAccess
           t1 <- newEmptyMVar
           t2 <- newEmptyMVar
@@ -174,7 +174,7 @@ getTestTree =
               putMVar t1 ();
               takeMVar t2;
               putMVar t3 =<< (Seq.drop 1 <$> Session.dequeue session); -- cut off subscribe acknowledge
-              takeMVar t4;
+              void $ takeMVar t4;
               putMVar t5 =<< Session.dequeue session;
             }
           let w = Broker.withSession broker connectionRequest (const $ pure ()) h
@@ -307,11 +307,12 @@ authenticatorConfigAllAccess = TestAuthenticatorConfig
      , principalRetainPermissions = R.singleton "#" ()
      }
     quota = Quota {
-       quotaSessionTTL = 60
+       quotaMaxSessionTTL       = 60
+     , quotaMaxPacketSize       = 65535
      , quotaMaxInflightMessages = 10
-     , quotaMaxQueueSizeQoS0 = 10
-     , quotaMaxQueueSizeQoS1 = 10
-     , quotaMaxQueueSizeQoS2 = 10
+     , quotaMaxQueueSizeQoS0    = 10
+     , quotaMaxQueueSizeQoS1    = 10
+     , quotaMaxQueueSizeQoS2    = 10
      }
 
 connectionRequest :: ConnectionRequest
