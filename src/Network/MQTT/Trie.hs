@@ -262,22 +262,19 @@ findMaxBounded topic = findHead (topicLevels topic)
           (y:ys) -> M.lookup x m >>= findTail y ys . nodeTree
       | otherwise = findTail x xs t
     findTail x [] (Trie m) =
-      matchSingleLevelWildcard `maxBounded` matchMultiLevelWildcard `maxBounded` matchComponent
+      matchMultiLevelWildcard `maxBounded` matchSingleLevelWildcard `maxBounded` matchComponent
       where
+        matchMultiLevelWildcard  = M.lookup multiLevelWildcard  m >>=
+          nodeValue
         matchSingleLevelWildcard = M.lookup singleLevelWildcard m >>= \n->
-                                   nodeValue n `maxBounded` (nodeValue =<< M.lookup multiLevelWildcard (branches $ nodeTree n))
-        matchMultiLevelWildcard  = M.lookup multiLevelWildcard  m >>= nodeValue
+          nodeValue n `maxBounded` (nodeValue =<< M.lookup multiLevelWildcard (branches $ nodeTree n))
         matchComponent           = M.lookup x                   m >>= \n->
-          case M.lookup multiLevelWildcard $ branches $ nodeTree n of
-            -- component match, but no additional multiLevelWildcard below
-            Nothing -> nodeValue n
-            -- component match and multiLevelWildcard match below
-            Just n' -> nodeValue n `maxBounded` nodeValue n'
+          nodeValue n `maxBounded` (nodeValue =<< M.lookup multiLevelWildcard (branches $ nodeTree n))
     findTail x (y:ys) (Trie m) =
-      matchSingleLevelWildcard `maxBounded` matchMultiLevelWildcard `maxBounded` matchComponent
+      matchMultiLevelWildcard `maxBounded` matchSingleLevelWildcard `maxBounded` matchComponent
       where
-        matchSingleLevelWildcard = M.lookup singleLevelWildcard m >>= findTail y ys . nodeTree
         matchMultiLevelWildcard  = M.lookup multiLevelWildcard  m >>= nodeValue
+        matchSingleLevelWildcard = M.lookup singleLevelWildcard m >>= findTail y ys . nodeTree
         matchComponent           = M.lookup                   x m >>= findTail y ys . nodeTree
 
     maxBounded :: (Ord a, Bounded a) => Maybe a -> Maybe a -> Maybe a
