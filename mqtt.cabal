@@ -1,5 +1,5 @@
 name:                mqtt
-synopsis:            An MQTT protocol implementation (client and server).
+synopsis:            An MQTT protocol implementation.
 description:
   This project aims to supply a rock-solid MQTT implementation suitable for
   production use.

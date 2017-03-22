@@ -3,32 +3,26 @@ A pure Haskell MQTT client and server implementation
 
 ## Project goal
 
-This project aims to supply a rock-solid MQTT implementation suitable for
-production use.
+This project aims to supply a rock-solid MQTT 3.1.1 implementation suitable for production use.
 
 The planned features are:
 
+  - A broker implementation capable of handing and serving several thousands of
+    connections.
   - A client implementation with integrated broker which allows one client to be
     used by several threads/consumers simultaneously.
-  - A server implementation capable of handing and serving several thousands of
-    connections.
   - TLS and WebSocket connections.
   - An interface for pluggable authentication and authorization.
   - High test and benchmark coverage.
 
-## Project state
+## Project state (2017-03-22)
 
-This is a work in progress. A first useful release is planned for the end of 2016.
-
-The following has already been implemented:
-
-  - Binary protocol handling (parsing and serializing).
-  - Client connection handling.
-  - High-performance and concurrent message routing (see `RoutingTree`).
-
-## Documentation
-
-[Haddock source code documentation is available here.](http://mqtt.lpeterse.de)
+  - The broker implementation is nearly feature complete and well-tested.
+    The [hummingbird](https://github.com/lpeterse/haskell-hummingbird) project
+    is a full-fledged broker built on-top of this library.
+  - The client implementation went out of focus for now and is currently
+    commented out. It's still a planned feature and is essentially a low
+    hanging fruit as all the protocol parsers etc. are already in place.
 
 ## License
 
