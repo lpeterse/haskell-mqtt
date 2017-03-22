@@ -249,6 +249,10 @@ lookup tf = fromMaybe mempty . lookupHead (topicLevels tf)
         matchMultiLevelWildcard  = M.lookup multiLevelWildcard  m >>= nodeValue
         matchComponent           = M.lookup                   x m >>= lookupTail y ys . nodeTree
 
+-- | Find the greatest value in a trie that matches the topic.
+--
+--   * Stops search as soon as a `maxBound` element has been found.
+--   * Doesn't match into `$` topics.
 findMaxBounded :: (TrieValue a, Ord a, Bounded a) => Topic -> Trie a -> Maybe a
 findMaxBounded topic = findHead (topicLevels topic)
   where
