@@ -264,7 +264,8 @@ findMaxBounded topic = findHead (topicLevels topic)
     findTail x [] (Trie m) =
       matchSingleLevelWildcard `maxBounded` matchMultiLevelWildcard `maxBounded` matchComponent
       where
-        matchSingleLevelWildcard = M.lookup singleLevelWildcard m >>= nodeValue
+        matchSingleLevelWildcard = M.lookup singleLevelWildcard m >>= \n->
+                                   nodeValue n `maxBounded` (nodeValue =<< M.lookup multiLevelWildcard (branches $ nodeTree n))
         matchMultiLevelWildcard  = M.lookup multiLevelWildcard  m >>= nodeValue
         matchComponent           = M.lookup x                   m >>= \n->
           case M.lookup multiLevelWildcard $ branches $ nodeTree n of
@@ -380,9 +381,9 @@ instance TrieValue IS.IntSet where
     | otherwise  = Just v
 
 instance TrieValue (Identity a) where
-  data TrieNode (Identity a) = IdentityNode !(Trie (Identity a)) !(Maybe (Identity a))
-  node t n@Nothing  = IdentityNode t n
-  node t n@(Just v) = IdentityNode t n
+  data TrieNode (Identity a)    = IdentityNode !(Trie (Identity a)) !(Maybe (Identity a))
+  node t n@Nothing              = IdentityNode t n
+  node t n@(Just _)             = IdentityNode t n
   nodeNull                      = const False
   nodeTree  (IdentityNode t _)  = t
   nodeValue (IdentityNode _ mv) = mv

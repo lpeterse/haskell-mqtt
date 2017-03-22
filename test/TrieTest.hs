@@ -86,15 +86,19 @@ tests = testGroup "Trie"
     ]
   , testGroup "findMaxBounded"
     [ testCase "findMaxBounded \"a/b/c\"      tree5 == Just LT"  $ R.findMaxBounded "a/b/c"       tree5 @?= Just (Identity LT)
-    , testCase "findMaxBounded \"$SYS/foo\"   tree5 == Nothing"  $ R.findMaxBounded "$SYS/foo"    tree5 @?= Nothing
+    , testCase "findMaxBounded \"a/b/c/d\"    tree5 == Just EQ"  $ R.findMaxBounded "a/b/c/d"     tree5 @?= Just (Identity EQ)
+    , testCase "findMaxBounded \"s\"          tree5 == Just GT"  $ R.findMaxBounded "s"           tree5 @?= Just (Identity GT)
+    , testCase "findMaxBounded \"t/a\"        tree5 == Just GT"  $ R.findMaxBounded "t/a"         tree5 @?= Just (Identity GT)
+    , testCase "findMaxBounded \"u/a\"        tree5 == Just GT"  $ R.findMaxBounded "u/a"         tree5 @?= Just (Identity GT)
+    , testCase "findMaxBounded \"x/a\"        tree5 == Just GT"  $ R.findMaxBounded "x/a"         tree5 @?= Just (Identity GT)
+    , testCase "findMaxBounded \"y/a\"        tree5 == Just GT"  $ R.findMaxBounded "y/a"         tree5 @?= Just (Identity GT)
     , testCase "findMaxBounded \"z/x/x\"      tree5 == Nothing"  $ R.findMaxBounded "z/x/x"       tree5 @?= Nothing
     , testCase "findMaxBounded \"z/x/x/q\"    tree5 == Just EQ"  $ R.findMaxBounded "z/x/x/q"     tree5 @?= Just (Identity EQ)
     , testCase "findMaxBounded \"z/x/x/q/t\"  tree5 == Nothing"  $ R.findMaxBounded "z/x/x/q/t"   tree5 @?= Nothing
     , testCase "findMaxBounded \"z/x/r/q\"    tree5 == Just GT"  $ R.findMaxBounded "z/x/r/q"     tree5 @?= Just (Identity GT)
-    , testCase "findMaxBounded \"a/x/r/q/t\"  tree5 == Just GT"  $ R.findMaxBounded "z/x/r/q/t"   tree5 @?= Just (Identity GT)
-    , testCase "findMaxBounded \"a/b/c/d\"    tree5 == Just EQ"  $ R.findMaxBounded "a/b/c/d"     tree5 @?= Just (Identity EQ)
-    , testCase "findMaxBounded \"x/a\"        tree5 == Just GT"  $ R.findMaxBounded "x/a"         tree5 @?= Just (Identity GT)
-    , testCase "findMaxBounded \"y/a\"        tree5 == Just GT"  $ R.findMaxBounded "y/a"         tree5 @?= Just (Identity GT)
+    , testCase "findMaxBounded \"z/x/r/q/t\"  tree5 == Just GT"  $ R.findMaxBounded "z/x/r/q/t"   tree5 @?= Just (Identity GT)
+    , testCase "findMaxBounded \"SYS/SYS\"    tree5 == Just GT"  $ R.findMaxBounded "SYS/SYS"     tree5 @?= Just (Identity GT)
+    , testCase "findMaxBounded \"$SYS/SYS\"   tree5 == Nothing"  $ R.findMaxBounded "$SYS/SYS"    tree5 @?= Nothing
     ]
   , testGroup "insert"
     [ testCase "lookup \"a/b\"      tree2 == [3]"       $ R.lookup "a/b"      tree2 @?= IS.fromList [3]
@@ -207,11 +211,17 @@ tree4
 tree5 :: R.Trie (Identity Ordering)
 tree5
   = R.insert    "a/b/c"     (Identity LT)
-  $ R.insert    "$SYS/foo"  (Identity GT)
-  $ R.insert    "x/a"       (Identity GT)
-  $ R.insert    "x/+"       (Identity undefined)
-  $ R.insert    "y/a"       (Identity GT)
-  $ R.insert    "y/#"       (Identity undefined)
+  $ R.insert    "a/b/c/d"   (Identity EQ)
+  $ R.insert    "s"         (Identity EQ)
+  $ R.insert    "s/#"       (Identity GT)
+  $ R.insert    "t/a"       (Identity EQ)
+  $ R.insert    "t/a/#"     (Identity GT)
+  $ R.insert    "u/+"       (Identity EQ)
+  $ R.insert    "u/a/#"     (Identity GT)
+  $ R.insert    "x/+"       (Identity GT)
+  $ R.insert    "x/a"       (Identity undefined)
+  $ R.insert    "y/#"       (Identity GT)
+  $ R.insert    "y/a"       (Identity undefined)
   $ R.insert    "z/+/+/q"   (Identity EQ)
   $ R.insert    "z/+/r/+/#" (Identity GT)
-  $ R.singleton "a/b/c/d"   (Identity EQ)
+  $ R.singleton "+/SYS"     (Identity GT)
