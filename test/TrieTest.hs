@@ -93,7 +93,8 @@ tests = testGroup "Trie"
     , testCase "findMaxBounded \"z/x/r/q\"    tree5 == Just GT"  $ R.findMaxBounded "z/x/r/q"     tree5 @?= Just (Identity GT)
     , testCase "findMaxBounded \"a/x/r/q/t\"  tree5 == Just GT"  $ R.findMaxBounded "z/x/r/q/t"   tree5 @?= Just (Identity GT)
     , testCase "findMaxBounded \"a/b/c/d\"    tree5 == Just EQ"  $ R.findMaxBounded "a/b/c/d"     tree5 @?= Just (Identity EQ)
-    , testCase "findMaxBounded \"gnurp\"      tree5 == Nothing"  $ R.findMaxBounded "gnurp"       tree5 @?= Nothing
+    , testCase "findMaxBounded \"x/a\"        tree5 == Just GT"  $ R.findMaxBounded "x/a"         tree5 @?= Just (Identity GT)
+    , testCase "findMaxBounded \"y/a\"        tree5 == Just GT"  $ R.findMaxBounded "y/a"         tree5 @?= Just (Identity GT)
     ]
   , testGroup "insert"
     [ testCase "lookup \"a/b\"      tree2 == [3]"       $ R.lookup "a/b"      tree2 @?= IS.fromList [3]
@@ -207,6 +208,10 @@ tree5 :: R.Trie (Identity Ordering)
 tree5
   = R.insert    "a/b/c"     (Identity LT)
   $ R.insert    "$SYS/foo"  (Identity GT)
+  $ R.insert    "x/a"       (Identity GT)
+  $ R.insert    "x/+"       (Identity undefined)
+  $ R.insert    "y/a"       (Identity GT)
+  $ R.insert    "y/#"       (Identity undefined)
   $ R.insert    "z/+/+/q"   (Identity EQ)
   $ R.insert    "z/+/r/+/#" (Identity GT)
   $ R.singleton "a/b/c/d"   (Identity EQ)

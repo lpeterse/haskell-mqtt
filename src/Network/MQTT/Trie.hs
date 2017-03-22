@@ -382,7 +382,7 @@ instance TrieValue IS.IntSet where
 instance TrieValue (Identity a) where
   data TrieNode (Identity a) = IdentityNode !(Trie (Identity a)) !(Maybe (Identity a))
   node t n@Nothing  = IdentityNode t n
-  node t n@(Just v) = v `seq` IdentityNode t n
+  node t n@(Just v) = IdentityNode t n
   nodeNull                      = const False
   nodeTree  (IdentityNode t _)  = t
   nodeValue (IdentityNode _ mv) = mv
