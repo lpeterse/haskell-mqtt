@@ -29,12 +29,12 @@ library
                        Network.MQTT.Broker.Authentication,
                        Network.MQTT.Broker.RetainedMessages,
                        Network.MQTT.Broker.Server,
-                       Network.MQTT.Broker.Session,
-                       Network.MQTT.Broker.SessionStatistics
+                       Network.MQTT.Broker.Session
   other-modules:       Control.Concurrent.PrioritySemaphore,
                        Network.MQTT.Message.QoS,
                        Network.MQTT.Message.Topic,
-                       Network.MQTT.Broker.Internal
+                       Network.MQTT.Broker.Internal,
+                       Network.MQTT.Broker.Session.Statistic
   build-depends:       async,
                        attoparsec,
                        base >=4.8 && <5,

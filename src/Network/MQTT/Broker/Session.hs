@@ -32,10 +32,19 @@ module Network.MQTT.Broker.Session (
   , enqueue
 
   -- * Misc
+  , createdAt
+  , identifier
+  , clientIdentifier
+  , principalIdentifier
+
   , getSubscriptions
   , getConnection
   , getPrincipal
   , getFreePacketIdentifiers
+  , getStatistic
+
+  -- * SessionStatistic
+  , SessionStatistic (..)
   ) where
 
 import           Control.Concurrent.MVar
@@ -43,6 +52,7 @@ import           Control.Concurrent.PrioritySemaphore
 import           Control.Monad
 import           Data.Bool
 import           Data.Functor.Identity
+import           Data.Int
 import qualified Data.IntMap                           as IM
 import qualified Data.IntSet                           as IS
 import           Data.Maybe
@@ -52,7 +62,7 @@ import qualified Data.Sequence                         as Seq
 import           Network.MQTT.Broker.Authentication    hiding (getPrincipal)
 import           Network.MQTT.Broker.Internal
 import qualified Network.MQTT.Broker.RetainedMessages  as RM
-import qualified Network.MQTT.Broker.SessionStatistics as SS
+import           Network.MQTT.Broker.Session.Statistic
 import           Network.MQTT.Message
 import qualified Network.MQTT.Trie                     as R
 
@@ -107,9 +117,9 @@ processSubscribe session pid filters = do
   -- Do the accounting for the session statistics.
   -- TODO: Do this as a transaction below.
   let countAccepted = length subscribeFilters
-  let countDenied   = length filters - countAccepted
-  SS.accountSubscriptionsAccepted (sessionStatistics session) $ fromIntegral countAccepted
-  SS.accountSubscriptionsDenied   (sessionStatistics session) $ fromIntegral countDenied
+  let countRejected = length filters - countAccepted
+  accountSubscriptionsAccepted (sessionStatistic session) $ fromIntegral countAccepted
+  accountSubscriptionsRejected (sessionStatistic session) $ fromIntegral countRejected
   -- Force the `qosTree` in order to lock the broker as little as possible.
   -- The `sidTree` is left lazy.
   qosTree `seq` do
@@ -245,15 +255,15 @@ publish session msg = do
       if retain && R.matchTopic (msgTopic msg) (principalRetainPermissions principal)
         then do
           RM.store msg (brokerRetainedStore $ sessionBroker session)
-          SS.accountRetentionsAccepted stats 1
+          accountRetentionsAccepted stats 1
         else
-          SS.accountRetentionsDropped stats 1
+          accountRetentionsDropped stats 1
       publishUpstream (sessionBroker session) msg
-      SS.accountPublicationsAccepted stats 1
+      accountPublicationsAccepted stats 1
     else
-      SS.accountPublicationsDropped stats 1
+      accountPublicationsDropped stats 1
   where
-    stats = sessionStatistics session
+    stats = sessionStatistic session
     Retain retain = msgRetain msg
 
 enqueueSubscribeAcknowledged :: Session auth -> PacketIdentifier -> [Maybe QoS] -> IO ()
@@ -290,6 +300,18 @@ poll session =
     clearPending :: IO ()
     clearPending  = void $ tryTakeMVar (sessionQueuePending session)
 
+createdAt           :: Session auth -> Int64
+createdAt            = sessionCreatedAt
+
+identifier          :: Session auth -> SessionIdentifier
+identifier           = sessionIdentifier
+
+clientIdentifier    :: Session auth -> ClientIdentifier
+clientIdentifier     = sessionClientIdentifier
+
+principalIdentifier :: Session auth -> PrincipalIdentifier
+principalIdentifier  = sessionPrincipalIdentifier
+
 getSubscriptions :: Session auth -> IO (R.Trie QoS)
 getSubscriptions session =
   readMVar (sessionSubscriptions session)
@@ -305,6 +327,9 @@ getPrincipal session =
 getFreePacketIdentifiers :: Session auth -> IO (Seq.Seq PacketIdentifier)
 getFreePacketIdentifiers session =
   queuePids <$> readMVar (sessionQueue session)
+
+getStatistic :: Session auth -> IO SessionStatistic
+getStatistic = snapshot . sessionStatistic
 
 resetQueue :: ServerQueue -> ServerQueue
 resetQueue q = q {

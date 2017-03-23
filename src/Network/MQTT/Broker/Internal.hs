@@ -29,7 +29,7 @@ import           GHC.Generics                          (Generic)
 
 import           Network.MQTT.Broker.Authentication    hiding (getPrincipal)
 import qualified Network.MQTT.Broker.RetainedMessages  as RM
-import qualified Network.MQTT.Broker.SessionStatistics as SS
+import qualified Network.MQTT.Broker.Session.Statistic as SS
 import           Network.MQTT.Message
 import qualified Network.MQTT.Trie                     as R
 
@@ -64,7 +64,7 @@ data Session auth
    , sessionSubscriptions       :: !(MVar (R.Trie QoS))
    , sessionQueue               :: !(MVar ServerQueue)
    , sessionQueuePending        :: !(MVar ())
-   , sessionStatistics          :: !SS.Statistics
+   , sessionStatistic           :: !SS.Statistic
    }
 
 data Connection

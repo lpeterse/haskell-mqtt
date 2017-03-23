@@ -38,7 +38,7 @@ import           Network.MQTT.Broker.Authentication
 import           Network.MQTT.Broker.Internal
 import qualified Network.MQTT.Broker.RetainedMessages  as RM
 import qualified Network.MQTT.Broker.Session           as Session
-import qualified Network.MQTT.Broker.SessionStatistics as SS
+import qualified Network.MQTT.Broker.Session.Statistic as Session
 import           Network.MQTT.Message
 import qualified Network.MQTT.Trie                     as R
 
@@ -138,7 +138,7 @@ getSession broker pcid@(pid, cid) =
           queuePending <- newEmptyMVar
           mconnection <- newEmptyMVar
           mprincipal <- newMVar principal
-          stats <- SS.new
+          stats <- Session.newStatistic
           let SessionIdentifier maxSessionIdentifier = brokerMaxSessionIdentifier st
               newSessionIdentifier = maxSessionIdentifier + 1
               newSession = Session
@@ -153,7 +153,7 @@ getSession broker pcid@(pid, cid) =
                , sessionSubscriptions    = subscriptions
                , sessionQueue            = queue
                , sessionQueuePending     = queuePending
-               , sessionStatistics       = stats
+               , sessionStatistic        = stats
                }
               newBrokerState = st
                { brokerMaxSessionIdentifier = SessionIdentifier newSessionIdentifier
