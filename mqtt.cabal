@@ -3,7 +3,7 @@ synopsis:            An MQTT protocol implementation.
 description:
   This project aims to supply a rock-solid MQTT implementation suitable for
   production use.
-version:             0.1.0.0
+version:             0.1.1.0
 license:             MIT
 license-file:        LICENSE
 author:              Lars Petersen
@@ -41,16 +41,15 @@ library
                        bytestring,
                        clock,
                        binary,
-                       exceptions,
                        text,
                        containers,
                        socket,
-                       tls,
+                       tls >= 1.3.9 && <1.4,
                        uuid,
                        case-insensitive,
                        x509,
                        x509-validation,
-                       websockets,
+                       websockets >= 0.10.0.0 && < 0.11,
                        hslogger
   hs-source-dirs:      src
   default-language:    Haskell2010

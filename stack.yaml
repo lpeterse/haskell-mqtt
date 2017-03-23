@@ -4,5 +4,6 @@ packages:
 extra-deps:
   - socket-0.8.0.1
   - socket-unix-0.2.0.0
+  - websockets-0.10.0.0
 flags: {}
 extra-package-dbs: []
