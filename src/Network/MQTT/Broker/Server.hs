@@ -183,7 +183,7 @@ serveConnection broker conn connInfo = do
             foldl1 race_
               [ handleInput recentActivity session
               , handleOutput session
-              , keepAlive recentActivity (connectKeepAlive msg) session
+              , keepAlive recentActivity (connectKeepAlive msg)
               ] `E.catch` (\e-> do
                 Log.warningM "Server.connection" $"Session " ++ show (Session.sessionIdentifier session)
                   ++ ": Connection terminated with exception: " ++ show (e :: E.SomeException)
@@ -208,14 +208,15 @@ serveConnection broker conn connInfo = do
     -- the servers resources against exaustion attacks.
     maxInitialPacketSize :: Int64
     maxInitialPacketSize  = 65535
+
     -- The keep alive thread wakes up every `keepAlive/2` seconds.
     -- When it detects no recent activity, it sleeps one more full `keepAlive`
     -- interval and checks again. When it still finds no recent activity, it
     -- throws an exception.
     -- That way a timeout will be detected between 1.5 and 2 `keep alive`
     -- intervals after the last actual client activity.
-    keepAlive :: IORef Bool -> KeepAliveInterval -> Session.Session auth -> IO ()
-    keepAlive recentActivity (KeepAliveInterval interval) session = forever $ do
+    keepAlive :: IORef Bool -> KeepAliveInterval -> IO ()
+    keepAlive recentActivity (KeepAliveInterval interval) = forever $ do
       writeIORef recentActivity False
       threadDelay regularInterval
       activity <- readIORef recentActivity
@@ -223,13 +224,12 @@ serveConnection broker conn connInfo = do
         threadDelay regularInterval
         activity' <- readIORef recentActivity
         unless activity' $ do
-          -- Alert state: The client must get active within the next interval.
-          Log.warningM "Server.connection.keepAlive" $ "Session " ++ show (Session.sessionIdentifier session) ++ ": Client is overdue."
           threadDelay regularInterval
           activity'' <- readIORef recentActivity
           unless activity'' $ E.throwIO (KeepAliveTimeoutException :: SS.ServerException (MQTT transport))
       where
         regularInterval = fromIntegral interval *  500000
+
     -- | This thread is responsible for continuously processing input.
     --   It blocks on reading the input stream until input becomes available.
     --   Input is consumed no faster than it can be processed.
@@ -245,38 +245,15 @@ serveConnection broker conn connInfo = do
       maxPacketSize <- fromIntegral . quotaMaxPacketSize . principalQuota <$> Session.getPrincipal session
       SS.consumeMessages conn maxPacketSize $ \packet-> do
         writeIORef recentActivity True
-        --Log.debugM "Server.connection.handleInput" $ take 50 $ show packet
         case packet of
+          ClientDisconnect ->
+            pure True
           ClientConnect {} ->
             E.throwIO (ProtocolViolation "Unexpected CONN packet." :: SS.ServerException (MQTT transport))
           ClientConnectUnsupported ->
             E.throwIO (ProtocolViolation "Unexpected CONN packet (of unsupported protocol version)." :: SS.ServerException (MQTT transport))
-          ClientPublish pid dup msg -> do
-            Session.processPublish session pid dup msg
-            pure False
-          ClientPublishAcknowledged pid -> do
-            Session.processPublishAcknowledged session pid
-            pure False
-          ClientPublishReceived pid -> do
-            Session.processPublishReceived session pid
-            pure False
-          ClientPublishRelease pid -> do
-            Session.processPublishRelease session pid
-            pure False
-          ClientPublishComplete pid -> do
-            Session.processPublishComplete session pid
-            pure False
-          ClientSubscribe pid filters -> do
-            Session.subscribe session pid filters
-            pure False
-          ClientUnsubscribe pid filters -> do
-            Session.unsubscribe session pid filters
-            pure False
-          ClientPingRequest -> do
-            Session.enqueuePingResponse session
-            pure False
-          ClientDisconnect ->
-            pure True
+          _ -> Session.process session packet >> pure False
+
     -- | This thread is responsible for continuously transmitting to the client
     --   and reading from the output queue.
     --
@@ -291,6 +268,6 @@ serveConnection broker conn connInfo = do
     handleOutput :: Session.Session auth -> IO ()
     handleOutput session = forever $ do
       -- The `waitPending` operation is blocking until messages get available.
-      Session.waitPending session
-      msgs <- Session.dequeue session
+      Session.wait session
+      msgs <- Session.poll session
       SS.sendMessages conn msgs

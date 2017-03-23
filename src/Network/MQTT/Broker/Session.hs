@@ -11,37 +11,31 @@
 -- Maintainer  :  info@lars-petersen.net
 -- Stability   :  experimental
 --------------------------------------------------------------------------------
-module Network.MQTT.Broker.Session
-  ( publish
-  , subscribe
-  , unsubscribe
+module Network.MQTT.Broker.Session (
+  -- * Session
+    Session ()
+  , SessionIdentifier (..)
+  , Connection (..)
+  -- ** wait
+  , wait
+  -- ** poll
+  , poll
+  -- ** reset
+  , reset
+  -- ** process
+  , process
+  -- ** disconnect
   , disconnect
+  -- ** terminate
   , terminate
+  -- ** enqueue
+  , enqueue
 
+  -- * Misc
   , getSubscriptions
   , getConnection
   , getPrincipal
   , getFreePacketIdentifiers
-
-    -- TODO: private
-  , reset
-  , notePending
-  , waitPending
-  , publishMessage
-  , publishMessages
-  , enqueuePingResponse
-  , enqueueMessage
-  , enqueueSubscribeAcknowledged
-  , enqueueUnsubscribeAcknowledged
-  , dequeue
-  , processPublish
-  , processPublishRelease
-  , processPublishReceived
-  , processPublishComplete
-  , processPublishAcknowledged
-  , Session (..)
-  , SessionIdentifier (..)
-  , Connection (..)
   ) where
 
 import           Control.Concurrent.MVar
@@ -62,28 +56,49 @@ import qualified Network.MQTT.Broker.SessionStatistics as SS
 import           Network.MQTT.Message
 import qualified Network.MQTT.Trie                     as R
 
-publish :: Session auth -> Message -> IO ()
-publish session msg = do
-  principal <- readMVar (sessionPrincipal session)
-  -- A topic is permitted if it yields a match in the publish permission tree.
-  if R.matchTopic (msgTopic msg) (principalPublishPermissions principal)
-    then do
-      if retain && R.matchTopic (msgTopic msg) (principalRetainPermissions principal)
-        then do
-          RM.store msg (brokerRetainedStore $ sessionBroker session)
-          SS.accountRetentionsAccepted stats 1
-        else
-          SS.accountRetentionsDropped stats 1
-      publishUpstream (sessionBroker session) msg
-      SS.accountPublicationsAccepted stats 1
-    else
-      SS.accountPublicationsDropped stats 1
-  where
-    stats = sessionStatistics session
-    Retain retain = msgRetain msg
+-- | Process a packet received from the client.
+process :: Session auth -> ClientPacket -> IO ()
+process session (ClientPublish pid dup msg) =
+  processPublish session pid dup msg
+process session (ClientPublishAcknowledged pid) =
+  processPublishAcknowledged session pid
+process session (ClientPublishReceived pid) =
+  processPublishReceived session pid
+process session (ClientPublishRelease pid) =
+  processPublishRelease session pid
+process session (ClientPublishComplete pid) =
+  processPublishComplete session pid
+process session (ClientSubscribe pid filters) =
+  processSubscribe session pid filters
+process session (ClientUnsubscribe pid filters) =
+  processUnsubscribe session pid filters
+process session ClientPingRequest =
+  processPingRequest session
+process _ _ = pure ()
 
-subscribe :: Session auth -> PacketIdentifier -> [(Filter, QoS)] -> IO ()
-subscribe session pid filters = do
+-- | Process a @PUB@ packet received from the peer.
+--
+--   Different handling depending on message qos.
+processPublish :: Session auth -> PacketIdentifier -> Duplicate -> Message -> IO ()
+processPublish session pid@(PacketIdentifier p) _dup msg =
+  case msgQoS msg of
+    QoS0 ->
+      publish session msg
+    QoS1 -> do
+      publish session msg
+      modifyMVar_ (sessionQueue session) $ \q-> pure $! q {
+          outputBuffer = outputBuffer q Seq.|> ServerPublishAcknowledged pid
+        }
+      notePending session
+    QoS2 -> do
+      modifyMVar_ (sessionQueue session) $ \q-> pure $! q {
+          outputBuffer = outputBuffer q Seq.|> ServerPublishReceived pid
+        , notReleased  = IM.insert p msg (notReleased q)
+        }
+      notePending session
+
+processSubscribe :: Session auth -> PacketIdentifier -> [(Filter, QoS)] -> IO ()
+processSubscribe session pid filters = do
   principal <- readMVar (sessionPrincipal session)
   checkedFilters <- mapM (checkPermission principal) filters
   let subscribeFilters = mapMaybe (\(filtr,mqos)->(filtr,) <$> mqos) checkedFilters
@@ -112,8 +127,8 @@ subscribe session pid filters = do
       let isPermitted = R.matchFilter filtr (principalSubscribePermissions principal)
       pure (filtr, if isPermitted then Just qos else Nothing)
 
-unsubscribe :: Session auth -> PacketIdentifier -> [Filter] -> IO ()
-unsubscribe session pid filters =
+processUnsubscribe :: Session auth -> PacketIdentifier -> [Filter] -> IO ()
+processUnsubscribe session pid filters =
   -- Force the `unsubBrokerTree` first in order to lock the broker as little as possible.
   unsubBrokerTree `seq` do
     modifyMVarMasked_ (brokerState $ sessionBroker session) $ \bst-> do
@@ -127,80 +142,6 @@ unsubscribe session pid filters =
   where
     SessionIdentifier sid = sessionIdentifier session
     unsubBrokerTree  = R.insertFoldable ( fmap (,Identity sid) filters ) R.empty
-
--- | Disconnect a session.
-disconnect :: Session auth -> IO ()
-disconnect session =
-  -- This assures that the client gets disconnected by interrupting
-  -- the current client handler thread (if any).
-  exclusively (sessionSemaphore session) (pure ())
-
--- | Reset the session state after a reconnect.
---
---   * All output buffers will be cleared.
---   * Output buffers will be filled with retransmissions.
-reset :: Session auth -> IO ()
-reset session =
-  modifyMVar_ (sessionQueue session) (\q-> pure $! resetQueue q)
-
--- | Enqueue a PINGRESP to be sent as soon as the output thread is available.
---
---   The PINGRESP will be inserted with highest priority in front of all other enqueued messages.
-enqueuePingResponse :: Session auth -> IO ()
-enqueuePingResponse session = do
-  modifyMVar_ (sessionQueue session) $ \queue->
-    pure $! queue { outputBuffer = ServerPingResponse Seq.<| outputBuffer queue }
-  -- IMPORTANT: Notify the sending thread that something has been enqueued!
-  notePending session
-
-enqueueSubscribeAcknowledged :: Session auth -> PacketIdentifier -> [Maybe QoS] -> IO ()
-enqueueSubscribeAcknowledged session pid mqoss = do
-  modifyMVar_ (sessionQueue session) $ \queue->
-    pure $! queue { outputBuffer = outputBuffer queue Seq.|> ServerSubscribeAcknowledged pid mqoss }
-  notePending session
-
-enqueueUnsubscribeAcknowledged :: Session auth -> PacketIdentifier -> IO ()
-enqueueUnsubscribeAcknowledged session pid = do
-  modifyMVar_ (sessionQueue session) $ \queue->
-    pure $! queue { outputBuffer = outputBuffer queue Seq.|> ServerUnsubscribeAcknowledged pid}
-  notePending session
-
--- | Blocks until messages are available and prefers non-qos0 messages over
---  qos0 messages.
-dequeue :: Session auth -> IO (Seq.Seq ServerPacket)
-dequeue session =
-  modifyMVar (sessionQueue session) $ \queue-> do
-    let q = normalizeQueue queue
-    if | not (Seq.null $ outputBuffer q) -> pure (q { outputBuffer = mempty }, outputBuffer q)
-       | not (Seq.null $ queueQoS0    q) -> pure (q { queueQoS0    = mempty }, fmap (ServerPublish (PacketIdentifier (-1)) (Duplicate False)) (queueQoS0 q))
-       | otherwise                       -> clearPending >> pure (q, mempty)
-  where
-    -- | In case all queues are empty, we need to clear the `pending` variable.
-    -- ATTENTION: An implementation error would cause the `dequeue` operation
-    -- to rush right through the blocking call leading to enourmous CPU usage.
-    clearPending :: IO ()
-    clearPending  = void $ tryTakeMVar (sessionQueuePending session)
-
--- | Process a @PUB@ message received from the peer.
---
---   Different handling depending on message qos.
-processPublish :: Session auth -> PacketIdentifier -> Duplicate -> Message -> IO ()
-processPublish session pid@(PacketIdentifier p) _dup msg =
-  case msgQoS msg of
-    QoS0 ->
-      publish session msg
-    QoS1 -> do
-      publish session msg
-      modifyMVar_ (sessionQueue session) $ \q-> pure $! q {
-          outputBuffer = outputBuffer q Seq.|> ServerPublishAcknowledged pid
-        }
-      notePending session
-    QoS2 -> do
-      modifyMVar_ (sessionQueue session) $ \q-> pure $! q {
-          outputBuffer = outputBuffer q Seq.|> ServerPublishReceived pid
-        , notReleased  = IM.insert p msg (notReleased q)
-        }
-      notePending session
 
 -- | Note that a QoS1 message has been received by the peer.
 --
@@ -269,6 +210,85 @@ processPublishComplete session (PacketIdentifier pid) = do
   -- In case the output queues are actually empty, the thread will check
   -- them once and immediately sleep again.
   notePending session
+
+-- | Respond to a PING request with a PINGRESP.
+processPingRequest :: Session auth -> IO ()
+processPingRequest session = do
+  modifyMVar_ (sessionQueue session) $ \queue->
+    pure $! queue { outputBuffer = ServerPingResponse Seq.<| outputBuffer queue }
+  -- IMPORTANT: Notify the sending thread that something has been enqueued!
+  notePending session
+
+
+-- | Disconnect a session.
+disconnect :: Session auth -> IO ()
+disconnect session =
+  -- This assures that the client gets disconnected by interrupting
+  -- the current client handler thread (if any).
+  exclusively (sessionSemaphore session) (pure ())
+
+-- | Reset the session state after a reconnect.
+--
+--   * All output buffers will be cleared.
+--   * Output buffers will be filled with retransmissions.
+reset :: Session auth -> IO ()
+reset session =
+  modifyMVar_ (sessionQueue session) (\q-> pure $! resetQueue q)
+
+-- | Publish a message upstream with the permissions of a specific session.
+publish :: Session auth -> Message -> IO ()
+publish session msg = do
+  principal <- readMVar (sessionPrincipal session)
+  -- A topic is permitted if it yields a match in the publish permission tree.
+  if R.matchTopic (msgTopic msg) (principalPublishPermissions principal)
+    then do
+      if retain && R.matchTopic (msgTopic msg) (principalRetainPermissions principal)
+        then do
+          RM.store msg (brokerRetainedStore $ sessionBroker session)
+          SS.accountRetentionsAccepted stats 1
+        else
+          SS.accountRetentionsDropped stats 1
+      publishUpstream (sessionBroker session) msg
+      SS.accountPublicationsAccepted stats 1
+    else
+      SS.accountPublicationsDropped stats 1
+  where
+    stats = sessionStatistics session
+    Retain retain = msgRetain msg
+
+enqueueSubscribeAcknowledged :: Session auth -> PacketIdentifier -> [Maybe QoS] -> IO ()
+enqueueSubscribeAcknowledged session pid mqoss = do
+  modifyMVar_ (sessionQueue session) $ \queue->
+    pure $! queue { outputBuffer = outputBuffer queue Seq.|> ServerSubscribeAcknowledged pid mqoss }
+  notePending session
+
+enqueueUnsubscribeAcknowledged :: Session auth -> PacketIdentifier -> IO ()
+enqueueUnsubscribeAcknowledged session pid = do
+  modifyMVar_ (sessionQueue session) $ \queue->
+    pure $! queue { outputBuffer = outputBuffer queue Seq.|> ServerUnsubscribeAcknowledged pid}
+  notePending session
+
+-- | Wait until packets are available for delivery.
+wait :: Session auth -> IO ()
+wait  = waitPending
+
+-- | Poll a bunch of available messages for delivery to the client.
+--
+--   Priority: Qos0 packets will only be returned when all other packets
+--   have already been polled.
+poll :: Session auth -> IO (Seq.Seq ServerPacket)
+poll session =
+  modifyMVar (sessionQueue session) $ \queue-> do
+    let q = normalizeQueue queue
+    if | not (Seq.null $ outputBuffer q) -> pure (q { outputBuffer = mempty }, outputBuffer q)
+       | not (Seq.null $ queueQoS0    q) -> pure (q { queueQoS0    = mempty }, fmap (ServerPublish (PacketIdentifier (-1)) (Duplicate False)) (queueQoS0 q))
+       | otherwise                       -> clearPending >> pure (q, mempty)
+  where
+    -- | In case all queues are empty, we need to clear the `pending` variable.
+    -- ATTENTION: An implementation error would cause the `dequeue` operation
+    -- to rush right through the blocking call leading to enourmous CPU usage.
+    clearPending :: IO ()
+    clearPending  = void $ tryTakeMVar (sessionQueuePending session)
 
 getSubscriptions :: Session auth -> IO (R.Trie QoS)
 getSubscriptions session =

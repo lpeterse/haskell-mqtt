@@ -68,11 +68,11 @@ getTestTree =
               msg  = Message.Message "a/b" QoS0 (Retain False) ""
           Broker.withSession broker req1 (const $ pure ()) $ \session1 _ ->
             Broker.withSession broker req2 (const $ pure ()) $ \session2 _ -> do
-              Session.subscribe session1 (PacketIdentifier 42) [("a/b", QoS0)]
-              Session.subscribe session2 (PacketIdentifier 47) [("a/b", QoS0)]
+              Session.process session1 (ClientSubscribe (PacketIdentifier 42) [("a/b", QoS0)])
+              Session.process session2 (ClientSubscribe (PacketIdentifier 47) [("a/b", QoS0)])
               Broker.publishDownstream broker msg
-              queue1 <- (<>) <$> Session.dequeue session1 <*> Session.dequeue session1
-              queue2 <- (<>) <$> Session.dequeue session2 <*> Session.dequeue session2
+              queue1 <- (<>) <$> Session.poll session1 <*> Session.poll session1
+              queue2 <- (<>) <$> Session.poll session2 <*> Session.poll session2
               queue1 @?= Seq.fromList [ ServerSubscribeAcknowledged (PacketIdentifier 42) [Just QoS0], ServerPublish (PacketIdentifier (-1)) (Duplicate False) msg]
               queue2 @?= Seq.fromList [ ServerSubscribeAcknowledged (PacketIdentifier 47) [Just QoS0], ServerPublish (PacketIdentifier (-1)) (Duplicate False) msg]
 
@@ -84,8 +84,8 @@ getTestTree =
           Broker.withSession broker req1 (const $ pure ()) $ \session1 _-> do
             Broker.publishDownstream broker msg1
             Broker.publishDownstream broker msg2
-            Session.subscribe session1 (PacketIdentifier 23) [("topic", QoS0)]
-            queue1 <- (<>) <$> Session.dequeue session1 <*> Session.dequeue session1
+            Session.process session1 (ClientSubscribe (PacketIdentifier 23) [("topic", QoS0)])
+            queue1 <- (<>) <$> Session.poll session1 <*> Session.poll session1
             queue1 @?= Seq.fromList [ ServerSubscribeAcknowledged (PacketIdentifier 23) [Just QoS0], ServerPublish (PacketIdentifier (-1)) (Duplicate False) msg2]
 
       , testCase "delete retained message when body is empty" $ do
@@ -96,8 +96,8 @@ getTestTree =
           Broker.withSession broker req1 (const $ pure ()) $ \session1 _ -> do
             Broker.publishDownstream broker msg1
             Broker.publishDownstream broker msg2
-            Session.subscribe session1 (PacketIdentifier 23) [("topic", QoS0)]
-            queue1 <- (<>) <$> Session.dequeue session1 <*> Session.dequeue session1
+            Session.process session1 (ClientSubscribe (PacketIdentifier 23) [("topic", QoS0)])
+            queue1 <- (<>) <$> Session.poll session1 <*> Session.poll session1
             queue1 @?= Seq.fromList [ ServerSubscribeAcknowledged (PacketIdentifier 23) [Just QoS0] ]
       ]
 
@@ -112,13 +112,13 @@ getTestTree =
           t4 <- newEmptyMVar
           t5 <- newEmptyMVar
           let h session _ = do {
-              Session.subscribe session (PacketIdentifier 0) [("topic", QoS0)];
+              Session.process session (ClientSubscribe (PacketIdentifier 0) [("topic", QoS0)]);
               putMVar t1 ();
               takeMVar t2;
-              void $ Session.dequeue session; -- subscribe acknowledge
-              putMVar t3 =<< Session.dequeue session;
+              void $ Session.poll session; -- subscribe acknowledge
+              putMVar t3 =<< Session.poll session;
               takeMVar t4;
-              putMVar t5 =<< Session.dequeue session;
+              putMVar t5 =<< Session.poll session;
             }
           let w = Broker.withSession broker connectionRequest (const $ pure ()) h
           withAsync w $ \_-> do
@@ -126,12 +126,12 @@ getTestTree =
             forM_ (take 10 msgs) $ Broker.publishDownstream broker
             putMVar t2 ()
             p <- takeMVar t3
-            assertEqual "Expect 10 packets being dequeued (first time)."
+            assertEqual "Expect 10 packets being polld (first time)."
               (Seq.fromList $ fmap (ServerPublish (PacketIdentifier (-1)) (Duplicate False)) $ take 10 msgs) p
             forM_ (take 11 msgs) $ Broker.publishDownstream broker
             putMVar t4 ()
             q <- takeMVar t5
-            assertEqual "Expect 10 packets being dequeued (second time)."
+            assertEqual "Expect 10 packets being polld (second time)."
               (Seq.fromList $ fmap (ServerPublish (PacketIdentifier (-1)) (Duplicate False)) $ take 10 $ drop 1 msgs) q
 
       , testCase "Terminate session on overflowing QoS1 queue" $ do
@@ -143,12 +143,12 @@ getTestTree =
           t4 <- newEmptyMVar
           t5 <- newEmptyMVar
           let h session _ = do {
-              Session.subscribe session (PacketIdentifier 0) [("topic", QoS1)];
+              Session.process session (ClientSubscribe (PacketIdentifier 0) [("topic", QoS1)]);
               putMVar t1 ();
               takeMVar t2;
-              putMVar t3 =<< (Seq.drop 1 <$> Session.dequeue session); -- cut off subscribe acknowledge
+              putMVar t3 =<< (Seq.drop 1 <$> Session.poll session); -- cut off subscribe acknowledge
               void $ takeMVar t4;
-              putMVar t5 =<< Session.dequeue session;
+              putMVar t5 =<< Session.poll session;
             }
           let w = Broker.withSession broker connectionRequest (const $ pure ()) h
           withAsync w $ \as-> do
@@ -156,7 +156,7 @@ getTestTree =
             forM_ (take 10 msgs) $ Broker.publishDownstream broker
             putMVar t2 ()
             p <- takeMVar t3
-            assertEqual "Expect 10 packets being dequeued (first time)."
+            assertEqual "Expect 10 packets being polld (first time)."
               (Seq.fromList $ zipWith (\i m-> ServerPublish (PacketIdentifier i) (Duplicate False) m) [0..] $ take 10 msgs) p
             forM_ (take 11 msgs) $ Broker.publishDownstream broker
             assertEqual "Expect session handler thread to be killed." "Left thread killed" =<< (show <$> waitCatch as)
@@ -170,12 +170,12 @@ getTestTree =
           t4 <- newEmptyMVar
           t5 <- newEmptyMVar
           let h session _ = do {
-              Session.subscribe session (PacketIdentifier 0) [("topic", QoS2)];
+              Session.process session (ClientSubscribe (PacketIdentifier 0) [("topic", QoS2)]);
               putMVar t1 ();
               takeMVar t2;
-              putMVar t3 =<< (Seq.drop 1 <$> Session.dequeue session); -- cut off subscribe acknowledge
+              putMVar t3 =<< (Seq.drop 1 <$> Session.poll session); -- cut off subscribe acknowledge
               void $ takeMVar t4;
-              putMVar t5 =<< Session.dequeue session;
+              putMVar t5 =<< Session.poll session;
             }
           let w = Broker.withSession broker connectionRequest (const $ pure ()) h
           withAsync w $ \as-> do
@@ -183,7 +183,7 @@ getTestTree =
             forM_ (take 10 msgs) $ Broker.publishDownstream broker
             putMVar t2 ()
             p <- takeMVar t3
-            assertEqual "Expect 10 packets being dequeued (first time)."
+            assertEqual "Expect 10 packets being polld (first time)."
               (Seq.fromList $ zipWith (\i m-> ServerPublish (PacketIdentifier i) (Duplicate False) m) [0..] $ take 10 msgs) p
             forM_ (take 11 msgs) $ Broker.publishDownstream broker
             assertEqual "Expect session handler thread to be killed." "Left thread killed" =<< (show <$> waitCatch as)
@@ -197,12 +197,12 @@ getTestTree =
           broker <- Broker.newBroker $ TestAuthenticator authenticatorConfigAllAccess
           Broker.withSession broker connectionRequest (const $ pure ()) $ \session _-> do
             pids1 <- Session.getFreePacketIdentifiers session
-            Session.enqueueMessage session msg
-            queue <- Session.dequeue session
+            Session.enqueue session msg
+            queue <- Session.poll session
             pids2 <- Session.getFreePacketIdentifiers session
-            Session.processPublishAcknowledged session pid
+            Session.process session (ClientPublishAcknowledged pid)
             pids3 <- Session.getFreePacketIdentifiers session
-            assertEqual "One packet identifier shall be in use after `dequeue`." (Seq.drop 1 pids1) pids2
+            assertEqual "One packet identifier shall be in use after `poll`." (Seq.drop 1 pids1) pids2
             assertEqual "The packet identifier shall have been returned after the message has been acknowledged." pids1 pids3
             assertEqual "The packet is expected in the output queue." (Seq.fromList [ ServerPublish pid (Duplicate False) msg ]) queue
 
@@ -211,13 +211,13 @@ getTestTree =
               pid = PacketIdentifier 0
           broker <- Broker.newBroker $ TestAuthenticator authenticatorConfigAllAccess
           Broker.withSession broker connectionRequest (const $ pure ()) $ \session _-> do
-            Session.subscribe session pid [("topic", QoS0)]
-            queue1 <- Session.dequeue session
+            Session.process session (ClientSubscribe pid [("topic", QoS0)])
+            queue1 <- Session.poll session
             assertEqual "A subscribe acknowledgement shall be in the output queue." (Seq.fromList [ ServerSubscribeAcknowledged pid [Just QoS0] ]) queue1
-            Session.processPublish session pid (Duplicate False) msg
-            queue2 <- Session.dequeue session
+            Session.process session (ClientPublish pid (Duplicate False) msg)
+            queue2 <- Session.poll session
             assertEqual "A publish acknowledgment and the (downgraded) message itself shall be in the output queue." (Seq.fromList [ ServerPublishAcknowledged pid ]) queue2
-            queue3 <- Session.dequeue session
+            queue3 <- Session.poll session
             assertEqual "The downgraded message queue shall be in the output queue." (Seq.fromList [ ServerPublish (PacketIdentifier (-1)) (Duplicate False) msg { msgQoS = QoS0} ]) queue3
 
       , testCase "transmit a QoS1 message and retransmit after connection failure" $ do
@@ -227,12 +227,12 @@ getTestTree =
           broker <- Broker.newBroker $ TestAuthenticator authenticatorConfigAllAccess
           Broker.withSession broker req (const $ pure ()) $ \session present-> do
             assertEqual "The session shall not be present." (SessionPresent False) present
-            Session.enqueueMessage session msg
-            queue <- Session.dequeue session
+            Session.enqueue session msg
+            queue <- Session.poll session
             assertEqual "The message shall be in the output queue." (Seq.fromList [ ServerPublish pid (Duplicate False) msg]) queue
           Broker.withSession broker req (const $ pure ()) $ \session present-> do
             assertEqual "The session shall be present." (SessionPresent True) present
-            queue <- Session.dequeue session
+            queue <- Session.poll session
             assertEqual "The message shall again be in the output queue, and must not be marked duplicate." (Seq.fromList [ ServerPublish pid (Duplicate True) msg ]) queue
 
       , testCase "transmit a QoS2 message and process confirmations" $ do
@@ -241,17 +241,17 @@ getTestTree =
           broker <- Broker.newBroker $ TestAuthenticator authenticatorConfigAllAccess
           Broker.withSession broker connectionRequest (const $ pure ()) $ \session _-> do
             pids1 <- Session.getFreePacketIdentifiers session
-            Session.enqueueMessage session msg
-            queue2 <- Session.dequeue session
+            Session.enqueue session msg
+            queue2 <- Session.poll session
             pids2 <- Session.getFreePacketIdentifiers session
-            assertEqual "One packet identifier shall be in use after `dequeue`." (Seq.drop 1 pids1) pids2
+            assertEqual "One packet identifier shall be in use after `poll`." (Seq.drop 1 pids1) pids2
             assertEqual "A PUB packet is expected in the output queue." (Seq.fromList [ ServerPublish pid (Duplicate False) msg ]) queue2
-            Session.processPublishReceived session pid
-            queue3 <- Session.dequeue session
+            Session.process session (ClientPublishReceived pid)
+            queue3 <- Session.poll session
             pids3 <- Session.getFreePacketIdentifiers session
             assertEqual "The packet identifier shall still be in use." (Seq.drop 1 pids1) pids3
             assertEqual "A PUBREL packet is expected in the output queue." (Seq.fromList [ ServerPublishRelease pid ]) queue3
-            Session.processPublishComplete session pid
+            Session.process session (ClientPublishComplete pid)
             pids4 <- Session.getFreePacketIdentifiers session
             assertEqual "The packet identifier shall have been returned after the transaction has been completed." pids1 pids4
 
@@ -261,21 +261,21 @@ getTestTree =
               pid = PacketIdentifier 0
           broker <- Broker.newBroker $ TestAuthenticator authenticatorConfigAllAccess
           Broker.withSession broker req (const $ pure ()) $ \session _-> do
-            Session.enqueueMessage session msg
-            queue <- Session.dequeue session
+            Session.enqueue session msg
+            queue <- Session.poll session
             assertEqual "The message shall be in the output queue." (Seq.fromList [ ServerPublish pid (Duplicate False) msg ]) queue
           Broker.withSession broker req (const $ pure ()) $ \session _-> do
-            queue <- Session.dequeue session
+            queue <- Session.poll session
             assertEqual "The message shall again be in the output queue and must be marked duplicate." (Seq.fromList [ ServerPublish pid (Duplicate True) msg ]) queue
-            Session.processPublishReceived session pid
-            queue' <- Session.dequeue session
+            Session.process session (ClientPublishReceived pid)
+            queue' <- Session.poll session
             assertEqual "The release command shall be in the output queue." (Seq.fromList [ ServerPublishRelease pid ]) queue'
           Broker.withSession broker req (const $ pure ()) $ \session _-> do
-            queue <- Session.dequeue session
+            queue <- Session.poll session
             assertEqual "The release command shall be in the output queue (again)." (Seq.fromList [ ServerPublishRelease pid ]) queue
-            Session.processPublishComplete session pid
+            Session.process session (ClientPublishComplete pid)
           Broker.withSession broker req (const $ pure ()) $ \session _-> do
-            queue <- Session.dequeue session
+            queue <- Session.poll session
             assertEqual "The output queue shall be empty." mempty queue
       ]
     ]

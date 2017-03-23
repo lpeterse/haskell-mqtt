@@ -149,7 +149,7 @@ publishMessage session msg = do
  subscriptions <- readMVar (sessionSubscriptions session)
  case R.findMaxBounded (msgTopic msg) subscriptions of
    Nothing  -> pure ()
-   Just qos -> enqueueMessage session msg { msgQoS = qos }
+   Just qos -> enqueue session msg { msgQoS = qos }
 
 publishMessages :: Foldable t => Session auth -> t Message -> IO ()
 publishMessages session msgs =
@@ -159,8 +159,8 @@ publishMessages session msgs =
 --
 --   * This operations eventually terminates the session on queue overflow.
 --     The caller will not notice this and the operation will not throw an exception.
-enqueueMessage :: Session auth -> Message -> IO ()
-enqueueMessage session msg = do
+enqueue :: Session auth -> Message -> IO ()
+enqueue session msg = do
   quota <- principalQuota <$> readMVar (sessionPrincipal session)
   success <- modifyMVar (sessionQueue session) $ \queue-> case msgQoS msg of
     QoS0 -> if (fromIntegral $ quotaMaxQueueSizeQoS0 quota) > Seq.length (queueQoS0 queue)
@@ -177,11 +177,6 @@ enqueueMessage session msg = do
     then notePending session
     -- Kill the session.
     else terminate session
-
--- TODO: make more efficient
-enqueueMessages :: Foldable t => Session auth -> t Message -> IO ()
-enqueueMessages session msgs =
- forM_ msgs (enqueueMessage session)
 
 -- | Terminate a session.
 --
