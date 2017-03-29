@@ -29,7 +29,6 @@ import           GHC.Generics                          (Generic)
 
 import           Network.MQTT.Broker.Authentication    hiding (getPrincipal)
 import qualified Network.MQTT.Broker.RetainedMessages  as RM
-import qualified Network.MQTT.Broker.Session.Statistic as SS
 import           Network.MQTT.Message
 import qualified Network.MQTT.Trie                     as R
 
@@ -64,7 +63,20 @@ data Session auth
    , sessionSubscriptions       :: !(MVar (R.Trie QoS))
    , sessionQueue               :: !(MVar ServerQueue)
    , sessionQueuePending        :: !(MVar ())
-   , sessionStatistic           :: !SS.Statistic
+   , sessionStatistic           :: !Statistic
+   }
+
+data Statistic
+   = Statistic
+   { stPublicationsAccepted   :: MVar Word
+   , stPublicationsDropped    :: MVar Word
+   , stRetentionsAccepted     :: MVar Word
+   , stRetentionsDropped      :: MVar Word
+   , stSubscriptionsAccepted  :: MVar Word
+   , stSubscriptionsRejected  :: MVar Word
+   , stQueueQoS0Dropped       :: MVar Word
+   , stQueueQoS1Dropped       :: MVar Word
+   , stQueueQoS2Dropped       :: MVar Word
    }
 
 data Connection
@@ -162,21 +174,25 @@ publishMessages session msgs =
 enqueue :: Session auth -> Message -> IO ()
 enqueue session msg = do
   quota <- principalQuota <$> readMVar (sessionPrincipal session)
-  success <- modifyMVar (sessionQueue session) $ \queue-> case msgQoS msg of
-    QoS0 -> if (fromIntegral $ quotaMaxQueueSizeQoS0 quota) > Seq.length (queueQoS0 queue)
-      then pure $ (, True) $! queue { queueQoS0 = queueQoS0 queue Seq.|> msg }
-      else pure $ (, True) $! queue { queueQoS0 = Seq.drop 1 $ queueQoS0 queue Seq.|> msg }
-    QoS1 -> if (fromIntegral $ quotaMaxQueueSizeQoS1 quota) > Seq.length (queueQoS1 queue)
-      then pure $ (, True) $! queue { queueQoS1 = queueQoS1 queue Seq.|> msg }
-      else pure (queue, False)
-    QoS2 -> if (fromIntegral $ quotaMaxQueueSizeQoS2 quota) > Seq.length (queueQoS2 queue)
-      then pure $ (, True) $! queue { queueQoS2 = queueQoS2 queue Seq.|> msg }
-      else pure (queue, False)
-  if success
-    -- Notify the sending thread that something has been enqueued!
-    then notePending session
-    -- Kill the session.
-    else terminate session
+  overflow <- modifyMVar (sessionQueue session) $ \queue-> case msgQoS msg of
+    QoS0 -> if fromIntegral (quotaMaxQueueSizeQoS0 quota) > Seq.length (queueQoS0 queue)
+      then pure $ (, False) $! queue { queueQoS0 = queueQoS0 queue Seq.|> msg }
+      else pure $ (, True)  $! queue { queueQoS0 = Seq.drop 1 $ queueQoS0 queue Seq.|> msg }
+    QoS1 -> if fromIntegral (quotaMaxQueueSizeQoS1 quota) > Seq.length (queueQoS1 queue)
+      then pure $ (, False) $! queue { queueQoS1 = queueQoS1 queue Seq.|> msg }
+      else pure $ (, True)  $! queue { queueQoS1 = Seq.drop 1 $ queueQoS1 queue Seq.|> msg }
+    QoS2 -> if fromIntegral (quotaMaxQueueSizeQoS2 quota) > Seq.length (queueQoS2 queue)
+      then pure $ (, False) $! queue { queueQoS2 = queueQoS2 queue Seq.|> msg }
+      else pure $ (, True)  $! queue { queueQoS2 = Seq.drop 1 $ queueQoS2 queue Seq.|> msg }
+  when overflow (accountOverflow $ sessionStatistic session)
+  -- Notify the sending thread that something has been enqueued!
+  notePending session
+  where
+    accountOverflow :: Statistic -> IO ()
+    accountOverflow ss = case msgQoS msg of
+      QoS0 -> modifyMVar_ (stQueueQoS0Dropped ss) $ \i-> pure $! i + 1
+      QoS1 -> modifyMVar_ (stQueueQoS1Dropped ss) $ \i-> pure $! i + 1
+      QoS2 -> modifyMVar_ (stQueueQoS2Dropped ss) $ \i-> pure $! i + 1
 
 -- | Terminate a session.
 --

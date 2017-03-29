@@ -134,7 +134,7 @@ getTestTree =
             assertEqual "Expect 10 packets being polld (second time)."
               (Seq.fromList $ fmap (ServerPublish (PacketIdentifier (-1)) (Duplicate False)) $ take 10 $ drop 1 msgs) q
 
-      , testCase "Terminate session on overflowing QoS1 queue" $ do
+      {-, testCase "Terminate session on overflowing QoS1 queue" $ do
           let msgs = [ Message.Message "topic" QoS1 (Retain False) (fromString $ show x) | x <- [(1 :: Int)..] ]
           broker <- Broker.newBroker $ TestAuthenticator authenticatorConfigAllAccess
           t1 <- newEmptyMVar
@@ -159,9 +159,9 @@ getTestTree =
             assertEqual "Expect 10 packets being polld (first time)."
               (Seq.fromList $ zipWith (\i m-> ServerPublish (PacketIdentifier i) (Duplicate False) m) [0..] $ take 10 msgs) p
             forM_ (take 11 msgs) $ Broker.publishDownstream broker
-            assertEqual "Expect session handler thread to be killed." "Left thread killed" =<< (show <$> waitCatch as)
+            assertEqual "Expect session handler thread to be killed." "Left thread killed" =<< (show <$> waitCatch as) -}
 
-      , testCase "overflowing Qos2 queue (session termination)" $ do
+      {-, testCase "overflowing Qos2 queue (session termination)" $ do
           let msgs = [ Message.Message "topic" QoS2 (Retain False) (fromString $ show x) | x <- [(1 :: Int)..] ]
           broker <- Broker.newBroker $ TestAuthenticator authenticatorConfigAllAccess
           t1 <- newEmptyMVar
@@ -186,7 +186,7 @@ getTestTree =
             assertEqual "Expect 10 packets being polld (first time)."
               (Seq.fromList $ zipWith (\i m-> ServerPublish (PacketIdentifier i) (Duplicate False) m) [0..] $ take 10 msgs) p
             forM_ (take 11 msgs) $ Broker.publishDownstream broker
-            assertEqual "Expect session handler thread to be killed." "Left thread killed" =<< (show <$> waitCatch as)
+            assertEqual "Expect session handler thread to be killed." "Left thread killed" =<< (show <$> waitCatch as) -}
       ]
 
     , testGroup "Quality of Service"

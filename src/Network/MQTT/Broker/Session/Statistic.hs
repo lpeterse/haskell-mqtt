@@ -22,25 +22,25 @@ module Network.MQTT.Broker.Session.Statistic
   ) where
 
 import           Control.Concurrent.MVar
-import qualified Data.Binary             as B
+import qualified Data.Binary                  as B
+import qualified Data.Sequence                as Seq
 import           GHC.Generics
 
-data Statistic = Statistic
-   { stPublicationsAccepted   :: MVar Word
-   , stPublicationsDropped    :: MVar Word
-   , stRetentionsAccepted     :: MVar Word
-   , stRetentionsDropped      :: MVar Word
-   , stSubscriptionsAccepted  :: MVar Word
-   , stSubscriptionsRejected  :: MVar Word
-   }
+import           Network.MQTT.Broker.Internal
 
 data SessionStatistic = SessionStatistic
-   { ssPublicationsAccepted   :: Word
-   , ssPublicationsDropped    :: Word
-   , ssRetentionsAccepted     :: Word
-   , ssRetentionsDropped      :: Word
-   , ssSubscriptionsAccepted  :: Word
-   , ssSubscriptionsRejected  :: Word
+   { ssPublicationsAccepted  :: Word
+   , ssPublicationsDropped   :: Word
+   , ssRetentionsAccepted    :: Word
+   , ssRetentionsDropped     :: Word
+   , ssSubscriptionsAccepted :: Word
+   , ssSubscriptionsRejected :: Word
+   , ssQueueQoS0Length       :: Word
+   , ssQueueQoS0Dropped      :: Word
+   , ssQueueQoS1Length       :: Word
+   , ssQueueQoS1Dropped      :: Word
+   , ssQueueQoS2Length       :: Word
+   , ssQueueQoS2Dropped      :: Word
    } deriving (Eq, Ord, Show, Generic)
 
 instance B.Binary SessionStatistic
@@ -53,15 +53,28 @@ newStatistic = Statistic
   <*> newMVar 0
   <*> newMVar 0
   <*> newMVar 0
+  <*> newMVar 0
+  <*> newMVar 0
+  <*> newMVar 0
 
-snapshot :: Statistic -> IO SessionStatistic
-snapshot st = SessionStatistic
-  <$> readMVar (stPublicationsAccepted  st)
-  <*> readMVar (stPublicationsDropped   st)
-  <*> readMVar (stRetentionsAccepted    st)
-  <*> readMVar (stRetentionsDropped     st)
-  <*> readMVar (stSubscriptionsAccepted st)
-  <*> readMVar (stSubscriptionsRejected st)
+snapshot :: Session auth -> IO SessionStatistic
+snapshot session = do
+  q <- readMVar (sessionQueue session)
+  SessionStatistic
+    <$> readMVar (stPublicationsAccepted  st)
+    <*> readMVar (stPublicationsDropped   st)
+    <*> readMVar (stRetentionsAccepted    st)
+    <*> readMVar (stRetentionsDropped     st)
+    <*> readMVar (stSubscriptionsAccepted st)
+    <*> readMVar (stSubscriptionsRejected st)
+    <*> pure (fromIntegral $ Seq.length $ queueQoS0 q)
+    <*> readMVar (stQueueQoS0Dropped st)
+    <*> pure (fromIntegral $ Seq.length $ queueQoS1 q)
+    <*> readMVar (stQueueQoS1Dropped st)
+    <*> pure (fromIntegral $ Seq.length $ queueQoS2 q)
+    <*> readMVar (stQueueQoS2Dropped st)
+  where
+    st = sessionStatistic session
 
 accountPublicationsAccepted :: Statistic -> Word -> IO ()
 accountPublicationsAccepted ss c =

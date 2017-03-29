@@ -329,7 +329,7 @@ getFreePacketIdentifiers session =
   queuePids <$> readMVar (sessionQueue session)
 
 getStatistic :: Session auth -> IO SessionStatistic
-getStatistic = snapshot . sessionStatistic
+getStatistic = snapshot
 
 resetQueue :: ServerQueue -> ServerQueue
 resetQueue q = q {

@@ -3,7 +3,7 @@ synopsis:            An MQTT protocol implementation.
 description:
   This project aims to supply a rock-solid MQTT implementation suitable for
   production use.
-version:             0.1.1.0
+version:             0.2.0.0
 license:             MIT
 license-file:        LICENSE
 author:              Lars Petersen
