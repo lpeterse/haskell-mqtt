@@ -15,7 +15,7 @@ module Network.MQTT.Broker.Session (
   -- * Session
     Session ()
   , SessionIdentifier (..)
-  , Connection (..)
+  , ConnectionState (..)
   -- ** wait
   , wait
   -- ** poll
@@ -38,7 +38,7 @@ module Network.MQTT.Broker.Session (
   , principalIdentifier
 
   , getSubscriptions
-  , getConnection
+  , getConnectionState
   , getPrincipal
   , getFreePacketIdentifiers
   , getStatistic
@@ -316,9 +316,9 @@ getSubscriptions :: Session auth -> IO (R.Trie QoS)
 getSubscriptions session =
   readMVar (sessionSubscriptions session)
 
-getConnection :: Session auth -> IO (Maybe Connection)
-getConnection session =
-  tryReadMVar (sessionConnection session)
+getConnectionState :: Session auth -> IO ConnectionState
+getConnectionState session =
+  readMVar (sessionConnectionState session)
 
 getPrincipal  :: Session auth -> IO Principal
 getPrincipal session =

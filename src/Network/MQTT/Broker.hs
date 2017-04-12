@@ -20,16 +20,18 @@ module Network.MQTT.Broker
   , getSessions
   , getSubscriptions
   , lookupSession
+  , getSessionsByExpiration
+  , terminateExpiredSessions
   ) where
 
 import           Control.Concurrent.MVar
 import           Control.Concurrent.PrioritySemaphore
 import           Control.Exception
-import           Control.Monad
 import           Data.Int
 import qualified Data.IntMap.Strict                    as IM
 import qualified Data.IntSet                           as IS
 import qualified Data.Map.Strict                       as M
+import qualified Data.Set                              as S
 import           Data.Maybe
 import           System.Clock
 import qualified System.Log.Logger                     as Log
@@ -51,6 +53,7 @@ newBroker authenticator = do
     , brokerSubscriptions        = mempty
     , brokerSessions             = mempty
     , brokerSessionsByPrincipals = mempty
+    , brokerSessionsByExpiration = mempty
     }
   pure Broker {
       brokerCreatedAt     = now
@@ -86,26 +89,72 @@ withSession broker request sessionRejectHandler sessionAcceptHandler =
             -- will receive a `ThreadKilled` exception.
             (\case
                 Nothing -> sessionRejectHandler NotAuthorized
-                Just (session, sessionPresent)->
-                  exclusively (sessionSemaphore session) $ do
-                    now <- sec <$> getTime Realtime
-                    let connection = Connection {
-                        connectionCreatedAt = now
-                      , connectionCleanSession = requestCleanSession request
-                      , connectionSecure = requestSecure request
-                      , connectionWebSocket = isJust (requestHttp request)
-                      , connectionRemoteAddress = requestRemoteAddress request
-                      }
-                    bracket_
-                      ( putMVar (sessionConnection session) connection )
-                      ( void $ takeMVar (sessionConnection session) )
-                      ( sessionAcceptHandler session sessionPresent )
+                Just s  -> acceptAndServeConnection s
             )
+  where
+    acceptAndServeConnection :: (Session auth, SessionPresent) -> IO ()
+    acceptAndServeConnection (session, sessionPresent) =
+      exclusively (sessionSemaphore session) $
+        let serve = onConnect >> sessionAcceptHandler session sessionPresent >> onDisconnect Nothing
+        in  serve `catch` (\e-> onDisconnect $ Just $ show (e :: SomeException) )
+      where
+        onConnect :: IO ()
+        onConnect = do
+          now <- sec <$> getTime Realtime
+          modifyMVar_ (brokerState broker) $ \brokerSt->
+            modifyMVar (sessionConnectionState session) $ \case
+              Connected {} ->
+                throwIO $ AssertionFailed "Session shouldn't be marked as connected here."
+              Disconnected { disconnectedSessionExpiresAt = expiresAt } -> do
+                let brokerSt' = brokerSt {
+                      -- Remove the session from the expiration queue.
+                        brokerSessionsByExpiration = M.update
+                          (\s-> let s' = S.delete session s
+                                in  if S.null s' then Nothing else Just s'
+                          ) expiresAt (brokerSessionsByExpiration brokerSt)
+                     }
+                    connSt' = Connected {
+                       connectedAt            = now
+                     , connectedCleanSession  = requestCleanSession request
+                     , connectedSecure        = requestSecure request
+                     , connectedWebSocket     = isJust (requestHttp request)
+                     , connectedRemoteAddress = requestRemoteAddress request
+                     }
+                pure (connSt', brokerSt')
+        onDisconnect :: Maybe String -> IO ()
+        onDisconnect reason = do
+          now <- sec <$> getTime Realtime
+          ttl <- quotaMaxIdleSessionTTL . principalQuota <$> Session.getPrincipal session
+          modifyMVar_ (brokerState broker) $ \brokerSt->
+            modifyMVar (sessionConnectionState session) $ const $ do
+              let brokerSt' = brokerSt {
+                  brokerSessionsByExpiration = M.insertWith S.union
+                    (now + fromIntegral ttl)
+                    (S.singleton session)
+                    (brokerSessionsByExpiration brokerSt)
+                }
+                  connSt'   = Disconnected {
+                  disconnectedAt               = now
+                , disconnectedSessionExpiresAt = now + fromIntegral ttl
+                , disconnectedWith             = reason
+                }
+              pure (connSt', brokerSt')
 
 lookupSession :: SessionIdentifier -> Broker auth -> IO (Maybe (Session auth))
 lookupSession (SessionIdentifier sid) broker =
   withMVar (brokerState broker) $ \st->
     pure $ IM.lookup sid (brokerSessions st)
+
+getSessionsByExpiration :: Broker auth -> IO (M.Map Int64 (S.Set (Session auth)))
+getSessionsByExpiration broker =
+  brokerSessionsByExpiration <$> readMVar (brokerState broker)
+
+terminateExpiredSessions :: Broker auth -> IO ()
+terminateExpiredSessions broker = do
+  now <- sec <$> getTime Realtime
+  ss <- getSessionsByExpiration broker
+  let expired = fst (M.split now ss)
+  mapM_ (mapM_ terminate) expired
 
 -- | Either lookup or create a session if none is present (yet).
 --
@@ -136,24 +185,24 @@ getSession broker pcid@(pid, cid) =
           subscriptions <- newMVar R.empty
           queue <- newMVar (emptyServerQueue $ fromIntegral $ quotaMaxPacketIdentifiers $ principalQuota principal)
           queuePending <- newEmptyMVar
-          mconnection <- newEmptyMVar
+          mconnection <- newMVar $ Disconnected 0 0 mempty
           mprincipal <- newMVar principal
           stats <- Session.newStatistic
           let SessionIdentifier maxSessionIdentifier = brokerMaxSessionIdentifier st
               newSessionIdentifier = maxSessionIdentifier + 1
               newSession = Session
-               { sessionBroker           = broker
-               , sessionIdentifier       = SessionIdentifier newSessionIdentifier
-               , sessionClientIdentifier = cid
+               { sessionBroker              = broker
+               , sessionIdentifier          = SessionIdentifier newSessionIdentifier
+               , sessionClientIdentifier    = cid
                , sessionPrincipalIdentifier = pid
-               , sessionCreatedAt        = now
-               , sessionConnection       = mconnection
-               , sessionPrincipal        = mprincipal
-               , sessionSemaphore        = semaphore
-               , sessionSubscriptions    = subscriptions
-               , sessionQueue            = queue
-               , sessionQueuePending     = queuePending
-               , sessionStatistic        = stats
+               , sessionCreatedAt           = now
+               , sessionConnectionState     = mconnection
+               , sessionPrincipal           = mprincipal
+               , sessionSemaphore           = semaphore
+               , sessionSubscriptions       = subscriptions
+               , sessionQueue               = queue
+               , sessionQueuePending        = queuePending
+               , sessionStatistic           = stats
                }
               newBrokerState = st
                { brokerMaxSessionIdentifier = SessionIdentifier newSessionIdentifier

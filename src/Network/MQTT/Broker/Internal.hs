@@ -1,5 +1,4 @@
 {-# LANGUAGE DeriveGeneric       #-}
-{-# LANGUAGE LambdaCase          #-}
 {-# LANGUAGE OverloadedStrings   #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TupleSections       #-}
@@ -24,6 +23,7 @@ import           Data.Int
 import qualified Data.IntMap.Strict                    as IM
 import qualified Data.IntSet                           as IS
 import qualified Data.Map.Strict                       as M
+import qualified Data.Set                              as S
 import qualified Data.Sequence                         as Seq
 import           GHC.Generics                          (Generic)
 
@@ -46,6 +46,7 @@ data BrokerState auth
    , brokerSubscriptions          :: !(R.Trie IS.IntSet)
    , brokerSessions               :: !(IM.IntMap (Session auth))
    , brokerSessionsByPrincipals   :: !(M.Map (PrincipalIdentifier, ClientIdentifier) SessionIdentifier)
+   , brokerSessionsByExpiration   :: !(M.Map Int64 (S.Set (Session auth)))
    }
 
 newtype SessionIdentifier = SessionIdentifier Int deriving (Eq, Ord, Show, Enum, Generic)
@@ -57,7 +58,7 @@ data Session auth
    , sessionClientIdentifier    :: !ClientIdentifier
    , sessionPrincipalIdentifier :: !PrincipalIdentifier
    , sessionCreatedAt           :: !Int64
-   , sessionConnection          :: !(MVar Connection)
+   , sessionConnectionState     :: !(MVar ConnectionState)
    , sessionPrincipal           :: !(MVar Principal)
    , sessionSemaphore           :: !PrioritySemaphore
    , sessionSubscriptions       :: !(MVar (R.Trie QoS))
@@ -79,13 +80,18 @@ data Statistic
    , stQueueQoS2Dropped       :: MVar Word
    }
 
-data Connection
-   = Connection
-   { connectionCreatedAt     :: !Int64
-   , connectionCleanSession  :: !Bool
-   , connectionSecure        :: !Bool
-   , connectionWebSocket     :: !Bool
-   , connectionRemoteAddress :: !(Maybe BS.ByteString)
+data ConnectionState
+   = Connected
+   { connectedAt                  :: !Int64
+   , connectedCleanSession        :: !Bool
+   , connectedSecure              :: !Bool
+   , connectedWebSocket           :: !Bool
+   , connectedRemoteAddress       :: !(Maybe BS.ByteString)
+   }
+   | Disconnected
+   { disconnectedAt               :: !Int64
+   , disconnectedSessionExpiresAt :: !Int64
+   , disconnectedWith             :: !(Maybe String)
    } deriving (Eq, Ord, Show, Generic)
 
 data ServerQueue
@@ -102,7 +108,7 @@ data ServerQueue
    }
 
 instance B.Binary SessionIdentifier
-instance B.Binary Connection
+instance B.Binary ConnectionState
 
 instance Eq (Session auth) where
  (==) s1 s2 = (==) (sessionIdentifier s1) (sessionIdentifier s2)
