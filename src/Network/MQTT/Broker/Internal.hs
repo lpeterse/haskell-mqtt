@@ -229,8 +229,13 @@ terminate session =
             -- Remove the session id from each set that the session
             -- subscription tree has a corresponding value for (which is ignored).
           , brokerSubscriptions = R.differenceWith
-              (\b _-> Just (IS.delete sid b) )
-              ( brokerSubscriptions st ) subscriptions
+              removeSessionId (brokerSubscriptions st) subscriptions
           }
   where
+    removeSessionId :: IS.IntSet -> QoS -> Maybe IS.IntSet
+    removeSessionId ss _
+      | IS.null ss' = Nothing
+      | otherwise   = Just ss'
+      where
+        ss' = IS.delete sid ss
     SessionIdentifier sid = sessionIdentifier session

@@ -1,5 +1,14 @@
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE OverloadedStrings #-}
+--------------------------------------------------------------------------------
+-- |
+-- Module      :  TrieTest
+-- Copyright   :  (c) Lars Petersen 2016
+-- License     :  MIT
+--
+-- Maintainer  :  info@lars-petersen.net
+-- Stability   :  experimental
+--------------------------------------------------------------------------------
 module TrieTest ( tests ) where
 
 import           Data.Functor.Identity
@@ -105,9 +114,12 @@ tests = testGroup "Trie"
     , testCase "lookup \"a/b/c\"    tree2 == [2]"       $ R.lookup "a/b/c"    tree2 @?= IS.fromList [2]
     ]
   , testGroup "insertWith" [
-      testCase "parameter order (new, old)" $ ( R.lookup "a" $ R.insertWith const "a" (IS.singleton 2) $ R.singleton "a" (IS.singleton 1) ) @?= IS.fromList [2]
+      testCase "parameter order (new, old)" $ R.lookup "a" (R.insertWith const "a" (IS.singleton 2) $ R.singleton "a" (IS.singleton 1) ) @?= IS.fromList [2]
     ]
-  , testGroup "map" [ ]
+  , testGroup "map" [
+      testCase "map show tree2" $
+        R.map (Identity . show) tree2 @?= R.insert "a/b" (Identity "fromList [3]") (R.singleton "a/b/c" (Identity "fromList [2]"))
+    ]
   , testGroup "mapMaybe" [
       testCase "Trie (Identity [Int]) -> Trie (): #1" $
         let trie = R.insert "abc/#" (Identity [1 :: Int]) $ R.singleton "abc/def" (Identity [2])
@@ -144,33 +156,44 @@ tests = testGroup "Trie"
             f (Identity xs)
               | 1 `elem` xs   = Just ()
               | otherwise     = Nothing
-        in  R.mapMaybe f trie @?= (R.insert "abc" () $ R.singleton "abc/def/hij" ())
+        in  R.mapMaybe f trie @?= R.insert "abc" () (R.singleton "abc/def/hij" ())
     , testCase "Trie (Identity [Int]) -> Trie (): #7" $
         let trie = R.insert "abc" (Identity [1 :: Int]) $ R.insert "abc/def" (Identity [2]) $ R.singleton "abc/def/hij" (Identity [1])
             f (Identity xs)
               | 2 `elem` xs   = Just ()
               | otherwise     = Nothing
         in  R.mapMaybe f trie @?= R.singleton "abc/def" ()
+    , testCase "Trie (Identity [Int]) -> Trie (): #8" $
+        let trie = R.insert "abc" (Identity [2 :: Int]) $ R.insert "abc/def" (Identity [1]) $ R.singleton "abc/def/hij" (Identity [1])
+            f (Identity xs)
+              | 2 `elem` xs   = Just ()
+              | otherwise     = Nothing
+        in  R.mapMaybe f trie @?= R.singleton "abc" ()
     ]
-  , testGroup "adjust" [ ]
-  , testGroup "delete" [ ]
   , testGroup "union" [
       testCase "structurally distinct trees with shared prefix"
-        $ (R.singleton "a/b/y" $ IS.singleton 1) `R.union` (R.singleton "a/b/x" $ IS.singleton 2)
-        @?= R.insertFoldable [("a/b/y", IS.singleton 1), ("a/b/x", IS.singleton 2)] R.empty
+        $ R.singleton "a/b/y" (IS.singleton 1) `R.union` R.singleton "a/b/x" (IS.singleton 2)
+        @?= R.insert "a/b/y" (IS.singleton 1) (R.singleton "a/b/x" (IS.singleton 2))
     , testCase "structurally equal trees with distinct values"
-        $ (R.singleton "a/b/x" $ IS.singleton 1) `R.union` (R.singleton "a/b/x" $ IS.singleton 2)
+        $ R.singleton "a/b/x" (IS.singleton 1) `R.union` R.singleton "a/b/x" (IS.singleton 2)
         @?= R.singleton "a/b/x" (IS.fromList [1,2])
     ]
   , testGroup "unionWith" [
       testCase "structurally distinct trees with shared prefix"
         $ R.unionWith IS.union (R.singleton "a/b/y" $ IS.singleton 1) (R.singleton "a/b/x" $ IS.singleton 2)
-        @?= R.insertFoldable [("a/b/y", IS.singleton 1), ("a/b/x", IS.singleton 2)] R.empty
+        @?= R.insert "a/b/y" (IS.singleton 1) (R.singleton "a/b/x" (IS.singleton 2))
     , testCase "structurally equal trees with distinct values"
         $ R.unionWith IS.union (R.singleton "a/b/x" $ IS.singleton 1) (R.singleton "a/b/x" $ IS.singleton 2)
         @?= R.singleton "a/b/x" (IS.fromList [1,2])
     ]
-  , testGroup "differenceWith" [  ]
+  , testGroup "differenceWith" [
+      testCase "differenceWith keepEmptySets tree6 tree7"
+        $ R.differenceWith (\v1 v2-> Just $ IS.difference v1 v2) tree6 tree7
+        @?= tree8
+    , testCase "differenceWith removeEmptySets tree6 tree7"
+        $ R.differenceWith (\v1 v2-> let d = IS.difference v1 v2 in if IS.null d then Nothing else Just d) tree6 tree7
+        @?= tree9
+    ]
   ]
 
 tree1 :: R.Trie IS.IntSet
@@ -184,29 +207,26 @@ tree1
   $ R.insertWith IS.union "$SYS/+"   (IS.singleton 6)
   $ R.insertWith IS.union "$SYS/a/#" (IS.singleton 7)
   $ R.insertWith IS.union "$SYS/+/a" (IS.singleton 8)
-  $ R.empty
+    R.empty
 
 tree2 :: R.Trie IS.IntSet
 tree2
-  = R.insert "a/b"    (IS.singleton 3)
-  $ R.insert "a/b/c"  (IS.singleton 2)
-  $ R.insert "a/b/c"  (IS.singleton 1)
-  $ R.empty
+  = R.insert    "a/b"    (IS.singleton 3)
+  $ R.insert    "a/b/c"  (IS.singleton 2)
+  $ R.singleton "a/b/c"  (IS.singleton 1)
 
 tree3 :: R.Trie IS.IntSet
 tree3
-  = R.insert "a/b"      (IS.fromList [])
-  $ R.insert "a/b/c"    (IS.fromList [1,2,3,4])
-  $ R.insert "a/b/d"    (IS.fromList [5,6,7])
-  $ R.insert "a/b/d/e"  (IS.fromList [])
-  $ R.empty
+  = R.insert    "a/b"      (IS.fromList [])
+  $ R.insert    "a/b/c"    (IS.fromList [1,2,3,4])
+  $ R.insert    "a/b/d"    (IS.fromList [5,6,7])
+  $ R.singleton "a/b/d/e"  (IS.fromList [])
 
 tree4 :: R.Trie ()
 tree4
-  = R.insert "a/b"     ()
-  $ R.insert "a/b/c/d" ()
-  $ R.insert "b/c/d"   ()
-  $ R.empty
+  = R.insert    "a/b"     ()
+  $ R.insert    "a/b/c/d" ()
+  $ R.singleton "b/c/d"   ()
 
 tree5 :: R.Trie (Identity Ordering)
 tree5
@@ -225,3 +245,33 @@ tree5
   $ R.insert    "z/+/+/q"   (Identity EQ)
   $ R.insert    "z/+/r/+/#" (Identity GT)
   $ R.singleton "+/SYS"     (Identity GT)
+
+tree6 :: R.Trie IS.IntSet
+tree6
+  = R.insert    "a"        (IS.fromList [1,2])
+  $ R.insert    "a/b/c/g"  (IS.fromList [3,4])
+  $ R.insert    "a/b/d"    (IS.fromList [5,6])
+  $ R.insert    "a/b/d/e"  (IS.fromList [7,8])
+  $ R.singleton "a/b/d/f"  (IS.fromList [9,10])
+
+tree7 :: R.Trie IS.IntSet
+tree7
+  = R.insert    "a/b/c/g"  (IS.fromList [3,4])
+  $ R.insert    "a/b/d"    (IS.fromList [])
+  $ R.insert    "a/b/d/f"  (IS.fromList [10])
+  $ R.singleton "foobar"   (IS.fromList [42])
+
+tree8 :: R.Trie IS.IntSet
+tree8
+  = R.insert    "a"        (IS.fromList [1,2])
+  $ R.insert    "a/b/c/g"  (IS.fromList [])
+  $ R.insert    "a/b/d"    (IS.fromList [5,6])
+  $ R.insert    "a/b/d/e"  (IS.fromList [7,8])
+  $ R.singleton "a/b/d/f"  (IS.fromList [9])
+
+tree9 :: R.Trie IS.IntSet
+tree9
+  = R.insert    "a"        (IS.fromList [1,2])
+  $ R.insert    "a/b/d"    (IS.fromList [5,6])
+  $ R.insert    "a/b/d/e"  (IS.fromList [7,8])
+  $ R.singleton "a/b/d/f"  (IS.fromList [9])

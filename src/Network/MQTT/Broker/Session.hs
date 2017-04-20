@@ -112,7 +112,7 @@ processSubscribe session pid filters = do
   principal <- readMVar (sessionPrincipal session)
   checkedFilters <- mapM (checkPermission principal) filters
   let subscribeFilters = mapMaybe (\(filtr,mqos)->(filtr,) <$> mqos) checkedFilters
-      qosTree = R.insertFoldable subscribeFilters R.empty
+      qosTree = insertFoldable subscribeFilters R.empty
       sidTree = R.map (const $ IS.singleton sid) qosTree
   -- Do the accounting for the session statistics.
   -- TODO: Do this as a transaction below.
@@ -146,12 +146,17 @@ processUnsubscribe session pid filters =
         ( sessionSubscriptions session )
         ( pure . flip (R.differenceWith (const . const Nothing)) unsubBrokerTree )
       pure $ bst { brokerSubscriptions = R.differenceWith
-                    (\is (Identity i)-> Just (IS.delete i is))
+                    removeFromSet
                     (brokerSubscriptions bst) unsubBrokerTree }
     enqueueUnsubscribeAcknowledged session pid
   where
     SessionIdentifier sid = sessionIdentifier session
-    unsubBrokerTree  = R.insertFoldable ( fmap (,Identity sid) filters ) R.empty
+    unsubBrokerTree = insertFoldable ( fmap (,Identity sid) filters ) R.empty
+    removeFromSet is (Identity i)
+      | IS.null is' = Nothing
+      | otherwise   = Just is'
+      where
+        is' = IS.delete i is
 
 -- | Note that a QoS1 message has been received by the peer.
 --
@@ -377,3 +382,11 @@ normalizeQueue = takeQoS1 . takeQoS2
         n                 = min (Seq.length pids) (Seq.length msgs)
         (pids', pids'')   = Seq.splitAt n pids
         (msgs', msgs'')   = Seq.splitAt n msgs
+
+
+--------------------------------------------------------------------------------
+-- Util
+--------------------------------------------------------------------------------
+
+insertFoldable :: (R.TrieValue a, Foldable t) => t (Filter, a) -> R.Trie a -> R.Trie a
+insertFoldable  = flip $ foldr $ uncurry R.insert

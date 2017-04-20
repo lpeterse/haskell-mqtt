@@ -38,22 +38,20 @@ module Network.MQTT.Trie (
   , insert
   -- ** insertWith
   , insertWith
-  -- ** insertFoldable
-  , insertFoldable
   -- ** map
   , map
   -- ** mapMaybe
   , mapMaybe
   -- ** foldl'
   , foldl'
-  -- ** delete
-  , delete
   -- ** union
   , union
   -- ** unionWith
   , unionWith
   -- ** differenceWith
   , differenceWith
+  -- ** Debugging & Testing
+  , valid
   ) where
 
 import           Control.Applicative        ((<|>))
@@ -85,7 +83,6 @@ newtype Trie a = Trie { branches :: M.Map Level (TrieNode a) }
 class TrieValue a where
   data TrieNode a
   node                 :: Trie a -> Maybe a -> TrieNode a
-  nodeNull             :: a -> Bool
   nodeTree             :: TrieNode a -> Trie a
   nodeValue            :: TrieNode a -> Maybe a
 
@@ -108,16 +105,31 @@ instance B.Binary (Trie ()) where
   put _ = pure ()
   get = pure empty
 
+-- | Constructs an empty `Trie`.
 empty :: Trie a
 empty  = Trie mempty
 
+-- | Check whether a `Trie` is empty.
+--
+--   * O(1)
+--   * The trie is empty iff it doesn't contain any values.
+--     The invariants guarantee that leaf nodes (if they exist) must contain
+--     values.
 null  :: Trie a -> Bool
 null (Trie m) = M.null m
 
--- | Count all trie nodes that are not `nodeNull`.
+-- | Count all trie nodes that contain values.
+--
+--   * O(n)
+--   * Convenience for `sizeWith (const 1)`.
 size :: TrieValue a => Trie a -> Int
 size  = sizeWith (const 1)
 
+-- | Sum up the size the size of all nodes that contain values using a supplied
+--   size function.
+--
+--   * O(n)
+--   * This function is strict and uses an accumulator.
 sizeWith :: TrieValue a => (a -> Int) -> Trie a -> Int
 sizeWith sz = countTrie 0
   where
@@ -131,24 +143,30 @@ sizeWith sz = countTrie 0
         Nothing -> countTrie accum (nodeTree n)
         Just v  -> countTrie (accum + sz v) (nodeTree n)
 
+-- | Construct a `Trie` holding a single value.
 singleton :: TrieValue a => Filter -> a -> Trie a
 singleton tf = singleton' (filterLevels tf)
   where
-    singleton' (x:|xs) a
-      | nodeNull a  = empty
-      | otherwise   = Trie $ M.singleton x $ case xs of
+    singleton' (x:|xs) a =
+      Trie $ M.singleton x $ case xs of
           []     -> node empty (Just a)
           (y:ys) -> node (singleton' (y:|ys) a) Nothing
 
+-- | Insert a value into the trie.
+--
+--   * O(length(filter))
+--   * Convenience for `insertWith const`.
+--   * Existing element at the specified position will be replaced.
 insert :: TrieValue a => Filter -> a -> Trie a -> Trie a
 insert  = insertWith const
 
+-- | Insert a value into the trie and apply a combining function on collision.
+--
+--   * O(length(filter)) + cost of combining function
 insertWith :: TrieValue a => (a -> a -> a) -> Filter -> a -> Trie a -> Trie a
 insertWith f tf a = insertWith' (filterLevels tf)
   where
-    insertWith' (x:|xs) (Trie m)
-      | nodeNull a  = Trie m
-      | otherwise   = Trie $ M.alter g x m
+    insertWith' (x:|xs) (Trie m) = Trie $ M.alter g x m
       where
         g mn = Just $ case xs of
           []     -> case mn of
@@ -156,30 +174,19 @@ insertWith f tf a = insertWith' (filterLevels tf)
             Just n  -> node (nodeTree n) $ (f a <$> nodeValue n) <|> Just a
           (y:ys) -> node (insertWith' (y:|ys) $ fromMaybe empty $ nodeTree <$> mn) Nothing
 
-insertFoldable :: (TrieValue a, Foldable t) => t (Filter, a) -> Trie a -> Trie a
-insertFoldable  = flip $ foldr $ uncurry insert
-
-delete :: TrieValue a => Filter -> Trie a -> Trie a
-delete tf = delete' (filterLevels tf)
-  where
-    delete' (x:|xs) (Trie m) = Trie $ M.update g x m
-      where
-        g n = case xs of
-          [] | null (nodeTree n) -> Nothing
-             | otherwise         -> Just $ node (nodeTree n) Nothing
-          y:ys -> let t = delete' (y:|ys) (nodeTree n) in
-           case nodeValue n of
-             Nothing | null t    -> Nothing
-                     | otherwise -> Just $ node t Nothing
-             Just v -> Just $ node t (Just v)
-
+-- | Applies a function to each value in the `Trie`.
+--
+--   * Removes leaf nodes for which the mapping function return
+--     `b` where `nodeNull b`.
 map :: (TrieValue a, TrieValue b) => (a -> b) -> Trie a -> Trie b
 map f (Trie m) = Trie $ fmap g m
   where
     g n = let t = map f (nodeTree n) in node t (f <$> nodeValue n)
 
--- | Applies a functor to a try and removes nodes for which the mapping
---   function returns `Nothing`.
+-- | Applies a function to each value in the `Trie` and eventually removes node.
+--
+--  * Removes leaf nodes for which the mapping function returns `Nothing`
+--    or `Just b` where `nodeNull b`.
 mapMaybe :: (TrieValue a, TrieValue b) => (a -> Maybe b) -> Trie a -> Trie b
 mapMaybe f (Trie m) = Trie (M.mapMaybe g m)
   where
@@ -208,6 +215,11 @@ unionWith f (Trie m1) (Trie m2) = Trie (M.unionWith g m1 m2)
     merge (Just v1) (Just v2) = Just (f v1 v2)
     merge      mv1       mv2  = mv1 <|> mv2
 
+-- | Subtract one `Trie` from another by using a combining function for values with equal keys.
+--
+--   * If a node does not have a value in the first `Trie`, it won't have a value in the resulting `Trie`.
+--   * If a node does not exist in the second `Trie` or doesn't have a value, the value of the first `Trie` is preserved (if any).
+--   * If a node has a value in both `Trie`s, the combining function is applied.
 differenceWith :: (TrieValue a, TrieValue b) => (a -> b -> Maybe a) -> Trie a -> Trie b -> Trie a
 differenceWith f (Trie m1) (Trie m2) = Trie (M.differenceWith g m1 m2)
   where
@@ -217,8 +229,7 @@ differenceWith f (Trie m1) (Trie m2) = Trie (M.differenceWith g m1 m2)
     d  _         _        = Nothing
     k t Nothing  | null t               = Nothing
                  | otherwise            = Just $ node t Nothing
-    k t (Just v) | null t && nodeNull v = Nothing
-                 | otherwise            = Just $ node t $ Just v
+    k t mv                              = Just $ node t mv
 
 -- | Collect all values of nodes that match a given topic (according to the
 --   matching rules specified by the MQTT protocol).
@@ -364,43 +375,69 @@ matchFilter tf = matchFilter' (filterLevels tf)
         matchSingleLevelWildcard = fromMaybe False $ matchFilter' (y:|zs) . nodeTree <$> M.lookup singleLevelWildcard m
         matchExact               = fromMaybe False $ matchFilter' (y:|zs) . nodeTree <$> M.lookup x m
 
+valid :: TrieValue a => Trie a -> Bool
+valid (Trie m)
+  = all validAndNotEmpty m
+  where
+    validAndNotEmpty n =
+      valid t && (isJust v || not (null t))
+      where
+        t = nodeTree n
+        v = nodeValue n
+
 --------------------------------------------------------------------------------
--- Specialised nodeTree implemenations using data families
+-- Specialised TrieNode implemenations using data families
 --------------------------------------------------------------------------------
 
 instance TrieValue IS.IntSet where
   data TrieNode IS.IntSet = IntSetTrieNode !(Trie IS.IntSet) !IS.IntSet
-  node t                                = IntSetTrieNode t . fromMaybe mempty
-  nodeNull                              = IS.null
+  node t                        = IntSetTrieNode t . fromMaybe mempty
   nodeTree (IntSetTrieNode t _) = t
   nodeValue (IntSetTrieNode _ v)
-    | nodeNull v = Nothing
-    | otherwise  = Just v
+    | IS.null v                 = Nothing
+    | otherwise                 = Just v
 
 instance TrieValue (Identity a) where
   data TrieNode (Identity a)    = IdentityNode !(Trie (Identity a)) !(Maybe (Identity a))
   node t n@Nothing              = IdentityNode t n
   node t n@(Just _)             = IdentityNode t n
-  nodeNull                      = const False
   nodeTree  (IdentityNode t _)  = t
   nodeValue (IdentityNode _ mv) = mv
 
 instance TrieValue () where
-  data TrieNode ()  = UnitNode {-# UNPACK #-} !Int !(Trie ())
-  node t Nothing = UnitNode 0 t
-  node t _       = UnitNode 1 t
-  nodeNull                 = const False
+  data TrieNode ()         = UnitNode {-# UNPACK #-} !Int !(Trie ())
+  node t Nothing           = UnitNode 0 t
+  node t _                 = UnitNode 1 t
   nodeTree  (UnitNode _ t) = t
   nodeValue (UnitNode 0 _) = Nothing
   nodeValue (UnitNode _ _) = Just ()
 
 instance TrieValue Bool where
-  data TrieNode Bool = BoolNode {-# UNPACK #-} !Int !(Trie Bool)
-  node t Nothing      = BoolNode 0 t
-  node t (Just False) = BoolNode 1 t
-  node t (Just True)  = BoolNode 2 t
-  nodeNull                     = const False
-  nodeTree  (BoolNode _ t)     = t
+  data TrieNode Bool       = BoolNode {-# UNPACK #-} !Int !(Trie Bool)
+  node t Nothing           = BoolNode 0 t
+  node t (Just False)      = BoolNode 1 t
+  node t (Just True)       = BoolNode 2 t
+  nodeTree  (BoolNode _ t) = t
   nodeValue (BoolNode 1 _) = Just False
   nodeValue (BoolNode 2 _) = Just True
   nodeValue (BoolNode _ _) = Nothing
+
+--------------------------------------------------------------------------------
+-- Untested code snippets for future use
+--------------------------------------------------------------------------------
+
+{-
+  delete :: TrieValue a => Filter -> Trie a -> Trie a
+  delete tf = delete' (filterLevels tf)
+    where
+      delete' (x:|xs) (Trie m) = Trie $ M.update g x m
+        where
+          g n = case xs of
+            [] | null (nodeTree n) -> Nothing
+               | otherwise         -> Just $ node (nodeTree n) Nothing
+            y:ys -> let t = delete' (y:|ys) (nodeTree n) in
+             case nodeValue n of
+               Nothing | null t    -> Nothing
+                       | otherwise -> Just $ node t Nothing
+               Just v -> Just $ node t (Just v)
+-}

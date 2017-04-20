@@ -25,7 +25,6 @@ instance TrieValue QoS where
   node t (Just QoS1)           = QosNode 1 t
   node t (Just QoS2)           = QosNode 2 t
   node t Nothing               = QosNode 3 t
-  nodeNull                     = const False
   nodeTree  (QosNode _ t)      = t
   nodeValue (QosNode 0 _)      = Just QoS0
   nodeValue (QosNode 1 _)      = Just QoS1
