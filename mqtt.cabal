@@ -30,7 +30,7 @@ library
                        Network.MQTT.Broker.RetainedMessages,
                        Network.MQTT.Broker.Server,
                        Network.MQTT.Broker.Session
-  other-modules:       Control.Concurrent.PrioritySemaphore,
+  other-modules:       Control.Concurrent.InterruptibleLock,
                        Network.MQTT.Message.QoS,
                        Network.MQTT.Message.Topic,
                        Network.MQTT.Broker.Internal,
@@ -121,7 +121,7 @@ test-suite test
     , containers
     , uuid
 
-test-suite priority-semaphore
+test-suite interruptible-lock
   type:
     exitcode-stdio-1.0
   default-language:
@@ -132,9 +132,9 @@ test-suite priority-semaphore
     src,
     test
   main-is:
-    PrioritySemaphoreTest.hs
+    InterruptibleLockTest.hs
   other-modules:
-    Control.Concurrent.PrioritySemaphore
+    Control.Concurrent.InterruptibleLock
   build-depends:
       async
     , base >= 4.8 && < 5
@@ -160,10 +160,10 @@ test-suite retained-store-strictness-test
     mqtt
 
 -- This test suite runs with restricted maximum heap size.
--- The routing tree with 1 million nodes and around 3 subscriptions per node
+-- The trie with 1 million nodes and around 3 subscriptions per node
 -- took 83MB when measured.
 -- We allow for some deviation, but it should not exceed 100MB heap space.
-test-suite routing-tree-size-test
+test-suite trie-size-test
   type:
     exitcode-stdio-1.0
   default-language:

@@ -25,7 +25,7 @@ module Network.MQTT.Broker
   ) where
 
 import           Control.Concurrent.MVar
-import           Control.Concurrent.PrioritySemaphore
+import           Control.Concurrent.InterruptibleLock
 import           Control.Exception
 import           Data.Int
 import qualified Data.IntMap.Strict                    as IM
@@ -94,7 +94,7 @@ withSession broker request sessionRejectHandler sessionAcceptHandler =
   where
     acceptAndServeConnection :: (Session auth, SessionPresent) -> IO ()
     acceptAndServeConnection (session, sessionPresent) =
-      exclusively (sessionSemaphore session) $
+      exclusively (sessionLock session) $
         let serve = onConnect >> sessionAcceptHandler session sessionPresent >> onDisconnect Nothing
         in  serve `catch` (\e-> onDisconnect $ Just $ show (e :: SomeException) )
       where
@@ -181,7 +181,7 @@ getSession broker pcid@(pid, cid) =
         Nothing -> pure (st, Nothing)
         Just principal -> do
           now <- sec <$> getTime Realtime
-          semaphore <- newPrioritySemaphore
+          lock <- newInterruptibleLock
           subscriptions <- newMVar R.empty
           queue <- newMVar (emptyServerQueue $ fromIntegral $ quotaMaxPacketIdentifiers $ principalQuota principal)
           queuePending <- newEmptyMVar
@@ -198,7 +198,7 @@ getSession broker pcid@(pid, cid) =
                , sessionCreatedAt           = now
                , sessionConnectionState     = mconnection
                , sessionPrincipal           = mprincipal
-               , sessionSemaphore           = semaphore
+               , sessionLock                = lock
                , sessionSubscriptions       = subscriptions
                , sessionQueue               = queue
                , sessionQueuePending        = queuePending

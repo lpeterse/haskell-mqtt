@@ -15,7 +15,7 @@
 module Network.MQTT.Broker.Internal where
 
 import           Control.Concurrent.MVar
-import           Control.Concurrent.PrioritySemaphore
+import           Control.Concurrent.InterruptibleLock
 import           Control.Monad
 import qualified Data.Binary                           as B
 import qualified Data.ByteString                       as BS
@@ -60,7 +60,7 @@ data Session auth
    , sessionCreatedAt           :: !Int64
    , sessionConnectionState     :: !(MVar ConnectionState)
    , sessionPrincipal           :: !(MVar Principal)
-   , sessionSemaphore           :: !PrioritySemaphore
+   , sessionLock                :: !InterruptibleLock
    , sessionSubscriptions       :: !(MVar (R.Trie QoS))
    , sessionQueue               :: !(MVar ServerQueue)
    , sessionQueuePending        :: !(MVar ())
@@ -214,8 +214,8 @@ terminate session =
   -- TODO Race: New clients may try to connect while we are in here.
   -- This would not make the state inconsistent, but kill this thread.
   -- What we need is another `exclusivelyUninterruptible` function for
-  -- the priority semaphore.
-  exclusively (sessionSemaphore session) $
+  -- the priority Lock.
+  exclusively (sessionLock session) $
     modifyMVarMasked_ (brokerState $ sessionBroker session) $ \st->
       withMVarMasked (sessionSubscriptions session) $ \subscriptions->
         pure st

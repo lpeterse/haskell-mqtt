@@ -48,7 +48,7 @@ module Network.MQTT.Broker.Session (
   ) where
 
 import           Control.Concurrent.MVar
-import           Control.Concurrent.PrioritySemaphore
+import           Control.Concurrent.InterruptibleLock
 import           Control.Monad
 import           Data.Bool
 import           Data.Functor.Identity
@@ -240,7 +240,7 @@ disconnect :: Session auth -> IO ()
 disconnect session =
   -- This assures that the client gets disconnected by interrupting
   -- the current client handler thread (if any).
-  exclusively (sessionSemaphore session) (pure ())
+  exclusively (sessionLock session) (pure ())
 
 -- | Reset the session state after a reconnect.
 --
