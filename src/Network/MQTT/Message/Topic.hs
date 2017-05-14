@@ -1,4 +1,5 @@
-{-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE OverloadedStrings          #-}
 --------------------------------------------------------------------------------
 -- |
 -- Module      :  Network.MQTT.Topic
@@ -16,7 +17,7 @@ module Network.MQTT.Message.Topic
   , topicParser
   , topicBuilder
   -- ** Filter
-  , Filter ()
+  , Filter (..)
   , filterLevels
   , filterLength
   , filterParser
@@ -29,14 +30,15 @@ module Network.MQTT.Message.Topic
   , startsWithDollar
   ) where
 
-import Data.Monoid ((<>))
 import           Control.Applicative
 import           Control.Monad              (void)
 import qualified Data.Attoparsec.ByteString as A
+import qualified Data.Binary                as B
 import qualified Data.ByteString.Builder    as BS
 import qualified Data.ByteString.Short      as BS
 import           Data.List
 import           Data.List.NonEmpty         (NonEmpty (..))
+import           Data.Monoid                ((<>))
 import           Data.String
 import qualified Data.Text                  as T
 import qualified Data.Text.Encoding         as T
@@ -54,7 +56,7 @@ newtype Topic  = Topic  (NonEmpty Level)  deriving (Eq, Ord)
 --  * must not contain a @\\NUL@ character
 newtype Filter = Filter (NonEmpty Level)  deriving (Eq, Ord)
 -- | A `Level` represents a single path element of a `Topic` or a `Filter`.
-newtype Level  = Level BS.ShortByteString deriving (Eq, Ord)
+newtype Level  = Level BS.ShortByteString deriving (Eq, Ord, B.Binary)
 
 instance Show Topic where
   show (Topic xs) = show (Filter xs)
@@ -83,6 +85,22 @@ instance IsString Level where
     Left e  -> error e
     Right t -> t
 
+instance B.Binary Topic where
+  put (Topic (x:|xs)) =
+    B.put x >> B.put xs
+  get = do
+    x <- B.get
+    xs <- B.get
+    pure (Topic (x:|xs))
+
+instance B.Binary Filter where
+  put (Filter (x:|xs)) =
+    B.put x >> B.put xs
+  get = do
+    x <- B.get
+    xs <- B.get
+    pure (Filter (x:|xs))
+
 topicLevels :: Topic -> NonEmpty Level
 topicLevels (Topic x) = x
 {-# INLINE topicLevels #-}
@@ -102,7 +120,7 @@ topicParser = (<|> fail "invalid topic") $ Topic <$> do
     pSlash      = void (A.word8 slash)
     pLevel      = Level . BS.toShort <$> A.takeWhile
                   (\w8-> w8 /= slash && w8 /= zero && w8 /= hash && w8 /= plus)
-{-# INLINEABLE topicParser #-}
+{-# INLINABLE topicParser #-}
 
 topicBuilder :: Topic -> BS.Builder
 topicBuilder (Topic (Level x:|xs)) =
@@ -123,7 +141,7 @@ topicLength (Topic (Level x:|xs)) =
    BS.length x + len' xs 0
    where
     len' []                      acc = acc
-    len' (Level z:zs) acc = len' zs $! acc + 1 + BS.length z
+    len' (Level z:zs) acc            = len' zs $! acc + 1 + BS.length z
 {-# INLINE topicLength #-}
 
 filterLength :: Filter -> Int
@@ -131,7 +149,7 @@ filterLength (Filter (Level x:|xs)) =
    BS.length x + len' xs 0
    where
     len' []                      acc = acc
-    len' (Level z:zs) acc = len' zs $! acc + 1 + BS.length z
+    len' (Level z:zs) acc            = len' zs $! acc + 1 + BS.length z
 {-# INLINE filterLength #-}
 
 filterParser :: A.Parser Filter
@@ -148,7 +166,7 @@ filterParser = (<|> fail "invalid filter") $ Filter <$> do
       <|> (void (A.word8 plus) >> ((A.endOfInput >> pure [singleLevelWildcard]) <|>
                        (pSlash >> (:) <$> pure singleLevelWildcard <*> pLevels)))
       <|> (pLevel >>= \x-> (x:) <$> ((A.endOfInput >> pure []) <|> (pSlash >> pLevels)))
-{-# INLINEABLE filterParser #-}
+{-# INLINABLE filterParser #-}
 
 levelParser :: A.Parser Level
 levelParser = do

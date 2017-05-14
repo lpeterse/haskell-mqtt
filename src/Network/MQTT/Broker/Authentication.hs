@@ -14,16 +14,16 @@
 module Network.MQTT.Broker.Authentication where
 
 import           Control.Exception
-import qualified Data.Binary              as B
-import qualified Data.ByteString          as BS
+import qualified Data.Binary          as B
+import qualified Data.ByteString      as BS
 import           Data.CaseInsensitive
-import           Data.UUID                as UUID
+import           Data.UUID            as UUID
 import           Data.Word
-import qualified Data.X509                as X509
+import qualified Data.X509            as X509
 import           GHC.Generics
 
 import           Network.MQTT.Message
-import           Network.MQTT.Trie as R
+import           Network.MQTT.Trie    as R
 
 -- | A peer identity optionally associated with connection/session
 --   specific information.
@@ -51,6 +51,10 @@ class (Exception (AuthenticationException a)) => Authenticator a where
   --   longer available. It shall throw an `AuthenticationException` in case
   --   of other problems.
   getPrincipal           :: a -> PrincipalIdentifier -> IO (Maybe Principal)
+  -- | Gets the last exception that occured within the module.
+  --
+  --   This shall be useful for debugging. Getting the exeption resets it.
+  getLastException       :: a -> IO (Maybe SomeException)
 
 type PrincipalIdentifier = UUID
 

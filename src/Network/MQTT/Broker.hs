@@ -24,15 +24,15 @@ module Network.MQTT.Broker
   , terminateExpiredSessions
   ) where
 
-import           Control.Concurrent.MVar
 import           Control.Concurrent.InterruptibleLock
+import           Control.Concurrent.MVar
 import           Control.Exception
 import           Data.Int
 import qualified Data.IntMap.Strict                    as IM
 import qualified Data.IntSet                           as IS
 import qualified Data.Map.Strict                       as M
-import qualified Data.Set                              as S
 import           Data.Maybe
+import qualified Data.Set                              as S
 import           System.Clock
 import qualified System.Log.Logger                     as Log
 
@@ -44,8 +44,8 @@ import qualified Network.MQTT.Broker.Session.Statistic as Session
 import           Network.MQTT.Message
 import qualified Network.MQTT.Trie                     as R
 
-newBroker :: auth -> IO (Broker auth)
-newBroker authenticator = do
+newBroker :: IO auth -> IO (Broker auth)
+newBroker getAuthenticator = do
   now <- sec <$> getTime Realtime
   rm <- RM.new
   st <-newMVar BrokerState
@@ -57,14 +57,15 @@ newBroker authenticator = do
     }
   pure Broker {
       brokerCreatedAt     = now
-    , brokerAuthenticator = authenticator
+    , brokerAuthenticator = getAuthenticator
     , brokerRetainedStore = rm
     , brokerState         = st
     }
 
 withSession :: forall auth. (Authenticator auth) => Broker auth -> ConnectionRequest -> (RejectReason -> IO ()) -> (Session auth -> SessionPresent -> IO ()) -> IO ()
-withSession broker request sessionRejectHandler sessionAcceptHandler =
-  (try $ authenticate (brokerAuthenticator broker) request :: IO (Either (AuthenticationException auth) (Maybe PrincipalIdentifier))) >>= \case
+withSession broker request sessionRejectHandler sessionAcceptHandler = do
+  authenticator <- brokerAuthenticator broker
+  (try $ authenticate authenticator request :: IO (Either (AuthenticationException auth) (Maybe PrincipalIdentifier))) >>= \case
     Left _ -> sessionRejectHandler ServerUnavailable
     Right mp -> case mp of
       Nothing -> sessionRejectHandler NotAuthorized
@@ -177,40 +178,42 @@ getSession broker pcid@(pid, cid) =
       -- No session entry found for principal. Creating one.
       Nothing -> createSession st
     where
-      createSession st = getPrincipal (brokerAuthenticator broker) pid >>= \case
-        Nothing -> pure (st, Nothing)
-        Just principal -> do
-          now <- sec <$> getTime Realtime
-          lock <- newInterruptibleLock
-          subscriptions <- newMVar R.empty
-          queue <- newMVar (emptyServerQueue $ fromIntegral $ quotaMaxPacketIdentifiers $ principalQuota principal)
-          queuePending <- newEmptyMVar
-          mconnection <- newMVar $ Disconnected 0 0 mempty
-          mprincipal <- newMVar principal
-          stats <- Session.newStatistic
-          let SessionIdentifier maxSessionIdentifier = brokerMaxSessionIdentifier st
-              newSessionIdentifier = maxSessionIdentifier + 1
-              newSession = Session
-               { sessionBroker              = broker
-               , sessionIdentifier          = SessionIdentifier newSessionIdentifier
-               , sessionClientIdentifier    = cid
-               , sessionPrincipalIdentifier = pid
-               , sessionCreatedAt           = now
-               , sessionConnectionState     = mconnection
-               , sessionPrincipal           = mprincipal
-               , sessionLock                = lock
-               , sessionSubscriptions       = subscriptions
-               , sessionQueue               = queue
-               , sessionQueuePending        = queuePending
-               , sessionStatistic           = stats
-               }
-              newBrokerState = st
-               { brokerMaxSessionIdentifier = SessionIdentifier newSessionIdentifier
-               , brokerSessions             = IM.insert newSessionIdentifier newSession (brokerSessions st)
-               , brokerSessionsByPrincipals = M.insert pcid (SessionIdentifier newSessionIdentifier) (brokerSessionsByPrincipals st)
-               }
-          Log.infoM "Broker.createSession" $ "Creating new session with id " ++ show newSessionIdentifier ++ " for " ++ show pid ++ "."
-          pure (newBrokerState, Just (newSession, SessionPresent False))
+      createSession st = do
+        authenticator <- brokerAuthenticator broker
+        getPrincipal authenticator pid >>= \case
+          Nothing -> pure (st, Nothing)
+          Just principal -> do
+            now <- sec <$> getTime Realtime
+            lock <- newInterruptibleLock
+            subscriptions <- newMVar R.empty
+            queue <- newMVar (emptyServerQueue $ fromIntegral $ quotaMaxPacketIdentifiers $ principalQuota principal)
+            queuePending <- newEmptyMVar
+            mconnection <- newMVar $ Disconnected 0 0 mempty
+            mprincipal <- newMVar principal
+            stats <- Session.newStatistic
+            let SessionIdentifier maxSessionIdentifier = brokerMaxSessionIdentifier st
+                newSessionIdentifier = maxSessionIdentifier + 1
+                newSession = Session
+                  { sessionBroker              = broker
+                  , sessionIdentifier          = SessionIdentifier newSessionIdentifier
+                  , sessionClientIdentifier    = cid
+                  , sessionPrincipalIdentifier = pid
+                  , sessionCreatedAt           = now
+                  , sessionConnectionState     = mconnection
+                  , sessionPrincipal           = mprincipal
+                  , sessionLock                = lock
+                  , sessionSubscriptions       = subscriptions
+                  , sessionQueue               = queue
+                  , sessionQueuePending        = queuePending
+                  , sessionStatistic           = stats
+                  }
+                newBrokerState = st
+                  { brokerMaxSessionIdentifier = SessionIdentifier newSessionIdentifier
+                  , brokerSessions             = IM.insert newSessionIdentifier newSession (brokerSessions st)
+                  , brokerSessionsByPrincipals = M.insert pcid (SessionIdentifier newSessionIdentifier) (brokerSessionsByPrincipals st)
+                  }
+            Log.infoM "Broker.createSession" $ "Creating new session with id " ++ show newSessionIdentifier ++ " for " ++ show pid ++ "."
+            pure (newBrokerState, Just (newSession, SessionPresent False))
 
 getUptime        :: Broker auth -> IO Int64
 getUptime broker = do

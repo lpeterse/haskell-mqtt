@@ -1,8 +1,8 @@
+{-# LANGUAGE BangPatterns      #-}
 {-# LANGUAGE FlexibleContexts  #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE TypeFamilies      #-}
-{-# LANGUAGE BangPatterns      #-}
 --------------------------------------------------------------------------------
 -- |
 -- Module      :  Network.MQTT.Trie
@@ -50,6 +50,8 @@ module Network.MQTT.Trie (
   , unionWith
   -- ** differenceWith
   , differenceWith
+  -- ** toList
+  , toList
   -- ** Debugging & Testing
   , valid
   ) where
@@ -60,6 +62,7 @@ import           Data.Functor.Identity
 import qualified Data.IntSet                as IS
 import qualified Data.List                  as L
 import           Data.List.NonEmpty         (NonEmpty (..))
+import qualified Data.List.NonEmpty         as NE
 import qualified Data.Map.Strict            as M
 import           Data.Maybe                 hiding (mapMaybe)
 import           Data.Monoid
@@ -101,9 +104,13 @@ instance (TrieValue a, Show a) => Show (Trie a) where
     where
       f (l,n) = "(" ++ show l ++ ", Node (" ++ show (nodeValue n) ++ ") (" ++ show (nodeTree n) ++ ")"
 
-instance B.Binary (Trie ()) where
-  put _ = pure ()
-  get = pure empty
+instance (TrieValue a, B.Binary a) => B.Binary (Trie a) where
+  put (Trie m) = B.put m
+  get          = Trie <$> B.get
+
+instance (TrieValue a, B.Binary a) => B.Binary (TrieNode a) where
+  put n        = B.put (nodeTree n) >> B.put (nodeValue n)
+  get          = node <$> B.get <*> B.get
 
 -- | Constructs an empty `Trie`.
 empty :: Trie a
@@ -375,6 +382,35 @@ matchFilter tf = matchFilter' (filterLevels tf)
         matchSingleLevelWildcard = fromMaybe False $ matchFilter' (y:|zs) . nodeTree <$> M.lookup singleLevelWildcard m
         matchExact               = fromMaybe False $ matchFilter' (y:|zs) . nodeTree <$> M.lookup x m
 
+toList :: (TrieValue a) => Trie a -> [(Filter, a)]
+toList = fmap (\(x,y)-> (Filter (NE.reverse x), y)) . accumTrie []
+  where
+    accumTrie     :: (TrieValue a) => [(NonEmpty Level, a)] -> Trie a -> [(NonEmpty Level, a)]
+    accumTrie accum (Trie m) =
+      M.foldrWithKey accumTrieNode accum m
+
+    accumTrieNode :: (TrieValue a) =>  Level -> TrieNode a -> [(NonEmpty Level, a)] ->[(NonEmpty Level, a)]
+    accumTrieNode l n accum =
+      accumTrie' prefix accum' (nodeTree n)
+      where
+        prefix = l :| []
+        accum' = case nodeValue n of
+          Nothing -> accum
+          Just v  -> (prefix, v):accum
+
+    accumTrie'     :: (TrieValue a) => NonEmpty Level -> [(NonEmpty Level, a)] -> Trie a -> [(NonEmpty Level, a)]
+    accumTrie' prefix accum (Trie m) =
+      M.foldrWithKey (accumTrieNode' prefix) accum m
+
+    accumTrieNode' :: (TrieValue a) => NonEmpty Level -> Level -> TrieNode a -> [(NonEmpty Level, a)] -> [(NonEmpty Level, a)]
+    accumTrieNode' prefix l n accum =
+      accumTrie' (l NE.<| prefix) accum' (nodeTree n)
+      where
+        prefix' = l NE.<| prefix
+        accum' = case nodeValue n of
+          Nothing -> accum
+          Just v  -> (prefix', v):accum
+
 valid :: TrieValue a => Trie a -> Bool
 valid (Trie m)
   = all validAndNotEmpty m
@@ -399,24 +435,24 @@ instance TrieValue IS.IntSet where
 
 instance TrieValue (Identity a) where
   data TrieNode (Identity a)    = IdentityNode !(Trie (Identity a)) !(Maybe (Identity a))
-  node t n@Nothing              = IdentityNode t n
-  node t n@(Just _)             = IdentityNode t n
+  node t n@Nothing  = IdentityNode t n
+  node t n@(Just _) = IdentityNode t n
   nodeTree  (IdentityNode t _)  = t
   nodeValue (IdentityNode _ mv) = mv
 
 instance TrieValue () where
   data TrieNode ()         = UnitNode {-# UNPACK #-} !Int !(Trie ())
-  node t Nothing           = UnitNode 0 t
-  node t _                 = UnitNode 1 t
+  node t Nothing = UnitNode 0 t
+  node t _       = UnitNode 1 t
   nodeTree  (UnitNode _ t) = t
   nodeValue (UnitNode 0 _) = Nothing
   nodeValue (UnitNode _ _) = Just ()
 
 instance TrieValue Bool where
   data TrieNode Bool       = BoolNode {-# UNPACK #-} !Int !(Trie Bool)
-  node t Nothing           = BoolNode 0 t
-  node t (Just False)      = BoolNode 1 t
-  node t (Just True)       = BoolNode 2 t
+  node t Nothing      = BoolNode 0 t
+  node t (Just False) = BoolNode 1 t
+  node t (Just True)  = BoolNode 2 t
   nodeTree  (BoolNode _ t) = t
   nodeValue (BoolNode 1 _) = Just False
   nodeValue (BoolNode 2 _) = Just True

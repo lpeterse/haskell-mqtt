@@ -1,8 +1,8 @@
-{-# LANGUAGE DeriveGeneric       #-}
-{-# LANGUAGE OverloadedStrings   #-}
-{-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE TupleSections       #-}
+{-# LANGUAGE DeriveGeneric              #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE OverloadedStrings          #-}
+{-# LANGUAGE ScopedTypeVariables        #-}
+{-# LANGUAGE TupleSections              #-}
 --------------------------------------------------------------------------------
 -- |
 -- Module      :  Network.MQTT.Broker.Internal
@@ -14,28 +14,28 @@
 --------------------------------------------------------------------------------
 module Network.MQTT.Broker.Internal where
 
-import           Control.Concurrent.MVar
 import           Control.Concurrent.InterruptibleLock
+import           Control.Concurrent.MVar
 import           Control.Monad
-import qualified Data.Binary                           as B
-import qualified Data.ByteString                       as BS
+import qualified Data.Binary                          as B
+import qualified Data.ByteString                      as BS
 import           Data.Int
-import qualified Data.IntMap.Strict                    as IM
-import qualified Data.IntSet                           as IS
-import qualified Data.Map.Strict                       as M
-import qualified Data.Set                              as S
-import qualified Data.Sequence                         as Seq
-import           GHC.Generics                          (Generic)
+import qualified Data.IntMap.Strict                   as IM
+import qualified Data.IntSet                          as IS
+import qualified Data.Map.Strict                      as M
+import qualified Data.Sequence                        as Seq
+import qualified Data.Set                             as S
+import           GHC.Generics                         (Generic)
 
-import           Network.MQTT.Broker.Authentication    hiding (getPrincipal)
-import qualified Network.MQTT.Broker.RetainedMessages  as RM
+import           Network.MQTT.Broker.Authentication   hiding (getPrincipal)
+import qualified Network.MQTT.Broker.RetainedMessages as RM
 import           Network.MQTT.Message
-import qualified Network.MQTT.Trie                     as R
+import qualified Network.MQTT.Trie                    as R
 
 data Broker auth
    = Broker
    { brokerCreatedAt     :: Int64
-   , brokerAuthenticator :: auth
+   , brokerAuthenticator :: IO auth
    , brokerRetainedStore :: RM.RetainedStore
    , brokerState         :: MVar (BrokerState auth)
    }
@@ -69,24 +69,24 @@ data Session auth
 
 data Statistic
    = Statistic
-   { stPublicationsAccepted   :: MVar Word
-   , stPublicationsDropped    :: MVar Word
-   , stRetentionsAccepted     :: MVar Word
-   , stRetentionsDropped      :: MVar Word
-   , stSubscriptionsAccepted  :: MVar Word
-   , stSubscriptionsRejected  :: MVar Word
-   , stQueueQoS0Dropped       :: MVar Word
-   , stQueueQoS1Dropped       :: MVar Word
-   , stQueueQoS2Dropped       :: MVar Word
+   { stPublicationsAccepted  :: MVar Word
+   , stPublicationsDropped   :: MVar Word
+   , stRetentionsAccepted    :: MVar Word
+   , stRetentionsDropped     :: MVar Word
+   , stSubscriptionsAccepted :: MVar Word
+   , stSubscriptionsRejected :: MVar Word
+   , stQueueQoS0Dropped      :: MVar Word
+   , stQueueQoS1Dropped      :: MVar Word
+   , stQueueQoS2Dropped      :: MVar Word
    }
 
 data ConnectionState
    = Connected
-   { connectedAt                  :: !Int64
-   , connectedCleanSession        :: !Bool
-   , connectedSecure              :: !Bool
-   , connectedWebSocket           :: !Bool
-   , connectedRemoteAddress       :: !(Maybe BS.ByteString)
+   { connectedAt            :: !Int64
+   , connectedCleanSession  :: !Bool
+   , connectedSecure        :: !Bool
+   , connectedWebSocket     :: !Bool
+   , connectedRemoteAddress :: !(Maybe BS.ByteString)
    }
    | Disconnected
    { disconnectedAt               :: !Int64
