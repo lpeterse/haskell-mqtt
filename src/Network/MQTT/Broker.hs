@@ -27,6 +27,7 @@ module Network.MQTT.Broker
 import           Control.Concurrent.InterruptibleLock
 import           Control.Concurrent.MVar
 import           Control.Exception
+import           Control.Monad                         (void)
 import           Data.Int
 import qualified Data.IntMap.Strict                    as IM
 import qualified Data.IntSet                           as IS
@@ -163,57 +164,59 @@ terminateExpiredSessions broker = do
 --   permissions etc. Returns Nothing in case the principal identifier cannot
 --   be mapped to a principal object.
 getSession :: Authenticator auth => Broker auth -> (PrincipalIdentifier, ClientIdentifier) -> IO (Maybe (Session auth, SessionPresent))
-getSession broker pcid@(pid, cid) =
-  modifyMVar (brokerState broker) $ \st->
-    case M.lookup pcid (brokerSessionsByPrincipals st) of
-      Just (SessionIdentifier sid) ->
-        case IM.lookup sid (brokerSessions st) of
-          -- Resuming an existing session..
-          Just session ->
-            pure (st, Just (session, SessionPresent True))
-          -- Orphaned session id. This is illegal state.
-          Nothing -> do
-            Log.warningM "Broker.getSession" $ "Illegal state: Found orphanded session id " ++ show sid ++ "."
-            createSession st
-      -- No session entry found for principal. Creating one.
-      Nothing -> createSession st
+getSession broker pcid@(pid, cid) = do
+  authenticator <- brokerAuthenticator broker
+  -- Resuming an existing session..
+  -- Re-fetch the principal and its permissions.
+  getPrincipal authenticator pid >>= \case
+    Nothing -> pure Nothing
+    Just principal ->
+      modifyMVar (brokerState broker) $ \st->
+        case M.lookup pcid (brokerSessionsByPrincipals st) of
+          Just (SessionIdentifier sid) ->
+            case IM.lookup sid (brokerSessions st) of
+              Just session -> do
+                void $ swapMVar (sessionPrincipal session) principal
+                pure (st, Just (session, SessionPresent True))
+              -- Orphaned session id. This is illegal state.
+              Nothing -> do
+                Log.warningM "Broker.getSession" $ "Illegal state: Found orphanded session id " ++ show sid ++ "."
+                createSession principal st
+          -- No session entry found for principal. Creating one.
+          Nothing -> createSession principal st
     where
-      createSession st = do
-        authenticator <- brokerAuthenticator broker
-        getPrincipal authenticator pid >>= \case
-          Nothing -> pure (st, Nothing)
-          Just principal -> do
-            now <- sec <$> getTime Realtime
-            lock <- newInterruptibleLock
-            subscriptions <- newMVar R.empty
-            queue <- newMVar (emptyServerQueue $ fromIntegral $ quotaMaxPacketIdentifiers $ principalQuota principal)
-            queuePending <- newEmptyMVar
-            mconnection <- newMVar $ Disconnected 0 0 mempty
-            mprincipal <- newMVar principal
-            stats <- Session.newStatistic
-            let SessionIdentifier maxSessionIdentifier = brokerMaxSessionIdentifier st
-                newSessionIdentifier = maxSessionIdentifier + 1
-                newSession = Session
-                  { sessionBroker              = broker
-                  , sessionIdentifier          = SessionIdentifier newSessionIdentifier
-                  , sessionClientIdentifier    = cid
-                  , sessionPrincipalIdentifier = pid
-                  , sessionCreatedAt           = now
-                  , sessionConnectionState     = mconnection
-                  , sessionPrincipal           = mprincipal
-                  , sessionLock                = lock
-                  , sessionSubscriptions       = subscriptions
-                  , sessionQueue               = queue
-                  , sessionQueuePending        = queuePending
-                  , sessionStatistic           = stats
-                  }
-                newBrokerState = st
-                  { brokerMaxSessionIdentifier = SessionIdentifier newSessionIdentifier
-                  , brokerSessions             = IM.insert newSessionIdentifier newSession (brokerSessions st)
-                  , brokerSessionsByPrincipals = M.insert pcid (SessionIdentifier newSessionIdentifier) (brokerSessionsByPrincipals st)
-                  }
-            Log.infoM "Broker.createSession" $ "Creating new session with id " ++ show newSessionIdentifier ++ " for " ++ show pid ++ "."
-            pure (newBrokerState, Just (newSession, SessionPresent False))
+      createSession principal st = do
+        now           <- sec <$> getTime Realtime
+        lock          <- newInterruptibleLock
+        subscriptions <- newMVar R.empty
+        queue         <- newMVar (emptyServerQueue $ fromIntegral $ quotaMaxPacketIdentifiers $ principalQuota principal)
+        queuePending  <- newEmptyMVar
+        mconnection   <- newMVar $ Disconnected 0 0 mempty
+        mprincipal    <- newMVar principal
+        stats         <- Session.newStatistic
+        let SessionIdentifier maxSessionIdentifier = brokerMaxSessionIdentifier st
+            newSessionIdentifier = maxSessionIdentifier + 1
+            newSession = Session
+              { sessionBroker              = broker
+              , sessionIdentifier          = SessionIdentifier newSessionIdentifier
+              , sessionClientIdentifier    = cid
+              , sessionPrincipalIdentifier = pid
+              , sessionCreatedAt           = now
+              , sessionConnectionState     = mconnection
+              , sessionPrincipal           = mprincipal
+              , sessionLock                = lock
+              , sessionSubscriptions       = subscriptions
+              , sessionQueue               = queue
+              , sessionQueuePending        = queuePending
+              , sessionStatistic           = stats
+              }
+            newBrokerState = st
+              { brokerMaxSessionIdentifier = SessionIdentifier newSessionIdentifier
+              , brokerSessions             = IM.insert newSessionIdentifier newSession (brokerSessions st)
+              , brokerSessionsByPrincipals = M.insert pcid (SessionIdentifier newSessionIdentifier) (brokerSessionsByPrincipals st)
+              }
+        Log.infoM "Broker.createSession" $ "Creating new session with id " ++ show newSessionIdentifier ++ " for " ++ show pid ++ "."
+        pure (newBrokerState, Just (newSession, SessionPresent False))
 
 getUptime        :: Broker auth -> IO Int64
 getUptime broker = do
