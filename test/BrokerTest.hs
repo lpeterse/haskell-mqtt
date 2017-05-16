@@ -6,10 +6,10 @@ module BrokerTest ( getTestTree ) where
 import           Control.Concurrent
 import           Control.Concurrent.Async
 import           Control.Exception
-import           Data.Monoid
-import           Data.String
 import           Control.Monad
+import           Data.Monoid
 import qualified Data.Sequence                      as Seq
+import           Data.String
 import           Data.Typeable
 import           Data.UUID                          (UUID)
 import           Test.Tasty
@@ -43,7 +43,7 @@ getTestTree =
       [ testCase "Reject with 'ServerUnavaible' when authentication throws exception" $ do
           m1 <- newEmptyMVar
           m2 <- newEmptyMVar
-          broker <- Broker.newBroker $ TestAuthenticator authenticatorConfigNoService
+          broker <- Broker.newBroker $ pure $ TestAuthenticator authenticatorConfigNoService
           let sessionRejectHandler                 = putMVar m1
               sessionAcceptHandler session present = putMVar m2 (session, present)
           Broker.withSession broker connectionRequest sessionRejectHandler sessionAcceptHandler
@@ -52,7 +52,7 @@ getTestTree =
       , testCase "Reject 'NotAuthorized' when authentication returned Nothing" $ do
           m1 <- newEmptyMVar
           m2 <- newEmptyMVar
-          broker <- Broker.newBroker $ TestAuthenticator authenticatorConfigNoAccess
+          broker <- Broker.newBroker $ pure $ TestAuthenticator authenticatorConfigNoAccess
           let sessionRejectHandler                 = putMVar m1
               sessionAcceptHandler session present = putMVar m2 (session, present)
           Broker.withSession broker connectionRequest sessionRejectHandler sessionAcceptHandler
@@ -62,7 +62,7 @@ getTestTree =
     , testGroup "Subscriptions"
 
       [ testCase "subscribe the same filter from 2 different sessions" $ do
-          broker <- Broker.newBroker $ TestAuthenticator authenticatorConfigAllAccess
+          broker <- Broker.newBroker $ pure $ TestAuthenticator authenticatorConfigAllAccess
           let req1 = connectionRequest { requestClientIdentifier = "1" }
               req2 = connectionRequest { requestClientIdentifier = "2" }
               msg  = Message.Message "a/b" QoS0 (Retain False) ""
@@ -77,7 +77,7 @@ getTestTree =
               queue2 @?= Seq.fromList [ ServerSubscribeAcknowledged (PacketIdentifier 47) [Just QoS0], ServerPublish (PacketIdentifier (-1)) (Duplicate False) msg]
 
       , testCase "get retained message on subscription (newer overrides older, issue #6)" $ do
-          broker <- Broker.newBroker $ TestAuthenticator authenticatorConfigAllAccess
+          broker <- Broker.newBroker $ pure $ TestAuthenticator authenticatorConfigAllAccess
           let req1 = connectionRequest { requestClientIdentifier = "1" }
               msg1 = Message.Message "topic" QoS0 (Retain True) "test"
               msg2 = Message.Message "topic" QoS0 (Retain True) "toast"
@@ -89,7 +89,7 @@ getTestTree =
             queue1 @?= Seq.fromList [ ServerSubscribeAcknowledged (PacketIdentifier 23) [Just QoS0], ServerPublish (PacketIdentifier (-1)) (Duplicate False) msg2]
 
       , testCase "delete retained message when body is empty" $ do
-          broker <- Broker.newBroker $ TestAuthenticator authenticatorConfigAllAccess
+          broker <- Broker.newBroker $ pure $ TestAuthenticator authenticatorConfigAllAccess
           let req1 = connectionRequest { requestClientIdentifier = "1" }
               msg1 = Message.Message "topic" QoS0 (Retain True) "test"
               msg2 = Message.Message "topic" QoS0 (Retain True) ""
@@ -105,7 +105,7 @@ getTestTree =
 
       [ testCase "Barrel shift on overflowing QoS0 queue" $ do
           let msgs = [ Message.Message "topic" QoS0 (Retain False) (fromString $ show x) | x <- [(1 :: Int)..] ]
-          broker <- Broker.newBroker $ TestAuthenticator authenticatorConfigAllAccess
+          broker <- Broker.newBroker $ pure $ TestAuthenticator authenticatorConfigAllAccess
           t1 <- newEmptyMVar
           t2 <- newEmptyMVar
           t3 <- newEmptyMVar
@@ -194,7 +194,7 @@ getTestTree =
       [ testCase "transmit a QoS1 message and process acknowledgement" $ do
           let msg = Message.Message "topic" QoS1 (Retain False) "payload"
               pid = PacketIdentifier 0
-          broker <- Broker.newBroker $ TestAuthenticator authenticatorConfigAllAccess
+          broker <- Broker.newBroker $ pure $ TestAuthenticator authenticatorConfigAllAccess
           Broker.withSession broker connectionRequest (const $ pure ()) $ \session _-> do
             pids1 <- Session.getFreePacketIdentifiers session
             Session.enqueue session msg
@@ -209,7 +209,7 @@ getTestTree =
       , testCase "receive a QoS1 message and send acknowledgement" $ do
           let msg = Message.Message "topic" QoS1 (Retain False) "payload"
               pid = PacketIdentifier 0
-          broker <- Broker.newBroker $ TestAuthenticator authenticatorConfigAllAccess
+          broker <- Broker.newBroker $ pure $ TestAuthenticator authenticatorConfigAllAccess
           Broker.withSession broker connectionRequest (const $ pure ()) $ \session _-> do
             Session.process session (ClientSubscribe pid [("topic", QoS0)])
             queue1 <- Session.poll session
@@ -224,7 +224,7 @@ getTestTree =
           let req = connectionRequest { requestCleanSession = False }
               msg = Message.Message "topic" QoS1 (Retain False) "payload"
               pid = PacketIdentifier 0
-          broker <- Broker.newBroker $ TestAuthenticator authenticatorConfigAllAccess
+          broker <- Broker.newBroker $ pure $ TestAuthenticator authenticatorConfigAllAccess
           Broker.withSession broker req (const $ pure ()) $ \session present-> do
             assertEqual "The session shall not be present." (SessionPresent False) present
             Session.enqueue session msg
@@ -238,7 +238,7 @@ getTestTree =
       , testCase "transmit a QoS2 message and process confirmations" $ do
           let msg = Message.Message "topic" QoS2 (Retain False) "payload"
               pid = PacketIdentifier 0
-          broker <- Broker.newBroker $ TestAuthenticator authenticatorConfigAllAccess
+          broker <- Broker.newBroker $ pure $ TestAuthenticator authenticatorConfigAllAccess
           Broker.withSession broker connectionRequest (const $ pure ()) $ \session _-> do
             pids1 <- Session.getFreePacketIdentifiers session
             Session.enqueue session msg
@@ -259,7 +259,7 @@ getTestTree =
           let req = connectionRequest { requestCleanSession = False }
               msg = Message.Message "topic" QoS2 (Retain False) "payload"
               pid = PacketIdentifier 0
-          broker <- Broker.newBroker $ TestAuthenticator authenticatorConfigAllAccess
+          broker <- Broker.newBroker $ pure $ TestAuthenticator authenticatorConfigAllAccess
           Broker.withSession broker req (const $ pure ()) $ \session _-> do
             Session.enqueue session msg
             queue <- Session.poll session
