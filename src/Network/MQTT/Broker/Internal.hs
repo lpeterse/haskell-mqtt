@@ -126,13 +126,11 @@ instance Show (Session auth) where
 --   to all subscribed sessions within this broker instance.
 publishDownstream :: Broker auth -> Message -> IO ()
 publishDownstream broker msg = do
- RM.store msg (brokerRetainedStore broker)
  let topic = msgTopic msg
  st <- readMVar (brokerState broker)
  forM_ (IS.elems $ R.lookup topic $ brokerSubscriptions st) $ \key->
    case IM.lookup (key :: Int) (brokerSessions st) of
-     Nothing      ->
-       putStrLn "WARNING: dead session reference"
+     Nothing      -> pure () -- Session has been removed in the meantime. Do nothing.
      Just session -> publishMessage session msg
 
 -- | Publish a message upstream on the broker.
