@@ -24,23 +24,25 @@ module Network.MQTT.Broker.Server
 
 import           Control.Concurrent
 import           Control.Concurrent.Async
-import qualified Control.Exception                  as E
+import qualified Control.Exception                     as E
 import           Control.Monad
-import qualified Data.Binary.Get                    as SG
-import qualified Data.ByteString                    as BS
+import qualified Data.Binary.Get                       as SG
+import qualified Data.ByteString                       as BS
 import           Data.Int
 import           Data.IORef
+import qualified Data.Sequence                         as Seq
 import           Data.Typeable
-import qualified Network.Stack.Server               as SS
-import qualified Network.WebSockets                 as WS
-import qualified System.Log.Logger                  as Log
-import qualified System.Socket                      as S
+import qualified Network.Stack.Server                  as SS
+import qualified Network.WebSockets                    as WS
+import qualified System.Log.Logger                     as Log
+import qualified System.Socket                         as S
 
-import           Network.MQTT.Message
+import qualified Network.MQTT.Broker                   as Broker
 import           Network.MQTT.Broker.Authentication
-import qualified Network.MQTT.Broker.Internal       as Session
-import qualified Network.MQTT.Broker                as Broker
-import qualified Network.MQTT.Broker.Session        as Session
+import qualified Network.MQTT.Broker.Internal          as Session
+import qualified Network.MQTT.Broker.Session           as Session
+import qualified Network.MQTT.Broker.Session.Statistic as Session
+import           Network.MQTT.Message
 
 instance (Typeable transport) => E.Exception (SS.ServerException (MQTT transport))
 
@@ -245,6 +247,7 @@ serveConnection broker conn connInfo = do
       maxPacketSize <- fromIntegral . quotaMaxPacketSize . principalQuota <$> Session.getPrincipal session
       SS.consumeMessages conn maxPacketSize $ \packet-> do
         writeIORef recentActivity True
+        Session.accountPacketsReceived (Session.sessionStatistic session) 1
         case packet of
           ClientDisconnect ->
             pure True
@@ -270,4 +273,5 @@ serveConnection broker conn connInfo = do
       -- The `waitPending` operation is blocking until messages get available.
       Session.wait session
       msgs <- Session.poll session
-      SS.sendMessages conn msgs
+      void $ SS.sendMessages conn msgs
+      Session.accountPacketsSent (Session.sessionStatistic session) (fromIntegral $ Seq.length msgs)

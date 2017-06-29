@@ -25,6 +25,7 @@ import qualified Data.IntSet                          as IS
 import qualified Data.Map.Strict                      as M
 import qualified Data.Sequence                        as Seq
 import qualified Data.Set                             as S
+import           Data.Word
 import           GHC.Generics                         (Generic)
 
 import           Network.MQTT.Broker.Authentication   hiding (getPrincipal)
@@ -69,15 +70,17 @@ data Session auth
 
 data Statistic
    = Statistic
-   { stPublicationsAccepted  :: MVar Word
-   , stPublicationsDropped   :: MVar Word
-   , stRetentionsAccepted    :: MVar Word
-   , stRetentionsDropped     :: MVar Word
-   , stSubscriptionsAccepted :: MVar Word
-   , stSubscriptionsRejected :: MVar Word
-   , stQueueQoS0Dropped      :: MVar Word
-   , stQueueQoS1Dropped      :: MVar Word
-   , stQueueQoS2Dropped      :: MVar Word
+   { stPacketsSent           :: MVar Word64
+   , stPacketsReceived       :: MVar Word64
+   , stPublicationsAccepted  :: MVar Word64
+   , stPublicationsDropped   :: MVar Word64
+   , stRetentionsAccepted    :: MVar Word64
+   , stRetentionsDropped     :: MVar Word64
+   , stSubscriptionsAccepted :: MVar Word64
+   , stSubscriptionsRejected :: MVar Word64
+   , stQueueQoS0Dropped      :: MVar Word64
+   , stQueueQoS1Dropped      :: MVar Word64
+   , stQueueQoS2Dropped      :: MVar Word64
    }
 
 data ConnectionState
