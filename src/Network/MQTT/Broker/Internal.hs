@@ -47,7 +47,6 @@ data BrokerState auth
    , brokerSubscriptions          :: !(R.Trie IS.IntSet)
    , brokerSessions               :: !(IM.IntMap (Session auth))
    , brokerSessionsByPrincipals   :: !(M.Map (PrincipalIdentifier, ClientIdentifier) SessionIdentifier)
-   , brokerSessionsByExpiration   :: !(M.Map Int64 (S.Set (Session auth)))
    }
 
 newtype SessionIdentifier = SessionIdentifier Int deriving (Eq, Ord, Show, Enum, Generic)

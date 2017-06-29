@@ -1,4 +1,5 @@
 {-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE LambdaCase        #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE TypeFamilies      #-}
 module BrokerTest ( getTestTree ) where
@@ -7,11 +8,14 @@ import           Control.Concurrent
 import           Control.Concurrent.Async
 import           Control.Exception
 import           Control.Monad
+import qualified Data.IntMap.Strict                 as IM
 import           Data.Monoid
 import qualified Data.Sequence                      as Seq
 import           Data.String
 import           Data.Typeable
 import           Data.UUID                          (UUID)
+import           Data.Word
+import           System.Clock
 import           Test.Tasty
 import           Test.Tasty.HUnit
 
@@ -31,8 +35,8 @@ instance Authenticator TestAuthenticator where
     }
   data AuthenticationException TestAuthenticator = TestAuthenticatorException deriving (Typeable, Show)
   newAuthenticator = pure . TestAuthenticator
-  authenticate (TestAuthenticator cfg) req = cfgAuthenticate cfg req
-  getPrincipal (TestAuthenticator cfg) uuid = cfgGetPrincipal cfg uuid
+  authenticate (TestAuthenticator cfg) = cfgAuthenticate cfg
+  getPrincipal (TestAuthenticator cfg) = cfgGetPrincipal cfg
 
 instance Exception (AuthenticationException TestAuthenticator)
 
@@ -278,6 +282,27 @@ getTestTree =
             queue <- Session.poll session
             assertEqual "The output queue shall be empty." mempty queue
       ]
+
+    , testGroup "Session Expiration" [
+
+        testCase "create session and trigger removal of expired sessions" $ do
+          let req = connectionRequest { requestCleanSession = False }
+          broker <- Broker.newBroker $ pure $ TestAuthenticator authenticatorConfigAllAccess
+          Broker.withSession broker req (\_-> pure ()) (\_ _-> pure ())
+          sessions <- Broker.getSessions broker
+          case IM.lookup 1 sessions of
+            Nothing      -> assertFailure "expected sessions with id 1"
+            Just session -> Session.getConnectionState session >>= \case
+              Session.Connected {} -> assertFailure "expected session to be disconnected"
+              Session.Disconnected { Session.disconnectedSessionExpiresAt = expiration } -> do
+                now <- sec <$> getTime Realtime
+                Broker.terminateExpiredSessionsAt broker now
+                assertEqual "size of session set right now" 1 =<< (IM.size <$> Broker.getSessions broker)
+                Broker.terminateExpiredSessionsAt broker (now + 59)
+                assertEqual "size of session set 59 seconds in the future" 1 =<< (IM.size <$> Broker.getSessions broker)
+                Broker.terminateExpiredSessionsAt broker (now + 60)
+                assertEqual "size of session set 60 seconds in the future" 0 =<< (IM.size <$> Broker.getSessions broker)
+      ]
     ]
 
 authenticatorConfigNoService :: AuthenticatorConfig TestAuthenticator
@@ -307,7 +332,7 @@ authenticatorConfigAllAccess = TestAuthenticatorConfig
      , principalRetainPermissions = R.singleton "#" ()
      }
     quota = Quota {
-       quotaMaxIdleSessionTTL    = 60
+       quotaMaxIdleSessionTTL    = defaultIdleSessionTTL
      , quotaMaxPacketSize        = 65535
      , quotaMaxPacketIdentifiers = 10
      , quotaMaxQueueSizeQoS0     = 10
@@ -325,3 +350,6 @@ connectionRequest  = ConnectionRequest
   , requestCertificateChain = Nothing
   , requestRemoteAddress    = Nothing
   }
+
+defaultIdleSessionTTL :: Word64
+defaultIdleSessionTTL = 60

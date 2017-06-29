@@ -20,14 +20,14 @@ module Network.MQTT.Broker
   , getSessions
   , getSubscriptions
   , lookupSession
-  , getSessionsByExpiration
   , terminateExpiredSessions
+  , terminateExpiredSessionsAt
   ) where
 
 import           Control.Concurrent.InterruptibleLock
 import           Control.Concurrent.MVar
 import           Control.Exception
-import           Control.Monad                         (void)
+import           Control.Monad                         (mapM_, void, when)
 import           Data.Int
 import qualified Data.IntMap.Strict                    as IM
 import qualified Data.IntSet                           as IS
@@ -54,7 +54,6 @@ newBroker getAuthenticator = do
     , brokerSubscriptions        = mempty
     , brokerSessions             = mempty
     , brokerSessionsByPrincipals = mempty
-    , brokerSessionsByExpiration = mempty
     }
   pure Broker {
       brokerCreatedAt     = now
@@ -103,60 +102,52 @@ withSession broker request sessionRejectHandler sessionAcceptHandler = do
         onConnect :: IO ()
         onConnect = do
           now <- sec <$> getTime Realtime
-          modifyMVar_ (brokerState broker) $ \brokerSt->
-            modifyMVar (sessionConnectionState session) $ \case
-              Connected {} ->
-                throwIO $ AssertionFailed "Session shouldn't be marked as connected here."
-              Disconnected { disconnectedSessionExpiresAt = expiresAt } -> do
-                let brokerSt' = brokerSt {
-                      -- Remove the session from the expiration queue.
-                        brokerSessionsByExpiration = M.update
-                          (\s-> let s' = S.delete session s
-                                in  if S.null s' then Nothing else Just s'
-                          ) expiresAt (brokerSessionsByExpiration brokerSt)
-                     }
-                    connSt' = Connected {
-                       connectedAt            = now
-                     , connectedCleanSession  = requestCleanSession request
-                     , connectedSecure        = requestSecure request
-                     , connectedWebSocket     = isJust (requestHttp request)
-                     , connectedRemoteAddress = requestRemoteAddress request
-                     }
-                pure (connSt', brokerSt')
+          modifyMVar_ (sessionConnectionState session) $ \case
+            Connected {} ->
+              throwIO $ AssertionFailed "Session shouldn't be marked as connected here."
+            Disconnected { disconnectedSessionExpiresAt = expiresAt } ->
+              pure Connected {
+                  connectedAt            = now
+                , connectedCleanSession  = requestCleanSession request
+                , connectedSecure        = requestSecure request
+                , connectedWebSocket     = isJust (requestHttp request)
+                , connectedRemoteAddress = requestRemoteAddress request
+                }
         onDisconnect :: Maybe String -> IO ()
         onDisconnect reason = do
           now <- sec <$> getTime Realtime
           ttl <- quotaMaxIdleSessionTTL . principalQuota <$> Session.getPrincipal session
-          modifyMVar_ (brokerState broker) $ \brokerSt->
-            modifyMVar (sessionConnectionState session) $ const $ do
-              let brokerSt' = brokerSt {
-                  brokerSessionsByExpiration = M.insertWith S.union
-                    (now + fromIntegral ttl)
-                    (S.singleton session)
-                    (brokerSessionsByExpiration brokerSt)
-                }
-                  connSt'   = Disconnected {
-                  disconnectedAt               = now
-                , disconnectedSessionExpiresAt = now + fromIntegral ttl
-                , disconnectedWith             = reason
-                }
-              pure (connSt', brokerSt')
+          modifyMVar_ (sessionConnectionState session) $ const $
+            pure Disconnected {
+                disconnectedAt               = now
+              , disconnectedSessionExpiresAt = now + fromIntegral ttl
+              , disconnectedWith             = reason
+              }
 
 lookupSession :: SessionIdentifier -> Broker auth -> IO (Maybe (Session auth))
 lookupSession (SessionIdentifier sid) broker =
   withMVar (brokerState broker) $ \st->
     pure $ IM.lookup sid (brokerSessions st)
 
-getSessionsByExpiration :: Broker auth -> IO (M.Map Int64 (S.Set (Session auth)))
-getSessionsByExpiration broker =
-  brokerSessionsByExpiration <$> readMVar (brokerState broker)
-
 terminateExpiredSessions :: Broker auth -> IO ()
 terminateExpiredSessions broker = do
   now <- sec <$> getTime Realtime
-  ss <- getSessionsByExpiration broker
-  let expired = fst (M.split now ss)
-  mapM_ (mapM_ terminate) expired
+  terminateExpiredSessionsAt broker now
+
+terminateExpiredSessionsAt :: Broker auth -> Int64 -> IO ()
+terminateExpiredSessionsAt broker timestamp =
+  getSessions broker >>= mapM_ terminateIfExpired
+  where
+    terminateIfExpired :: Session auth -> IO ()
+    terminateIfExpired session =
+      Session.getConnectionState session >>= \case
+        Connected {} -> pure ()
+        Disconnected { disconnectedSessionExpiresAt = expiration } ->
+          when ( timestamp >= expiration ) $ do
+            Log.infoM "Broker" $ "Removing expired session " ++ show sid  ++ "."
+            Session.terminate session
+      where
+        SessionIdentifier sid = Session.identifier session
 
 -- | Either lookup or create a session if none is present (yet).
 --
