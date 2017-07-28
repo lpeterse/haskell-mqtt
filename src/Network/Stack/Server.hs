@@ -64,9 +64,9 @@ class (Typeable a) => ServerStack a where
   --   >   future <- withConnection server handleConnection
   --   >   putStrLn "The lowest layer accepted a new connection!"
   --   >   async $ do
-  --   >       result <- wait future
-  --   >       putStrLn "The connection handler returned:"
-  --   >       print result
+  --   >     result <- wait future
+  --   >     putStrLn "The connection handler returned:"
+  --   >     print result
   withConnection :: Server a -> (ServerConnection a -> ServerConnectionInfo a -> IO b) -> IO (Async b)
 
 class ServerStack a => StreamServerStack a where
@@ -220,10 +220,12 @@ instance (StreamServerStack a, Typeable a) => ServerStack (TLS a) where
 
 instance (StreamServerStack a) => ServerStack (WebSocket a) where
   data Server (WebSocket a) = WebSocketServer
-    { wsTransportServer            :: Server a
+    { wsServerConfig                  :: ServerConfig (WebSocket a)
+    , wsTransportServer               :: Server a
     }
   data ServerConfig (WebSocket a) = WebSocketServerConfig
-    { wsTransportConfig            :: ServerConfig a
+    { wsTransportConfig               :: ServerConfig a
+    , wsConnectionOptions             :: WS.ConnectionOptions
     }
   data ServerException (WebSocket a) = WebSocketServerException
   data ServerConnection (WebSocket a) = WebSocketServerConnection
@@ -236,14 +238,14 @@ instance (StreamServerStack a) => ServerStack (WebSocket a) where
     }
   withServer config handle =
     withServer (wsTransportConfig config) $ \server->
-      handle (WebSocketServer server)
+      handle (WebSocketServer config server)
   withConnection server handle =
     withConnection (wsTransportServer server) $ \connection info-> do
       let readSocket = (\bs-> if BS.null bs then Nothing else Just bs) <$> receiveStream connection 4096
       let writeSocket Nothing   = pure ()
           writeSocket (Just bs) = void (sendStream connection (BSL.toStrict bs))
       stream <- WS.makeStream readSocket writeSocket
-      pendingConnection <- WS.makePendingConnectionFromStream stream (WS.ConnectionOptions $ pure ())
+      pendingConnection <- WS.makePendingConnectionFromStream stream (wsConnectionOptions $ wsServerConfig server)
       acceptedConnection <- WS.acceptRequestWith pendingConnection (WS.AcceptRequest (Just "mqtt") [])
       x <- handle
         (WebSocketServerConnection connection acceptedConnection)

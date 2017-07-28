@@ -24,7 +24,6 @@ import qualified Data.IntMap.Strict                   as IM
 import qualified Data.IntSet                          as IS
 import qualified Data.Map.Strict                      as M
 import qualified Data.Sequence                        as Seq
-import qualified Data.Set                             as S
 import           Data.Word
 import           GHC.Generics                         (Generic)
 

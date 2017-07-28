@@ -33,7 +33,6 @@ import qualified Data.IntMap.Strict                    as IM
 import qualified Data.IntSet                           as IS
 import qualified Data.Map.Strict                       as M
 import           Data.Maybe
-import qualified Data.Set                              as S
 import           System.Clock
 import qualified System.Log.Logger                     as Log
 
@@ -105,7 +104,7 @@ withSession broker request sessionRejectHandler sessionAcceptHandler = do
           modifyMVar_ (sessionConnectionState session) $ \case
             Connected {} ->
               throwIO $ AssertionFailed "Session shouldn't be marked as connected here."
-            Disconnected { disconnectedSessionExpiresAt = expiresAt } ->
+            Disconnected {} ->
               pure Connected {
                   connectedAt            = now
                 , connectedCleanSession  = requestCleanSession request
