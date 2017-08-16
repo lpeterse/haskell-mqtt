@@ -16,9 +16,11 @@ module Network.MQTT.Broker.Internal where
 
 import           Control.Concurrent.InterruptibleLock
 import           Control.Concurrent.MVar
+import qualified Control.Exception                    as E
 import           Control.Monad
 import qualified Data.Binary                          as B
 import qualified Data.ByteString                      as BS
+import           Data.Default.Class
 import           Data.Int
 import qualified Data.IntMap.Strict                   as IM
 import qualified Data.IntSet                          as IS
@@ -35,6 +37,7 @@ import qualified Network.MQTT.Trie                    as R
 data Broker auth
    = Broker
    { brokerCreatedAt     :: Int64
+   , brokerCallbacks     :: Callbacks auth
    , brokerAuthenticator :: IO auth
    , brokerRetainedStore :: RM.RetainedStore
    , brokerState         :: MVar (BrokerState auth)
@@ -47,6 +50,30 @@ data BrokerState auth
    , brokerSessions               :: !(IM.IntMap (Session auth))
    , brokerSessionsByPrincipals   :: !(M.Map (PrincipalIdentifier, ClientIdentifier) SessionIdentifier)
    }
+
+data Callbacks auth
+  = Callbacks
+  { onConnectionAccepted :: ConnectionRequest -> Session auth -> IO ()
+  , onConnectionRejected :: ConnectionRequest -> RejectReason -> IO ()
+  , onConnectionClosed   :: Session auth -> IO ()
+  , onConnectionFailed   :: Session auth -> E.SomeException -> IO ()
+  , onSessionCreated     :: Session auth -> IO ()
+  , onSessionTerminated  :: Session auth -> IO ()
+  , onPublishUpstream    :: Message -> IO ()
+  , onPublishDownstream  :: Message -> IO ()
+  } deriving (Generic)
+
+instance Default (Callbacks auth) where
+  def = Callbacks {
+    onConnectionAccepted = \_ _-> pure ()
+  , onConnectionRejected = \_ _-> pure ()
+  , onConnectionClosed   = \_->   pure ()
+  , onConnectionFailed   = \_ _-> pure ()
+  , onSessionCreated     = \_->   pure ()
+  , onSessionTerminated  = \_->   pure ()
+  , onPublishUpstream    = \_->   pure ()
+  , onPublishDownstream  = \_->   pure ()
+  }
 
 newtype SessionIdentifier = SessionIdentifier Int deriving (Eq, Ord, Show, Enum, Generic)
 
@@ -127,12 +154,13 @@ instance Show (Session auth) where
 --   to all subscribed sessions within this broker instance.
 publishDownstream :: Broker auth -> Message -> IO ()
 publishDownstream broker msg = do
- let topic = msgTopic msg
- st <- readMVar (brokerState broker)
- forM_ (IS.elems $ R.lookup topic $ brokerSubscriptions st) $ \key->
-   case IM.lookup (key :: Int) (brokerSessions st) of
-     Nothing      -> pure () -- Session has been removed in the meantime. Do nothing.
-     Just session -> publishMessage session msg
+  onPublishDownstream (brokerCallbacks broker) msg
+  let topic = msgTopic msg
+  st <- readMVar (brokerState broker)
+  forM_ (IS.elems $ R.lookup topic $ brokerSubscriptions st) $ \key->
+    case IM.lookup (key :: Int) (brokerSessions st) of
+      Nothing      -> pure () -- Session has been removed in the meantime. Do nothing.
+      Just session -> publishMessage session msg
 
 -- | Publish a message upstream on the broker.
 --
@@ -140,7 +168,9 @@ publishDownstream broker msg = do
 --   * FUTURE NOTE: In clustering mode this shall distribute the message
 --     to other brokers or upwards when the brokers form a hierarchy.
 publishUpstream :: Broker auth -> Message -> IO ()
-publishUpstream = publishDownstream
+publishUpstream broker msg = do
+  onPublishUpstream (brokerCallbacks broker) msg
+  publishDownstream broker msg
 
 notePending   :: Session auth -> IO ()
 notePending    = void . flip tryPutMVar () . sessionQueuePending
@@ -207,7 +237,7 @@ enqueue session msg = do
 --   * The session will be unlinked from the broker which means
 --     that clients cannot resume it anymore under this client identifier.
 terminate :: Session auth -> IO ()
-terminate session =
+terminate session = do
   -- This assures that the client gets disconnected. The code is executed
   -- _after_ the current client handler that has terminated.
   -- TODO Race: New clients may try to connect while we are in here.
@@ -230,6 +260,7 @@ terminate session =
           , brokerSubscriptions = R.differenceWith
               removeSessionId (brokerSubscriptions st) subscriptions
           }
+  (onSessionTerminated $ brokerCallbacks $ sessionBroker session) session
   where
     removeSessionId :: IS.IntSet -> QoS -> Maybe IS.IntSet
     removeSessionId ss _

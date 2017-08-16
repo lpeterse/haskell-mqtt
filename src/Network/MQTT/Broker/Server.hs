@@ -34,7 +34,6 @@ import qualified Data.Sequence                         as Seq
 import           Data.Typeable
 import qualified Network.Stack.Server                  as SS
 import qualified Network.WebSockets                    as WS
-import qualified System.Log.Logger                     as Log
 import qualified System.Socket                         as S
 
 import qualified Network.MQTT.Broker                   as Broker
@@ -163,36 +162,30 @@ serveConnection broker conn connInfo = do
   msg <- SS.receiveMessage conn maxInitialPacketSize
   case msg of
     ClientConnectUnsupported -> do
-      Log.warningM "Server.connection" $ "Connection from "
-        ++ show (requestRemoteAddress req) ++ " rejected: UnacceptableProtocolVersion"
+      Broker.onConnectionRejected cbs req UnacceptableProtocolVersion
       void $ SS.sendMessage conn (ServerConnectionRejected UnacceptableProtocolVersion)
       -- Communication ends here gracefully. The caller shall close the connection.
     ClientConnect {} -> do
       let -- | This one is called when the authenticator decided to reject the request.
           sessionRejectHandler reason = do
-            Log.warningM "Server.connection" $ "Connection rejected: " ++ show reason
+            Broker.onConnectionRejected cbs request reason
             void $ SS.sendMessage conn (ServerConnectionRejected reason)
             -- Communication ends here gracefully. The caller shall close the connection.
 
           -- | This part is where the threads for a connection are created
           --   (one for input, one for output and one watchdog thread).
-          sessionAcceptHandler session sessionPresent@(SessionPresent sp) = do
-            principal <- Session.getPrincipal session
-            Log.infoM "Server.connection" $ "Connection accepted: Associated "
-              ++ show principal ++ (if sp then " with existing session "
-              ++ show (Session.sessionIdentifier session) ++  "." else " with new session.")
+          sessionAcceptHandler session sessionPresent = do
+            Broker.onConnectionAccepted cbs request session
             void $ SS.sendMessage conn (ServerConnectionAccepted sessionPresent)
             foldl1 race_
               [ handleInput recentActivity session
               , handleOutput session
               , keepAlive recentActivity (connectKeepAlive msg)
               ] `E.catch` (\e-> do
-                Log.warningM "Server.connection" $"Session " ++ show (Session.sessionIdentifier session)
-                  ++ ": Connection terminated with exception: " ++ show (e :: E.SomeException)
+                Broker.onConnectionFailed cbs session e
                 E.throwIO e
               )
-            Log.infoM "Server.connection" $
-              "Session " ++ show (Session.sessionIdentifier session) ++ ": Graceful disconnect."
+            Broker.onConnectionClosed cbs session
           -- Extend the request object with information gathered from the connect packet.
           request = req {
               requestClientIdentifier = connectClientIdentifier msg
@@ -201,10 +194,11 @@ serveConnection broker conn connInfo = do
             }
             where
               CleanSession cleanSession = connectCleanSession msg
-      Log.infoM "Server.connection" $ "Connection request: " ++ show request
       Broker.withSession broker request sessionRejectHandler sessionAcceptHandler
     _ -> pure () -- TODO: Don't parse not-CONN packets in the first place!
   where
+    cbs = Session.brokerCallbacks broker
+
     -- The size of the initial CONN packet shall somewhat be limited to a moderate size.
     -- This value is assumed to make no problems while still protecting
     -- the servers resources against exaustion attacks.

@@ -1,6 +1,5 @@
 {-# LANGUAGE LambdaCase          #-}
 {-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE TupleSections       #-}
 --------------------------------------------------------------------------------
 -- |
 -- Module      :  Network.MQTT.Broker
@@ -12,6 +11,7 @@
 --------------------------------------------------------------------------------
 module Network.MQTT.Broker
   ( Broker (brokerAuthenticator)
+  , Callbacks (..)
   , newBroker
   , publishUpstream
   , publishDownstream
@@ -34,7 +34,6 @@ import qualified Data.IntSet                           as IS
 import qualified Data.Map.Strict                       as M
 import           Data.Maybe
 import           System.Clock
-import qualified System.Log.Logger                     as Log
 
 import           Network.MQTT.Broker.Authentication
 import           Network.MQTT.Broker.Internal
@@ -44,8 +43,8 @@ import qualified Network.MQTT.Broker.Session.Statistic as Session
 import           Network.MQTT.Message
 import qualified Network.MQTT.Trie                     as R
 
-newBroker :: IO auth -> IO (Broker auth)
-newBroker getAuthenticator = do
+newBroker :: IO auth -> Callbacks auth -> IO (Broker auth)
+newBroker getAuthenticator cbs = do
   now <- sec <$> getTime Realtime
   rm <- RM.new
   st <-newMVar BrokerState
@@ -56,6 +55,7 @@ newBroker getAuthenticator = do
     }
   pure Broker {
       brokerCreatedAt     = now
+    , brokerCallbacks     = cbs
     , brokerAuthenticator = getAuthenticator
     , brokerRetainedStore = rm
     , brokerState         = st
@@ -95,11 +95,11 @@ withSession broker request sessionRejectHandler sessionAcceptHandler = do
     acceptAndServeConnection :: (Session auth, SessionPresent) -> IO ()
     acceptAndServeConnection (session, sessionPresent) =
       exclusively (sessionLock session) $
-        let serve = onConnect >> sessionAcceptHandler session sessionPresent >> onDisconnect Nothing
-        in  serve `catch` (\e-> onDisconnect $ Just $ show (e :: SomeException) )
+        let serve = onConnect' >> sessionAcceptHandler session sessionPresent >> onDisconnect' Nothing
+        in  serve `catch` (\e-> onDisconnect' $ Just $ show (e :: SomeException) )
       where
-        onConnect :: IO ()
-        onConnect = do
+        onConnect' :: IO ()
+        onConnect' = do
           now <- sec <$> getTime Realtime
           modifyMVar_ (sessionConnectionState session) $ \case
             Connected {} ->
@@ -112,8 +112,8 @@ withSession broker request sessionRejectHandler sessionAcceptHandler = do
                 , connectedWebSocket     = isJust (requestHttp request)
                 , connectedRemoteAddress = requestRemoteAddress request
                 }
-        onDisconnect :: Maybe String -> IO ()
-        onDisconnect reason = do
+        onDisconnect' :: Maybe String -> IO ()
+        onDisconnect' reason = do
           now <- sec <$> getTime Realtime
           ttl <- quotaMaxIdleSessionTTL . principalQuota <$> Session.getPrincipal session
           modifyMVar_ (sessionConnectionState session) $ const $
@@ -137,16 +137,11 @@ terminateExpiredSessionsAt :: Broker auth -> Int64 -> IO ()
 terminateExpiredSessionsAt broker timestamp =
   getSessions broker >>= mapM_ terminateIfExpired
   where
-    terminateIfExpired :: Session auth -> IO ()
     terminateIfExpired session =
       Session.getConnectionState session >>= \case
         Connected {} -> pure ()
         Disconnected { disconnectedSessionExpiresAt = expiration } ->
-          when ( timestamp >= expiration ) $ do
-            Log.infoM "Broker" $ "Removing expired session " ++ show sid  ++ "."
-            Session.terminate session
-      where
-        SessionIdentifier sid = Session.identifier session
+          when ( timestamp >= expiration ) $ Session.terminate session
 
 -- | Either lookup or create a session if none is present (yet).
 --
@@ -169,8 +164,7 @@ getSession broker pcid@(pid, cid) = do
                 void $ swapMVar (sessionPrincipal session) principal
                 pure (st, Just (session, SessionPresent True))
               -- Orphaned session id. This is illegal state.
-              Nothing -> do
-                Log.warningM "Broker.getSession" $ "Illegal state: Found orphanded session id " ++ show sid ++ "."
+              Nothing ->
                 createSession principal st
           -- No session entry found for principal. Creating one.
           Nothing -> createSession principal st
@@ -205,7 +199,6 @@ getSession broker pcid@(pid, cid) = do
               , brokerSessions             = IM.insert newSessionIdentifier newSession (brokerSessions st)
               , brokerSessionsByPrincipals = M.insert pcid (SessionIdentifier newSessionIdentifier) (brokerSessionsByPrincipals st)
               }
-        Log.infoM "Broker.createSession" $ "Creating new session with id " ++ show newSessionIdentifier ++ " for " ++ show pid ++ "."
         pure (newBrokerState, Just (newSession, SessionPresent False))
 
 getUptime        :: Broker auth -> IO Int64

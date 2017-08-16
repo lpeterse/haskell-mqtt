@@ -2,7 +2,6 @@ resolver: lts-9.0
 packages:
   - '.'
 extra-deps:
-  - socket-0.8.0.1
   - socket-unix-0.2.0.0
   - websockets-0.12.1.0
 flags: {}
