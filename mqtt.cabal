@@ -21,7 +21,9 @@ source-repository head
 
 library
   ghc-options:         -Wall
-  exposed-modules:     Network.Stack.Server,
+  exposed-modules:     Network.Proxy, 
+                       Network.DummySocket,
+                       Network.Stack.Server,
                        Network.MQTT.Client,
                        Network.MQTT.Message,
                        Network.MQTT.Trie,
@@ -102,7 +104,8 @@ test-suite test
     BrokerTest,
     EncodingTest,
     TrieTest,
-    TopicTest
+    TopicTest,
+    ProxyTest
   build-depends:
       async
     , base >= 4.8 && < 5
@@ -122,6 +125,7 @@ test-suite test
     , deepseq
     , containers
     , uuid
+    , socket
 
 test-suite interruptible-lock
   type:
