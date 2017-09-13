@@ -4,8 +4,9 @@ import           Test.Tasty
 
 import qualified BrokerTest
 import qualified EncodingTest
-import qualified TrieTest
+import qualified ProxyTest
 import qualified TopicTest
+import qualified TrieTest
 
 main :: IO ()
 main = do
@@ -15,4 +16,5 @@ main = do
     , TopicTest.tests
     , EncodingTest.tests
     , brokerTests
+    , ProxyTest.tests
     ]
