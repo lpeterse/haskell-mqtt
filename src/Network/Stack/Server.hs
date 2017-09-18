@@ -32,7 +32,7 @@ import qualified Network.WebSockets.Stream     as WS
 import qualified System.Socket                 as S
 import qualified System.Socket.Type.Stream     as S
 
-data TLS a
+data Tls a
 data TlsServerException = TlsServerEndOfStreamException deriving (Eq, Typeable, Show)
 
 instance E.Exception TlsServerException
@@ -116,7 +116,7 @@ instance (Typeable f, Typeable p, S.Family f, S.Protocol p) => StreamServerStack
   sendStreamBuilder (SocketServerConnection s) bufsize builder = S.sendAllBuilder s bufsize builder S.msgNoSignal
   receiveStream (SocketServerConnection s) i = S.receive s i S.msgNoSignal
 
-instance (StreamServerStack a) => StreamServerStack (TLS a) where
+instance (StreamServerStack a) => StreamServerStack (Tls a) where
   sendStreamLazy connection lbs = TLS.sendData (tlsContext connection) lbs >> pure (BSL.length lbs)
   receiveStream  connection _   = TLS.recvData (tlsContext connection)
 
@@ -153,42 +153,42 @@ instance (S.Family f, S.Type t, S.Protocol p, Typeable f, Typeable t, Typeable p
     ( E.bracket (S.accept $ socketServer server) (S.close . fst) )
     ( \(conn, addr)-> handler (SocketServerConnection conn) (SocketServerConnectionInfo addr) )
 
-instance (StreamServerStack a, Typeable a) => ServerStack (TLS a) where
-  data Server (TLS a) = TlsServer
+instance (StreamServerStack a, Typeable a) => ServerStack (Tls a) where
+  data Server (Tls a) = TlsServer
     { tlsTransportServer            :: Server a
-    , tlsServerConfig               :: ServerConfig (TLS a)
+    , tlsServerConfig               :: ServerConfig (Tls a)
     }
-  data ServerConfig (TLS a) = TlsServerConfig
+  data ServerConfig (Tls a) = TlsServerConfig
     { tlsTransportConfig            :: ServerConfig a
     , tlsServerParams               :: TLS.ServerParams
     }
-  data ServerConnection (TLS a) = TlsServerConnection
+  data ServerConnection (Tls a) = TlsServerConnection
     { tlsTransportConnection        :: ServerConnection a
     , tlsContext                    :: TLS.Context
     }
-  data ServerConnectionInfo (TLS a) = TlsServerConnectionInfo
+  data ServerConnectionInfo (Tls a) = TlsServerConnectionInfo
     { tlsTransportServerConnectionInfo :: ServerConnectionInfo a
     , tlsCertificateChain              :: Maybe X509.CertificateChain
     }
   withServer config handler =
     withServer (tlsTransportConfig config) $ \server->
       handler (TlsServer server config)
-  serveOnce server handler = serveOnce (tlsTransportServer server) (serveWithTLS server handler)
-  serveForever server handler = serveForever (tlsTransportServer server) (serveWithTLS server handler)
+  serveOnce server handler = serveOnce (tlsTransportServer server) (serveWithTls server handler)
+  serveForever server handler = serveForever (tlsTransportServer server) (serveWithTls server handler)
 
-serveWithTLS :: forall a b. (StreamServerStack a, Typeable a) => Server (TLS a) -> (ServerConnection (TLS a) -> ServerConnectionInfo (TLS a) -> IO b) -> ServerConnection a -> ServerConnectionInfo a -> IO b
-serveWithTLS server handler connection info = do
+serveWithTls :: forall a b. (StreamServerStack a, Typeable a) => Server (Tls a) -> (ServerConnection (Tls a) -> ServerConnectionInfo (Tls a) -> IO b) -> ServerConnection a -> ServerConnectionInfo a -> IO b
+serveWithTls server handler connection info = do
       let backend = TLS.Backend {
           TLS.backendFlush = pure () -- backend doesn't buffer
         , TLS.backendClose = pure () -- backend gets closed automatically
         , TLS.backendSend  = void . sendStream connection
-        -- The following is problematic: The TLS implementation requires us
+        -- The following is problematic: The Tls implementation requires us
         -- to return exactly as many bytes as requested. The underlying transport
         -- though only yields as many bytes as available.
         -- The solution is to read, append and loop until the request
         -- can be fulfilled.
         -- TODO: Use bytestring builder for concatenation.
-        -- TODO: Fix TLS library upstream. The interface is awkward for a
+        -- TODO: Fix Tls library upstream. The interface is awkward for a
         -- networking lib.
         , TLS.backendRecv = flip (receiveExactly connection) mempty
         }
@@ -260,5 +260,5 @@ serveWithWebSocket server handler connection info = do
   pure x
 
 deriving instance Show (S.SocketAddress f) => Show (ServerConnectionInfo (S.Socket f t p))
-deriving instance Show (ServerConnectionInfo a) => Show (ServerConnectionInfo (TLS a))
+deriving instance Show (ServerConnectionInfo a) => Show (ServerConnectionInfo (Tls a))
 deriving instance Show (ServerConnectionInfo a) => Show (ServerConnectionInfo (WebSocket a))

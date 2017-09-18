@@ -1,4 +1,3 @@
-{-# LANGUAGE LambdaCase          #-}
 {-# LANGUAGE OverloadedStrings   #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeFamilies        #-}
@@ -7,7 +6,6 @@ module ProxyTest (tests) where
 import           Control.Concurrent.Async
 import           Control.Exception
 import           Control.Monad
-import           Network.DummySocket       (DummySocket)
 import qualified Network.DummySocket       as DummySocket
 import           Network.Proxy
 import           Network.Stack.Server
@@ -45,7 +43,7 @@ test002 = testCase "Expecting a ProxyException on syntax error" $ do
     swallowProxyException $ wait future >> assertFailure "Expected ProxyException"
   where
     swallowProxyException a =
-     a `catch` (\(ProxyException _ :: ServerException (Proxy DummySocket))-> pure ())
+     a `catch` (\ProxyException {}-> pure ())
 
 test003 :: TestTree
 test003 = testCase "Expecting a ProxyException when peer closed socket" $ do
@@ -56,7 +54,7 @@ test003 = testCase "Expecting a ProxyException when peer closed socket" $ do
     swallowProxyException $ wait future >> assertFailure "Expected ProxyException"
   where
     swallowProxyException a =
-      a `catch` (\(ProxyException _ :: ServerException (Proxy DummySocket))-> pure ())
+      a `catch` (\ProxyException {}-> pure ())
 
 test004 :: TestTree
 test004 = testCase "Expecting a ProxyException when header is not sent at once" $ do
@@ -68,4 +66,4 @@ test004 = testCase "Expecting a ProxyException when header is not sent at once" 
     swallowProxyException $ wait future >> assertFailure "Expected ProxyException"
   where
     swallowProxyException a =
-      a `catch` (\(ProxyException _ :: ServerException (Proxy DummySocket))-> pure ())
+      a `catch` (\ProxyException {}-> pure ())
