@@ -14,7 +14,7 @@
 --------------------------------------------------------------------------------
 module Network.MQTT.Broker.Server
   ( serveConnection
-  , MQTT ()
+  , Mqtt ()
   , MqttServerTransportStack (..)
   , SS.Server ( .. )
   , SS.ServerConfig ( .. )
@@ -42,7 +42,7 @@ import qualified Network.MQTT.Broker.Session           as Session
 import qualified Network.MQTT.Broker.Session.Statistic as Session
 import           Network.MQTT.Message
 
-data MQTT transport
+data Mqtt transport
 data MqttServerException
   = ProtocolViolation String
   | MessageTooLong
@@ -75,7 +75,7 @@ instance (SS.StreamServerStack a, MqttServerTransportStack a) => MqttServerTrans
         requestHttp = Just (WS.requestPath rh, WS.requestHeaders rh)
       }
 
-instance (SS.StreamServerStack a, MqttServerTransportStack a) => MqttServerTransportStack (SS.TLS a) where
+instance (SS.StreamServerStack a, MqttServerTransportStack a) => MqttServerTransportStack (SS.Tls a) where
   getConnectionRequest (SS.TlsServerConnectionInfo tci mcc) = do
     req <- getConnectionRequest tci
     pure req {
@@ -83,18 +83,18 @@ instance (SS.StreamServerStack a, MqttServerTransportStack a) => MqttServerTrans
       , requestCertificateChain = mcc
       }
 
-instance (SS.StreamServerStack transport) => SS.ServerStack (MQTT transport) where
-  data Server (MQTT transport) = MqttServer
+instance (SS.StreamServerStack transport) => SS.ServerStack (Mqtt transport) where
+  data Server (Mqtt transport) = MqttServer
     { mqttTransportServer     :: SS.Server transport
     }
-  data ServerConfig (MQTT transport) = MqttServerConfig
+  data ServerConfig (Mqtt transport) = MqttServerConfig
     { mqttTransportConfig     :: SS.ServerConfig transport
     }
-  data ServerConnection (MQTT transport) = MqttServerConnection
+  data ServerConnection (Mqtt transport) = MqttServerConnection
     { mqttTransportConnection :: SS.ServerConnection transport
     , mqttTransportLeftover   :: MVar BS.ByteString
     }
-  data ServerConnectionInfo (MQTT transport) = MqttServerConnectionInfo
+  data ServerConnectionInfo (Mqtt transport) = MqttServerConnectionInfo
     { mqttTransportServerConnectionInfo :: SS.ServerConnectionInfo transport
     }
   withServer config handle =
@@ -112,9 +112,9 @@ instance (SS.StreamServerStack transport) => SS.ServerStack (MQTT transport) whe
         <*> newMVar mempty
 
 -- TODO: eventually too strict with message size tracking
-instance (SS.StreamServerStack transport) => SS.MessageServerStack (MQTT transport) where
-  type ClientMessage (MQTT transport) = ClientPacket
-  type ServerMessage (MQTT transport) = ServerPacket
+instance (SS.StreamServerStack transport) => SS.MessageServerStack (Mqtt transport) where
+  type ClientMessage (Mqtt transport) = ClientPacket
+  type ServerMessage (Mqtt transport) = ServerPacket
   sendMessage connection =
     SS.sendStreamBuilder (mqttTransportConnection connection) 8192 . serverPacketBuilder
   sendMessages connection msgs =
@@ -157,9 +157,9 @@ instance (SS.StreamServerStack transport) => SS.MessageServerStack (MQTT transpo
                 then pure leftover'
                 else execute 0 (SG.pushChunk decode leftover')
 
-deriving instance Show (SS.ServerConnectionInfo transport) => Show (SS.ServerConnectionInfo (MQTT transport))
+deriving instance Show (SS.ServerConnectionInfo transport) => Show (SS.ServerConnectionInfo (Mqtt transport))
 
-serveConnection :: forall transport auth. (SS.StreamServerStack transport, MqttServerTransportStack transport, Authenticator auth) => Broker.Broker auth -> SS.ServerConnection (MQTT transport) -> SS.ServerConnectionInfo (MQTT transport) -> IO ()
+serveConnection :: forall transport auth. (SS.StreamServerStack transport, MqttServerTransportStack transport, Authenticator auth) => Broker.Broker auth -> SS.ServerConnection (Mqtt transport) -> SS.ServerConnectionInfo (Mqtt transport) -> IO ()
 serveConnection broker conn connInfo = do
   recentActivity <- newIORef True
   req <- getConnectionRequest (mqttTransportServerConnectionInfo connInfo)
