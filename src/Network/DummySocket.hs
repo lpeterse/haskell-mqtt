@@ -4,10 +4,9 @@
 {-# LANGUAGE TypeFamilies        #-}
 module Network.DummySocket where
 
-import           Control.Concurrent.Async
 import           Control.Concurrent.Chan
 import           Control.Concurrent.MVar
-import qualified Data.ByteString          as BS
+import qualified Data.ByteString         as BS
 import           Network.Proxy
 import           Network.Stack.Server
 
@@ -20,11 +19,10 @@ data DummySocket
 instance ServerStack DummySocket where
   data Server DummySocket = DummySocketServer DummySocket
   data ServerConfig DummySocket = DummySocketConfig DummySocket
-  data ServerException DummySocket = DummySocketException
   data ServerConnection DummySocket = DummySocketConnection DummySocket
   data ServerConnectionInfo DummySocket = DummySocketConnectionInfo
   withServer (DummySocketConfig s) h = h (DummySocketServer s)
-  withConnection (DummySocketServer s) h = async $ h (DummySocketConnection s) DummySocketConnectionInfo
+  serveOnce (DummySocketServer s) h = h (DummySocketConnection s) DummySocketConnectionInfo
 
 instance StreamServerStack DummySocket where
   sendStream (DummySocketConnection s) = send s

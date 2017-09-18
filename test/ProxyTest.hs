@@ -29,7 +29,7 @@ test001 = testCase "Expecting a valid header to parse successfully" $ do
   (clientSock, serverSock) <- DummySocket.newPair
   void $ DummySocket.send clientSock "PROXY TCP4 0.0.0.0 0.0.0.0 23 47\r\n"
   withServer (ProxyConfig [] $ DummySocket.DummySocketConfig serverSock) $ \server-> do
-    future <- withConnection server $ \_ info-> pure (proxyHeader info)
+    future <- async $ serveOnce server $ \_ info-> pure (proxyHeader info)
     assertEqual "" expected =<< wait future
   where
     expected = TCP4
@@ -41,7 +41,7 @@ test002 = testCase "Expecting a ProxyException on syntax error" $ do
   (clientSock, serverSock) <- DummySocket.newPair
   void $ DummySocket.send clientSock " PROXY TCP4 0.0.0.0 0.0.0.0 23 47\r\n"
   withServer (ProxyConfig [] $ DummySocket.DummySocketConfig serverSock) $ \server-> do
-    future <- withConnection server $ \_ info-> pure (proxyHeader info)
+    future <- async $ serveOnce server $ \_ info-> pure (proxyHeader info)
     swallowProxyException $ wait future >> assertFailure "Expected ProxyException"
   where
     swallowProxyException a =
@@ -52,7 +52,7 @@ test003 = testCase "Expecting a ProxyException when peer closed socket" $ do
   (clientSock, serverSock) <- DummySocket.newPair
   DummySocket.close clientSock
   withServer (ProxyConfig [] $ DummySocket.DummySocketConfig serverSock) $ \server-> do
-    future <- withConnection server $ \_ info-> pure (proxyHeader info)
+    future <- async $ serveOnce server $ \_ info-> pure (proxyHeader info)
     swallowProxyException $ wait future >> assertFailure "Expected ProxyException"
   where
     swallowProxyException a =
@@ -64,7 +64,7 @@ test004 = testCase "Expecting a ProxyException when header is not sent at once" 
   void $ DummySocket.send clientSock "PROXY TCP4 0.0.0.0 "
   void $ DummySocket.send clientSock "0.0.0.0 23 47\r\n"
   withServer (ProxyConfig [] $ DummySocket.DummySocketConfig serverSock) $ \server-> do
-    future <- withConnection server $ \_ info-> pure (proxyHeader info)
+    future <- async $ serveOnce server $ \_ info-> pure (proxyHeader info)
     swallowProxyException $ wait future >> assertFailure "Expected ProxyException"
   where
     swallowProxyException a =

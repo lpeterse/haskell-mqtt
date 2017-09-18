@@ -19,7 +19,6 @@ module Network.MQTT.Broker.Server
   , SS.Server ( .. )
   , SS.ServerConfig ( .. )
   , SS.ServerConnection ( .. )
-  , SS.ServerException ( .. )
   ) where
 
 import           Control.Concurrent
@@ -43,9 +42,14 @@ import qualified Network.MQTT.Broker.Session           as Session
 import qualified Network.MQTT.Broker.Session.Statistic as Session
 import           Network.MQTT.Message
 
-instance (Typeable transport) => E.Exception (SS.ServerException (MQTT transport))
-
 data MQTT transport
+data MqttServerException
+  = ProtocolViolation String
+  | MessageTooLong
+  | ConnectionRejected RejectReason
+  | KeepAliveTimeoutException
+  deriving (Eq, Ord, Show, Typeable)
+instance E.Exception MqttServerException
 
 class SS.ServerStack a => MqttServerTransportStack a where
   getConnectionRequest :: SS.ServerConnectionInfo a -> IO ConnectionRequest
@@ -92,17 +96,16 @@ instance (SS.StreamServerStack transport) => SS.ServerStack (MQTT transport) whe
   data ServerConnectionInfo (MQTT transport) = MqttServerConnectionInfo
     { mqttTransportServerConnectionInfo :: SS.ServerConnectionInfo transport
     }
-  data ServerException (MQTT transport)
-    = ProtocolViolation String
-    | MessageTooLong
-    | ConnectionRejected RejectReason
-    | KeepAliveTimeoutException
-    deriving (Eq, Ord, Show, Typeable)
   withServer config handle =
     SS.withServer (mqttTransportConfig config) $ \server->
       handle (MqttServer server)
-  withConnection server handler =
-    SS.withConnection (mqttTransportServer server) $ \connection info->
+  serveOnce server handler =
+    SS.serveOnce (mqttTransportServer server) $ \connection info->
+      flip handler (MqttServerConnectionInfo info) =<< MqttServerConnection
+        <$> pure connection
+        <*> newMVar mempty
+  serveForever server handler =
+    SS.serveForever (mqttTransportServer server) $ \connection info->
       flip handler (MqttServerConnectionInfo info) =<< MqttServerConnection
         <$> pure connection
         <*> newMVar mempty
@@ -121,7 +124,7 @@ instance (SS.StreamServerStack transport) => SS.MessageServerStack (MQTT transpo
       fetch  = SS.receiveStream (mqttTransportConnection connection) 4096
       decode = SG.runGetIncremental clientPacketParser
       execute received result
-        | received > maxMsgSize = E.throwIO (MessageTooLong :: SS.ServerException (MQTT transport))
+        | received > maxMsgSize = E.throwIO MessageTooLong
         | otherwise = case result of
             SG.Partial continuation -> do
               bs <- fetch
@@ -129,7 +132,7 @@ instance (SS.StreamServerStack transport) => SS.MessageServerStack (MQTT transpo
                 then execute received (continuation Nothing)
                 else execute (received + fromIntegral (BS.length bs)) (continuation $ Just bs)
             SG.Fail _ _ failure ->
-              E.throwIO (ProtocolViolation failure :: SS.ServerException (MQTT transport))
+              E.throwIO (ProtocolViolation failure)
             SG.Done leftover' _ msg ->
               pure (leftover', msg)
   consumeMessages connection maxMsgSize consume =
@@ -138,7 +141,7 @@ instance (SS.StreamServerStack transport) => SS.MessageServerStack (MQTT transpo
       fetch  = SS.receiveStream (mqttTransportConnection connection) 4096
       decode = SG.runGetIncremental clientPacketParser
       execute received result
-        | received > maxMsgSize = E.throwIO (MessageTooLong :: SS.ServerException (MQTT transport))
+        | received > maxMsgSize = E.throwIO MessageTooLong
         | otherwise = case result of
             SG.Partial continuation -> do
               bs <- fetch
@@ -146,7 +149,7 @@ instance (SS.StreamServerStack transport) => SS.MessageServerStack (MQTT transpo
                 then execute received (continuation Nothing)
                 else execute (received + fromIntegral (BS.length bs)) (continuation $ Just bs)
             SG.Fail _ _ failure ->
-              E.throwIO (ProtocolViolation failure :: SS.ServerException (MQTT transport))
+              E.throwIO (ProtocolViolation failure)
             SG.Done leftover' _ msg -> do
               done <- consume msg
               if done
@@ -222,7 +225,7 @@ serveConnection broker conn connInfo = do
         unless activity' $ do
           threadDelay regularInterval
           activity'' <- readIORef recentActivity
-          unless activity'' $ E.throwIO (KeepAliveTimeoutException :: SS.ServerException (MQTT transport))
+          unless activity'' $ E.throwIO KeepAliveTimeoutException
       where
         regularInterval = fromIntegral interval *  500000
 
@@ -246,9 +249,9 @@ serveConnection broker conn connInfo = do
           ClientDisconnect ->
             pure True
           ClientConnect {} ->
-            E.throwIO (ProtocolViolation "Unexpected CONN packet." :: SS.ServerException (MQTT transport))
+            E.throwIO $ ProtocolViolation "Unexpected CONN packet."
           ClientConnectUnsupported ->
-            E.throwIO (ProtocolViolation "Unexpected CONN packet (of unsupported protocol version)." :: SS.ServerException (MQTT transport))
+            E.throwIO $ ProtocolViolation "Unexpected CONN packet (of unsupported protocol version)."
           _ -> Session.process session packet >> pure False
 
     -- | This thread is responsible for continuously transmitting to the client

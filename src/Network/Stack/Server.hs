@@ -15,8 +15,8 @@
 --------------------------------------------------------------------------------
 module Network.Stack.Server where
 
-import           Control.Concurrent.Async
 import           Control.Concurrent.MVar
+import           Control.Concurrent.Threading
 import qualified Control.Exception             as E
 import           Control.Monad
 import qualified Data.ByteString               as BS
@@ -33,12 +33,15 @@ import qualified System.Socket                 as S
 import qualified System.Socket.Type.Stream     as S
 
 data TLS a
+data TlsServerException = TlsServerEndOfStreamException deriving (Eq, Typeable, Show)
+
+instance E.Exception TlsServerException
+
 data WebSocket a
 
 class (Typeable a) => ServerStack a where
   data Server a
   data ServerConfig a
-  data ServerException a
   data ServerConnection a
   data ServerConnectionInfo a
   -- | Creates a new server from a configuration and passes it to a handler function.
@@ -50,24 +53,20 @@ class (Typeable a) => ServerStack a where
   --   > withServer config $ \server->
   --   >   forever $ withConnection handleConnection
   withServer     :: ServerConfig a -> (Server a -> IO b) -> IO b
-  -- | Waits for and accepts a new connection from a listening server and passes
-  --   it to a handler function.
+  serveOnce      :: Server a -> (ServerConnection a -> ServerConnectionInfo a -> IO b) -> IO b
+  -- | Waits for and accepts new connections from a listening server and passes
+  --   them to a handler function executed in a new thread.
   --
-  --   This operation is blocking until the lowest layer in the stack accepts
-  --   a new connection. The handlers of all other layers are executed within
-  --   an `Control.Concurrent.Async.Async` which is returned. This allows
-  --   the main thread waiting on the underlying socket to block just as long
-  --   as necessary. Upper layer protocol handshakes (TLS etc) will be executed
-  --   in the new thread.
+  --   This operation blocks until it receives an exception.
   --
-  --   > withServer config $ \server-> forever $
-  --   >   future <- withConnection server handleConnection
-  --   >   putStrLn "The lowest layer accepted a new connection!"
-  --   >   async $ do
-  --   >     result <- wait future
-  --   >     putStrLn "The connection handler returned:"
-  --   >     print result
-  withConnection :: Server a -> (ServerConnection a -> ServerConnectionInfo a -> IO b) -> IO (Async b)
+  --   > withServer config $ \server-> serve server handleConnection
+  --   >   where
+  --   >     handleConnection conn info = do
+  --   >       tid <- myThreadId
+  --   >       putStrLn $ "Thread " ++ show tid ++ " is now serving connection " ++ show info ++ "."
+  serveForever :: Server a -> (ServerConnection a -> ServerConnectionInfo a -> IO ()) -> IO ()
+  serveForever server handler = forever $ void $ serveOnce server handler
+  {-# MINIMAL withServer, serveOnce #-}
 
 class ServerStack a => StreamServerStack a where
   sendStream              :: ServerConnection a -> BS.ByteString -> IO Int
@@ -132,10 +131,10 @@ instance (S.Family f, S.Type t, S.Protocol p, Typeable f, Typeable t, Typeable p
     , socketServerConfig :: !(ServerConfig (S.Socket f t p))
     }
   data ServerConfig (S.Socket f t p) = SocketServerConfig
-    { socketServerConfigBindAddress :: !(S.SocketAddress f)
+    { socketServerConfigBindAddress     :: !(S.SocketAddress f)
     , socketServerConfigListenQueueSize :: Int
+    , socketServerConfigConnectionLimit :: Int
     }
-  data ServerException (S.Socket f t p) = SocketServerException !S.SocketException
   data ServerConnection (S.Socket f t p) = SocketServerConnection !(S.Socket f t p)
   data ServerConnectionInfo (S.Socket f t p) = SocketServerConnectionInfo !(S.SocketAddress f)
   withServer c handle = E.bracket
@@ -145,9 +144,14 @@ instance (S.Family f, S.Type t, S.Protocol p, Typeable f, Typeable t, Typeable p
       S.bind (socketServer server) (socketServerConfigBindAddress $ socketServerConfig server)
       S.listen (socketServer server) (socketServerConfigListenQueueSize $ socketServerConfig server)
       handle server
-  withConnection server handle =
-    E.bracketOnError (S.accept (socketServer server)) (S.close . fst) $ \(connection, addr)->
-      async (handle (SocketServerConnection connection) (SocketServerConnectionInfo addr) `E.finally` S.close connection)
+  serveOnce server handler = E.bracket
+    ( S.accept $ socketServer server )
+    ( S.close . fst )
+    ( \(conn,addr)-> handler (SocketServerConnection conn) (SocketServerConnectionInfo addr) )
+  serveForever server handler = acquireAndHandleWithLimitedNumberOfThreads
+    ( socketServerConfigConnectionLimit $ socketServerConfig server )
+    ( E.bracket (S.accept $ socketServer server) (S.close . fst) )
+    ( \(conn, addr)-> handler (SocketServerConnection conn) (SocketServerConnectionInfo addr) )
 
 instance (StreamServerStack a, Typeable a) => ServerStack (TLS a) where
   data Server (TLS a) = TlsServer
@@ -158,9 +162,6 @@ instance (StreamServerStack a, Typeable a) => ServerStack (TLS a) where
     { tlsTransportConfig            :: ServerConfig a
     , tlsServerParams               :: TLS.ServerParams
     }
-  data ServerException (TLS a) =
-    TlsServerEndOfStreamException
-    deriving (Eq, Ord, Show)
   data ServerConnection (TLS a) = TlsServerConnection
     { tlsTransportConnection        :: ServerConnection a
     , tlsContext                    :: TLS.Context
@@ -169,11 +170,14 @@ instance (StreamServerStack a, Typeable a) => ServerStack (TLS a) where
     { tlsTransportServerConnectionInfo :: ServerConnectionInfo a
     , tlsCertificateChain              :: Maybe X509.CertificateChain
     }
-  withServer config handle =
+  withServer config handler =
     withServer (tlsTransportConfig config) $ \server->
-      handle (TlsServer server config)
-  withConnection server handle =
-    withConnection (tlsTransportServer server) $ \connection info-> do
+      handler (TlsServer server config)
+  serveOnce server handler = serveOnce (tlsTransportServer server) (serveWithTLS server handler)
+  serveForever server handler = serveForever (tlsTransportServer server) (serveWithTLS server handler)
+
+serveWithTLS :: forall a b. (StreamServerStack a, Typeable a) => Server (TLS a) -> (ServerConnection (TLS a) -> ServerConnectionInfo (TLS a) -> IO b) -> ServerConnection a -> ServerConnectionInfo a -> IO b
+serveWithTLS server handler connection info = do
       let backend = TLS.Backend {
           TLS.backendFlush = pure () -- backend doesn't buffer
         , TLS.backendClose = pure () -- backend gets closed automatically
@@ -200,20 +204,20 @@ instance (StreamServerStack a, Typeable a) => ServerStack (TLS a) where
       context <- TLS.contextNew backend srvParams'
       TLS.handshake context
       certificateChain <- tryTakeMVar mvar
-      x <- handle
+      x <- handler
         (TlsServerConnection connection context)
         (TlsServerConnectionInfo info certificateChain)
       TLS.bye context
       pure x
     where
-      receiveExactly connection bytes accum = do
-        bs <- receiveStream connection bytes
+      receiveExactly conn bytes accum = do
+        bs <- receiveStream conn bytes
         -- TCP sockets signal a graceful end of the stream by returning zero bytes.
         -- This function is not allowed to return less than the bytes
         -- request and we shall not loop forever here (we did!). There is no
         -- other option than throwing an exception here.
         when (BS.null bs) $
-          E.throwIO (TlsServerEndOfStreamException :: ServerException (TLS a))
+          E.throwIO (TlsServerEndOfStreamException :: TlsServerException)
         if BS.length bs < bytes
           then receiveExactly connection (bytes - BS.length bs) $! accum `mappend` bs
           else pure $! accum `mappend` bs
@@ -227,7 +231,6 @@ instance (StreamServerStack a) => ServerStack (WebSocket a) where
     { wsTransportConfig               :: ServerConfig a
     , wsConnectionOptions             :: WS.ConnectionOptions
     }
-  data ServerException (WebSocket a) = WebSocketServerException
   data ServerConnection (WebSocket a) = WebSocketServerConnection
     { wsTransportConnection           :: ServerConnection a
     , wsConnection                    :: WS.Connection
@@ -236,25 +239,26 @@ instance (StreamServerStack a) => ServerStack (WebSocket a) where
     { wsTransportServerConnectionInfo :: ServerConnectionInfo a
     , wsRequestHead                   :: WS.RequestHead
     }
-  withServer config handle =
+  withServer config handler =
     withServer (wsTransportConfig config) $ \server->
-      handle (WebSocketServer config server)
-  withConnection server handle =
-    withConnection (wsTransportServer server) $ \connection info-> do
-      let readSocket = (\bs-> if BS.null bs then Nothing else Just bs) <$> receiveStream connection 4096
-      let writeSocket Nothing   = pure ()
-          writeSocket (Just bs) = void (sendStream connection (BSL.toStrict bs))
-      stream <- WS.makeStream readSocket writeSocket
-      pendingConnection <- WS.makePendingConnectionFromStream stream (wsConnectionOptions $ wsServerConfig server)
-      acceptedConnection <- WS.acceptRequestWith pendingConnection (WS.AcceptRequest (Just "mqtt") [])
-      x <- handle
-        (WebSocketServerConnection connection acceptedConnection)
-        (WebSocketServerConnectionInfo info $ WS.pendingRequest pendingConnection)
-      WS.sendClose acceptedConnection ("Thank you for flying Haskell." :: BS.ByteString)
-      pure x
+      handler (WebSocketServer config server)
+  serveOnce server handler = serveOnce (wsTransportServer server) (serveWithWebSocket server handler)
+  serveForever server handler = serveForever (wsTransportServer server) (serveWithWebSocket server handler)
+
+serveWithWebSocket :: (StreamServerStack a, Typeable a) => Server (WebSocket a) -> (ServerConnection (WebSocket a) -> ServerConnectionInfo (WebSocket a) -> IO b) -> ServerConnection a -> ServerConnectionInfo a -> IO b
+serveWithWebSocket server handler connection info = do
+  let readSocket = (\bs-> if BS.null bs then Nothing else Just bs) <$> receiveStream connection 4096
+  let writeSocket Nothing   = pure ()
+      writeSocket (Just bs) = void (sendStream connection (BSL.toStrict bs))
+  stream <- WS.makeStream readSocket writeSocket
+  pendingConnection <- WS.makePendingConnectionFromStream stream (wsConnectionOptions $ wsServerConfig server)
+  acceptedConnection <- WS.acceptRequestWith pendingConnection (WS.AcceptRequest (Just "mqtt") [])
+  x <- handler
+    (WebSocketServerConnection connection acceptedConnection)
+    (WebSocketServerConnectionInfo info $ WS.pendingRequest pendingConnection)
+  WS.sendClose acceptedConnection ("Thank you for flying Haskell." :: BS.ByteString)
+  pure x
 
 deriving instance Show (S.SocketAddress f) => Show (ServerConnectionInfo (S.Socket f t p))
 deriving instance Show (ServerConnectionInfo a) => Show (ServerConnectionInfo (TLS a))
 deriving instance Show (ServerConnectionInfo a) => Show (ServerConnectionInfo (WebSocket a))
-
-instance Typeable a => E.Exception (ServerException (TLS a))

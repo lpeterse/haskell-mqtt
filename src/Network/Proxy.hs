@@ -28,6 +28,10 @@ data ProxyHeader
   , dst6Address :: Inet6.SocketAddress Inet6.Inet6
   } deriving (Eq, Show)
 
+newtype ProxyException = ProxyException String deriving (Eq, Ord, Show, Typeable)
+
+instance Exception ProxyException
+
 instance StreamServerStack a => ServerStack (Proxy a) where
   data Server (Proxy a) = ProxyServer
     { proxyTransportServer :: Server a
@@ -37,8 +41,6 @@ instance StreamServerStack a => ServerStack (Proxy a) where
     { proxyTrustedOrigins  :: [()]
     , proxyTransportConfig :: ServerConfig a
     }
-  data ServerException (Proxy a) = ProxyException String
-    deriving (Eq, Ord, Show)
   data ServerConnection (Proxy a) = ProxyConnection
     { proxyTransportConnection :: ServerConnection a
     , proxyRemainder           :: IORef BS.ByteString
@@ -50,15 +52,13 @@ instance StreamServerStack a => ServerStack (Proxy a) where
   withServer config handle
     = withServer (proxyTransportConfig config) $ \transport-> handle
         (ProxyServer transport config)
-  withConnection server handle
-    = withConnection (proxyTransportServer server) $ \connection info-> do
+  serveOnce server handler
+    = serveOnce (proxyTransportServer server) $ \connection info-> do
         (mproxyhdr, bs) <- receiveProxyHeader connection
         remainder <- newIORef bs
-        handle
+        handler
           (ProxyConnection connection remainder)
           (ProxyConnectionInfo info mproxyhdr)
-
-instance Typeable a => Exception (ServerException (Proxy a))
 
 instance StreamServerStack a => StreamServerStack (Proxy a) where
   sendStream conn = sendStream (proxyTransportConnection conn)
@@ -79,11 +79,11 @@ receiveProxyHeader :: forall a. StreamServerStack a => ServerConnection a -> IO 
 receiveProxyHeader connection = do
   bs <- receiveStream connection maxBufSize
   if BS.null bs
-    then throwIO (ProxyException "Connection closed by peer without sending any data." :: ServerException (Proxy a))
+    then throwIO (ProxyException "Connection closed by peer without sending any data.")
     else case A.parse parser bs of
       A.Done i r   -> pure (r, i)
-      A.Fail {}    -> throwIO (ProxyException "Syntax error!" :: ServerException (Proxy a))
-      A.Partial {} -> throwIO (ProxyException "Header must be sent at once!" :: ServerException (Proxy a))
+      A.Fail {}    -> throwIO (ProxyException "Syntax error!")
+      A.Partial {} -> throwIO (ProxyException "Header must be sent at once!")
   where
     maxBufSize = 108
     parser     = parseTCP4 <|> parseTCP6
