@@ -5,8 +5,6 @@
 module ProxyTest (tests) where
 
 import           Control.Concurrent.Async
-import           Control.Concurrent.Chan
-import           Control.Concurrent.MVar
 import           Control.Exception
 import           Control.Monad
 import           Network.DummySocket       (DummySocket)
@@ -34,7 +32,7 @@ test001 = testCase "Expecting a valid header to parse successfully" $ do
     future <- withConnection server $ \_ info-> pure (proxyHeader info)
     assertEqual "" expected =<< wait future
   where
-    expected = ProxyHeader V1 $ TCP4
+    expected = TCP4
       (Inet.SocketAddressInet Inet.inetAny 23)
       (Inet.SocketAddressInet Inet.inetAny 47)
 
