@@ -18,9 +18,7 @@ import qualified System.Socket.Family.Inet        as Inet
 import qualified System.Socket.Family.Inet6       as Inet6
 
 data Proxy a
-data ProxyHeader = ProxyHeader ProtocolVersion ProtocolAddress deriving (Eq, Show)
-data ProtocolVersion = V1 | V2 deriving (Eq, Ord, Show)
-data ProtocolAddress
+data ProxyHeader
   = TCP4
   { srcAddress :: Inet.SocketAddress Inet.Inet
   , dstAddress :: Inet.SocketAddress Inet.Inet
@@ -84,8 +82,8 @@ receiveProxyHeader connection = do
     then throwIO (ProxyException "Connection closed by peer without sending any data." :: ServerException (Proxy a))
     else case A.parse parser bs of
       A.Done i r   -> pure (r, i)
-      A.Fail _ _ e -> throwIO (ProxyException "Syntax error!" :: ServerException (Proxy a))
-      A.Partial _  -> throwIO (ProxyException "Header must be sent at once!" :: ServerException (Proxy a))
+      A.Fail {}    -> throwIO (ProxyException "Syntax error!" :: ServerException (Proxy a))
+      A.Partial {} -> throwIO (ProxyException "Header must be sent at once!" :: ServerException (Proxy a))
   where
     maxBufSize = 108
     parser     = parseTCP4 <|> parseTCP6
@@ -103,7 +101,7 @@ receiveProxyHeader connection = do
       space
       dstPort <- A.decimal :: A.Parser Word16
       crlf
-      pure $! ProxyHeader V1 $! TCP4
+      pure $! TCP4
         ( Inet.SocketAddressInet srcAddr (fromIntegral srcPort) )
         ( Inet.SocketAddressInet dstAddr (fromIntegral dstPort) )
 
@@ -118,7 +116,7 @@ receiveProxyHeader connection = do
       space
       dst6Port <- A.decimal :: A.Parser Word16
       crlf
-      pure $! ProxyHeader V1 $! TCP6
+      pure $! TCP6
         ( Inet6.SocketAddressInet6 src6Addr (fromIntegral src6Port) 0 0 )
         ( Inet6.SocketAddressInet6 dst6Addr (fromIntegral dst6Port) 0 0 )
 

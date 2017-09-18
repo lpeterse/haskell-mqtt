@@ -24,6 +24,7 @@ library
   exposed-modules:     Network.Proxy, 
                        Network.DummySocket,
                        Network.Stack.Server,
+                       Control.Concurrent.Threading,
                        Network.MQTT.Client,
                        Network.MQTT.Message,
                        Network.MQTT.Trie,
@@ -105,7 +106,8 @@ test-suite test
     EncodingTest,
     TrieTest,
     TopicTest,
-    ProxyTest
+    ProxyTest,
+    ThreadingTest
   build-depends:
       async
     , base >= 4.8 && < 5
