@@ -59,41 +59,44 @@ module Network.MQTT.Message (
   ) where
 
 import           Control.Monad
-import qualified Data.Attoparsec.ByteString            as A
-import qualified Data.Binary                           as B
-import qualified Data.Binary.Get                       as SG
+import qualified Data.Attoparsec.ByteString as A
+import qualified Data.Binary                as B
+import qualified Data.Binary.Get            as SG
 import           Data.Bits
 import           Data.Bool
-import qualified Data.ByteString                       as BS
-import qualified Data.ByteString.Builder               as BS
-import qualified Data.ByteString.Lazy                  as BSL
+import qualified Data.ByteString            as BS
+import qualified Data.ByteString.Builder    as BS
+import qualified Data.ByteString.Lazy       as BSL
 import           Data.Monoid
 import           Data.String
-import qualified Data.Text                             as T
-import qualified Data.Text.Encoding                    as T
+import qualified Data.Text                  as T
+import qualified Data.Text.Encoding         as T
 import           Data.Word
 import           GHC.Generics
 
 import           Network.MQTT.Message.QoS
 import           Network.MQTT.Message.Topic
-import qualified Network.MQTT.Message.Topic            as TF
+import qualified Network.MQTT.Message.Topic as TF
 
-newtype SessionPresent    = SessionPresent Bool      deriving (Eq, Ord, Show)
-newtype CleanSession      = CleanSession Bool        deriving (Eq, Ord, Show)
-newtype Retain            = Retain Bool              deriving (Eq, Ord, Show)
-newtype Payload              = Payload BSL.ByteString      deriving (Eq, Ord, Show, IsString)
-newtype Duplicate         = Duplicate Bool           deriving (Eq, Ord, Show)
-newtype KeepAliveInterval = KeepAliveInterval Word16 deriving (Eq, Ord, Show, Num)
+newtype SessionPresent    = SessionPresent Bool      deriving (Eq, Ord, Show, Generic)
+newtype CleanSession      = CleanSession Bool        deriving (Eq, Ord, Show, Generic)
+newtype Retain            = Retain Bool              deriving (Eq, Ord, Show, Generic)
+newtype Payload           = Payload BSL.ByteString   deriving (Eq, Ord, Show, Generic, IsString)
+newtype Duplicate         = Duplicate Bool           deriving (Eq, Ord, Show, Generic)
+newtype KeepAliveInterval = KeepAliveInterval Word16 deriving (Eq, Ord, Show, Generic, Num)
 newtype Username          = Username T.Text          deriving (Eq, Ord, Show, IsString, Generic)
-newtype Password          = Password BS.ByteString   deriving (Eq)
+newtype Password          = Password BS.ByteString   deriving (Eq, Generic)
 newtype ClientIdentifier  = ClientIdentifier T.Text  deriving (Eq, Ord, Show, IsString, Generic)
-newtype PacketIdentifier  = PacketIdentifier Int     deriving (Eq, Ord, Show)
+newtype PacketIdentifier  = PacketIdentifier Int     deriving (Eq, Ord, Show, Generic)
 
 instance Show Password where
   show = const "*********"
 
 instance B.Binary ClientIdentifier
 instance B.Binary Username
+instance B.Binary Message
+instance B.Binary Retain
+instance B.Binary Payload
 
 data RejectReason
    = UnacceptableProtocolVersion
@@ -109,7 +112,7 @@ data Message
    , msgQoS     :: !QoS
    , msgRetain  :: !Retain
    , msgPayload :: !Payload
-   } deriving (Eq, Ord, Show)
+   } deriving (Eq, Ord, Show, Generic)
 
 data ClientPacket
    = ClientConnect

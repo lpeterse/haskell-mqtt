@@ -350,6 +350,7 @@ connectionRequest  = ConnectionRequest
   , requestHttp             = Nothing
   , requestCertificateChain = Nothing
   , requestRemoteAddress    = Nothing
+  , requestWill             = Nothing
   }
 
 defaultIdleSessionTTL :: Word64

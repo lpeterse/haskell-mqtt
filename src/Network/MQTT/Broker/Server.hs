@@ -61,6 +61,7 @@ instance (Typeable f, Typeable t, Typeable p, S.Family f, S.Protocol p, S.Type t
       , requestHttp = Nothing
       , requestCertificateChain = Nothing
       , requestRemoteAddress = Just remoteAddr
+      , requestWill = Nothing
       }
 
 instance (SS.StreamServerStack a, MqttServerTransportStack a) => MqttServerTransportStack (SS.WebSocket a) where
@@ -191,6 +192,7 @@ serveConnection broker conn connInfo = do
               requestClientIdentifier = connectClientIdentifier msg
             , requestCleanSession     = cleanSession
             , requestCredentials      = connectCredentials msg
+            , requestWill             = connectWill msg
             }
             where
               CleanSession cleanSession = connectCleanSession msg

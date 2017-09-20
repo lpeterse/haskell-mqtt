@@ -111,11 +111,15 @@ withSession broker request sessionRejectHandler sessionAcceptHandler = do
                 , connectedSecure        = requestSecure request
                 , connectedWebSocket     = isJust (requestHttp request)
                 , connectedRemoteAddress = requestRemoteAddress request
+                , connectedWill          = requestWill request
                 }
         onDisconnect' :: Maybe String -> IO ()
         onDisconnect' reason = do
           now <- sec <$> getTime Realtime
           ttl <- quotaMaxIdleSessionTTL . principalQuota <$> Session.getPrincipal session
+          case requestWill request of
+            Nothing -> pure ()
+            Just msg -> Session.publish session msg
           modifyMVar_ (sessionConnectionState session) $ const $
             pure Disconnected {
                 disconnectedAt               = now

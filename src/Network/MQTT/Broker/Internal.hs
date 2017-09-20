@@ -115,6 +115,7 @@ data ConnectionState
    , connectedSecure        :: !Bool
    , connectedWebSocket     :: !Bool
    , connectedRemoteAddress :: !(Maybe BS.ByteString)
+   , connectedWill          :: !(Maybe Message)
    }
    | Disconnected
    { disconnectedAt               :: !Int64

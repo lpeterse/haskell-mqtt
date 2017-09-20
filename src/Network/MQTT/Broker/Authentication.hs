@@ -102,5 +102,6 @@ data ConnectionRequest
      --   of the certificate claims (including certificate chain checking) /must/
      --   be performed by the `Authenticator`.
      requestCertificateChain :: Maybe X509.CertificateChain,
-     requestRemoteAddress    :: Maybe BS.ByteString
+     requestRemoteAddress    :: Maybe BS.ByteString,
+     requestWill             :: Maybe Message
    } deriving (Show)

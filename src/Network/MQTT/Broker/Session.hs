@@ -30,6 +30,8 @@ module Network.MQTT.Broker.Session (
   , terminate
   -- ** enqueue
   , enqueue
+  -- ** publish
+  , publish
 
   -- * Misc
   , createdAt
