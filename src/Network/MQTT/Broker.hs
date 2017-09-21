@@ -118,8 +118,10 @@ withSession broker request sessionRejectHandler sessionAcceptHandler = do
           now <- sec <$> getTime Realtime
           ttl <- quotaMaxIdleSessionTTL . principalQuota <$> Session.getPrincipal session
           case requestWill request of
-            Nothing -> pure ()
-            Just msg -> Session.publish session msg
+              Nothing  -> pure ()
+              Just msg
+                | isJust reason -> Session.publish session msg
+                | otherwise     -> pure ()
           modifyMVar_ (sessionConnectionState session) $ const $
             pure Disconnected {
                 disconnectedAt               = now

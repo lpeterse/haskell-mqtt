@@ -38,6 +38,7 @@ instance Authenticator TestAuthenticator where
   newAuthenticator = pure . TestAuthenticator
   authenticate (TestAuthenticator cfg) = cfgAuthenticate cfg
   getPrincipal (TestAuthenticator cfg) = cfgGetPrincipal cfg
+  getLastException = const $ pure Nothing
 
 instance Exception (AuthenticationException TestAuthenticator)
 
@@ -104,6 +105,52 @@ getTestTree =
             Session.process session1 (ClientSubscribe (PacketIdentifier 23) [("topic", QoS0)])
             queue1 <- (<>) <$> Session.poll session1 <*> Session.poll session1
             queue1 @?= Seq.fromList [ ServerSubscribeAcknowledged (PacketIdentifier 23) [Just QoS0] ]
+      ]
+
+    , testGroup "Last Will"
+
+      [ testCase "Will shall be published on exceptional disconnect" $ do
+          mvar0 <- newEmptyMVar
+          mvar1 <- newEmptyMVar
+          mvar2 <- newEmptyMVar
+          broker <- Broker.newBroker (pure $ TestAuthenticator authenticatorConfigAllAccess) def
+          let msg0 = Message.Message "topic" QoS0 (Retain False) "test"
+              req0 = connectionRequest { requestClientIdentifier = "0", requestWill = Nothing }
+              req1 = connectionRequest { requestClientIdentifier = "1", requestWill = Just msg0 }
+              ses0 = Broker.withSession broker req0 (const $ pure ()) $ \s _ -> do
+                Session.process s (ClientSubscribe (PacketIdentifier 47) [("topic", QoS0)])
+                void $ Session.poll s
+                putMVar mvar0 ()
+                void $ takeMVar mvar2
+                putMVar mvar1 =<< Session.poll s
+              ses1 = Broker.withSession broker req1 (const $ pure ()) $ \_ _ -> do
+                void $ takeMVar mvar0
+                error "close connection with error"
+          withAsync ses0 $ \_-> withAsync (ses1 >> putMVar mvar2 ()) $ \_-> do
+            queue <- takeMVar mvar1
+            assertEqual "Expect queue to contain other connection's will."
+              (Seq.singleton $ ServerPublish (PacketIdentifier (-1)) (Duplicate False) msg0) queue
+
+      , testCase "Will shall not be published on regular client disconnect" $ do
+          mvar0 <- newEmptyMVar
+          mvar1 <- newEmptyMVar
+          mvar2 <- newEmptyMVar
+          broker <- Broker.newBroker (pure $ TestAuthenticator authenticatorConfigAllAccess) def
+          let msg0 = Message.Message "topic" QoS0 (Retain False) "test"
+              req0 = connectionRequest { requestClientIdentifier = "0", requestWill = Nothing }
+              req1 = connectionRequest { requestClientIdentifier = "1", requestWill = Just msg0 }
+              ses0 = Broker.withSession broker req0 (const $ pure ()) $ \s _ -> do
+                Session.process s (ClientSubscribe (PacketIdentifier 47) [("topic", QoS0)])
+                void $ Session.poll s
+                putMVar mvar0 ()
+                void $ takeMVar mvar2
+                putMVar mvar1 =<< Session.poll s
+              ses1 = Broker.withSession broker req1 (const $ pure ()) $ \_ _ -> do
+                void $ takeMVar mvar0
+                pure ()
+          withAsync ses0 $ \_-> withAsync (ses1 >> putMVar mvar2 ()) $ \_-> do
+            queue <- takeMVar mvar1
+            assertEqual "Expect queue to be empty." mempty queue
       ]
 
     , testGroup "Queue overflow handling"
@@ -295,7 +342,7 @@ getTestTree =
             Nothing      -> assertFailure "expected sessions with id 1"
             Just session -> Session.getConnectionState session >>= \case
               Session.Connected {} -> assertFailure "expected session to be disconnected"
-              Session.Disconnected { Session.disconnectedSessionExpiresAt = expiration } -> do
+              Session.Disconnected {} -> do
                 now <- sec <$> getTime Realtime
                 Broker.terminateExpiredSessionsAt broker now
                 assertEqual "size of session set right now" 1 =<< (IM.size <$> Broker.getSessions broker)
