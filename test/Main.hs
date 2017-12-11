@@ -4,8 +4,6 @@ import           Test.Tasty
 
 import qualified BrokerTest
 import qualified EncodingTest
-import qualified ProxyTest
-import qualified ThreadingTest
 import qualified TopicTest
 import qualified TrieTest
 
@@ -17,6 +15,4 @@ main = do
     , TopicTest.tests
     , EncodingTest.tests
     , brokerTests
-    , ProxyTest.tests
-    , ThreadingTest.tests
     ]

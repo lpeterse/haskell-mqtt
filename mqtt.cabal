@@ -21,11 +21,7 @@ source-repository head
 
 library
   ghc-options:         -Wall
-  exposed-modules:     Network.Proxy, 
-                       Network.DummySocket,
-                       Network.Stack.Server,
-                       Control.Concurrent.Threading,
-                       Network.MQTT.Client,
+  exposed-modules:     Network.MQTT.Client,
                        Network.MQTT.Message,
                        Network.MQTT.Trie,
                        Network.MQTT.Broker,
@@ -47,13 +43,11 @@ library
                        text,
                        containers,
                        data-default-class,
-                       socket,
-                       tls,
                        uuid,
                        case-insensitive,
                        x509,
                        x509-validation,
-                       websockets
+                       networking
   hs-source-dirs:      src
   default-language:    Haskell2010
 
@@ -105,9 +99,7 @@ test-suite test
     BrokerTest,
     EncodingTest,
     TrieTest,
-    TopicTest,
-    ProxyTest,
-    ThreadingTest
+    TopicTest
   build-depends:
       async
     , base >= 4.8 && < 5
@@ -122,12 +114,11 @@ test-suite test
     , exceptions
     , mqtt
     , text
-    , tls
     , network-uri
     , deepseq
     , containers
     , uuid
-    , socket
+    , networking
 
 test-suite interruptible-lock
   type:
