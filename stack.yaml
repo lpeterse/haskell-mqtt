@@ -1,8 +1,7 @@
-resolver: lts-9.17
+resolver: lts-10.3
 packages:
   - '.'
 extra-deps:
   - socket-unix-0.2.0.0
-  - websockets-0.12.1.0
 flags: {}
 extra-package-dbs: []

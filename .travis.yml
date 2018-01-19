@@ -1,26 +1,32 @@
-language: haskell
-
-branches:
-  only:
-    - master
-
+language: nix
 sudo: false
 
 cache:
-  directories:
-    - $HOME/.stack/
+    directories:
+        - $HOME/.ghc
+        - $HOME/.cabal
+        - $HOME/.stack
+        - .stack-work
 
-before_install:
-  - mkdir -p ~/.local/bin
-  - export PATH=~/.local/bin:$PATH
-  - travis_retry curl -L https://www.stackage.org/stack/linux-x86_64 | tar xz --wildcards --strip-components=1 -C ~/.local/bin '*/stack'
-  - chmod a+x ~/.local/bin/stack
+matrix:
+  fast_finish: true
+  include:
+
+    - env: GHCVER=8.2.2 CACHE_NAME=8.2.2 BUILD_BINARY=1
+      compiler: ": #stack 8.2.2"
+      addons: {apt: {packages: [ghc-8.2.2], sources: [hvr-ghc]}}
 
 install:
-  - stack +RTS -N2 -RTS setup
-  - stack +RTS -N2 -RTS build --only-snapshot
+ - unset CC
+ - export PATH=$HOME/.local/bin:/opt/ghc/$GHCVER/bin:$PATH
+ - mkdir -p ~/.local/bin
+ - curl -sL https://www.stackage.org/stack/linux-x86_64 | tar xz --wildcards --strip-components=1 -C ~/.local/bin '*/stack'
+ - travis_retry stack --no-terminal setup
 
 script:
-  - git --version
-  - stack --version
-  - stack +RTS -N2 -RTS build --test --haddock --no-haddock-deps
+ - echo "$(ghc --version) [$(ghc --print-project-git-commit-id 2> /dev/null || echo '?')]"
+ - GHC_OPTIONS="-Werror"
+ - |
+   set -ex
+   stack --no-terminal test --ghc-options="$GHC_OPTIONS"
+   set +ex
