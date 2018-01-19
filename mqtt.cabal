@@ -21,8 +21,7 @@ source-repository head
 
 library
   ghc-options:         -Wall
-  exposed-modules:     Network.Stack.Server,
-                       Network.MQTT.Client,
+  exposed-modules:     Network.MQTT.Client,
                        Network.MQTT.Message,
                        Network.MQTT.Trie,
                        Network.MQTT.Broker,
@@ -44,13 +43,11 @@ library
                        text,
                        containers,
                        data-default-class,
-                       socket,
-                       tls,
                        uuid,
                        case-insensitive,
                        x509,
                        x509-validation,
-                       websockets
+                       networking
   hs-source-dirs:      src
   default-language:    Haskell2010
 
@@ -117,11 +114,11 @@ test-suite test
     , exceptions
     , mqtt
     , text
-    , tls
     , network-uri
     , deepseq
     , containers
     , uuid
+    , networking
 
 test-suite interruptible-lock
   type:

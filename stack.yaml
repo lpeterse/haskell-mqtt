@@ -2,6 +2,7 @@ resolver: lts-10.3
 packages:
   - '.'
 extra-deps:
-  - socket-unix-0.2.0.0
+  - git: https://github.com/lpeterse/haskell-networking.git
+    commit: c131db3c27a582387a6396c134e62ba37a1865bf
 flags: {}
 extra-package-dbs: []

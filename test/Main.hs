@@ -4,8 +4,8 @@ import           Test.Tasty
 
 import qualified BrokerTest
 import qualified EncodingTest
-import qualified TrieTest
 import qualified TopicTest
+import qualified TrieTest
 
 main :: IO ()
 main = do
