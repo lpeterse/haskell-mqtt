@@ -10,12 +10,12 @@ import           Control.Exception
 import           Control.Monad
 import           Data.Default.Class
 import qualified Data.IntMap.Strict                 as IM
+import           Data.Maybe
 import           Data.Monoid
 import qualified Data.Sequence                      as Seq
 import           Data.String
 import           Data.Typeable
 import           Data.UUID                          (UUID)
-import           Data.Word
 import           System.Clock
 import           Test.Tasty
 import           Test.Tasty.HUnit
@@ -351,6 +351,74 @@ getTestTree =
                 Broker.terminateExpiredSessionsAt broker (now + 60)
                 assertEqual "size of session set 60 seconds in the future" 0 =<< (IM.size <$> Broker.getSessions broker)
       ]
+
+    , testGroup "Session Concurrency" [
+        testCase "the same principal with the same client identifier shall take over the existing session" $ do
+          broker <- Broker.newBroker (pure $ TestAuthenticator authenticatorConfigAllAccess) def
+          m1 <- newEmptyMVar
+          m2 <- newEmptyMVar
+          let t1 = Broker.withSession broker (connectionRequest { requestClientIdentifier = "a" }) (\_-> pure ()) $ \session (SessionPresent sessionPresent)->
+                     if sessionPresent
+                        then putMVar m1 Nothing
+                        else (threadDelay 1000000 >> putMVar m1 Nothing) `onException` putMVar m1 (Just $ Session.identifier session) -- expect to be killed externally before timeout
+          let t2 = Broker.withSession broker (connectionRequest { requestClientIdentifier = "a" }) (\_-> pure ()) $ \session (SessionPresent sessionPresent)->
+                     if sessionPresent
+                        then putMVar m2 (Just $ Session.identifier session) -- expect to exit regularly
+                        else putMVar m2 Nothing
+          withAsync t1 $ const $ withAsync (threadDelay 10000 >> t2) $ const $ do
+            ms1 <- readMVar m1
+            ms2 <- readMVar m2
+            assertBool  "isJust ms1" $ isJust ms1
+            assertBool  "isJust ms2" $ isJust ms2
+            assertBool  "ms1 == ms2" $ ms1 == ms2
+
+      , testCase "the same principal with different client idenfitifier shall get an additional session" $ do
+          broker <- Broker.newBroker (pure $ TestAuthenticator authenticatorConfigAllAccess) def
+          m1 <- newEmptyMVar
+          m2 <- newEmptyMVar
+          let t1 = Broker.withSession broker (connectionRequest { requestClientIdentifier = "a" }) (\_-> pure ()) $ \session (SessionPresent sessionPresent)->
+                    if sessionPresent
+                      then putMVar m1 Nothing
+                      else (threadDelay 20000 >> putMVar m1 (Just $ Session.identifier session)) `onException` putMVar m1 Nothing
+          let t2 = Broker.withSession broker (connectionRequest { requestClientIdentifier = "b" }) (\_-> pure ()) $ \session (SessionPresent sessionPresent)->
+                    if sessionPresent
+                      then putMVar m2 Nothing
+                      else (threadDelay 20000 >> putMVar m2 (Just $ Session.identifier session)) `onException` putMVar m2 Nothing
+          withAsync t1 $ const $ withAsync (threadDelay 10000 >> t2) $ const $ do
+            ms1 <- readMVar m1
+            ms2 <- readMVar m2
+            assertBool "isJust ms1" $ isJust ms1
+            assertBool "isJust ms2" $ isJust ms2
+            assertBool "ms1 /= ms2" $ ms1 /= ms2
+
+      , testCase "a principals oldest session shall be terminated when reaching `quotaMaxSessions`" $ do
+          broker <- Broker.newBroker (pure $ TestAuthenticator authenticatorConfigAllAccess) def
+          m1 <- newEmptyMVar
+          m2 <- newEmptyMVar
+          m3 <- newEmptyMVar
+          let t1 = Broker.withSession broker (connectionRequest { requestClientIdentifier = "a" }) (\_-> pure ()) $ \session (SessionPresent sessionPresent)->
+                    if sessionPresent
+                      then putMVar m1 Nothing
+                      else (threadDelay 3000000 >> putMVar m1 Nothing) `onException` putMVar m1 (Just $ Session.identifier session) -- expect to be killed externally before timeout
+          let t2 = Broker.withSession broker (connectionRequest { requestClientIdentifier = "b" }) (\_-> pure ()) $ \session (SessionPresent sessionPresent)->
+                    if sessionPresent
+                      then putMVar m2 Nothing
+                      else (threadDelay 3000000 >> putMVar m2 (Just $ Session.identifier session)) `onException` putMVar m2 Nothing
+          let t3 = Broker.withSession broker (connectionRequest { requestClientIdentifier = "c" }) (\_-> pure ()) $ \session (SessionPresent sessionPresent)->
+                    if sessionPresent
+                      then putMVar m3 Nothing
+                      else putMVar m3 (Just $ Session.identifier session)
+          withAsync t1 $ const $ withAsync (threadDelay 1100000 >> t2) $ const $ withAsync (threadDelay 2200000 >> t3) $ const $ do
+            ms1 <- readMVar m1
+            ms2 <- readMVar m2
+            ms3 <- readMVar m3
+            assertBool "isJust ms1" $ isJust ms1
+            assertBool "isJust ms2" $ isJust ms2
+            assertBool "isJust ms3" $ isJust ms3
+            assertBool "ms1 /= ms2" $ ms1 /= ms2
+            assertBool "ms1 /= ms3" $ ms1 /= ms3
+            assertBool "ms2 /= ms3" $ ms2 /= ms3
+      ]
     ]
 
 authenticatorConfigNoService :: AuthenticatorConfig TestAuthenticator
@@ -380,7 +448,8 @@ authenticatorConfigAllAccess = TestAuthenticatorConfig
      , principalRetainPermissions = R.singleton "#" ()
      }
     quota = Quota {
-       quotaMaxIdleSessionTTL    = defaultIdleSessionTTL
+       quotaMaxSessions          = 2
+     , quotaMaxIdleSessionTTL    = 60
      , quotaMaxPacketSize        = 65535
      , quotaMaxPacketIdentifiers = 10
      , quotaMaxQueueSizeQoS0     = 10
@@ -400,5 +469,3 @@ connectionRequest  = ConnectionRequest
   , requestWill             = Nothing
   }
 
-defaultIdleSessionTTL :: Word64
-defaultIdleSessionTTL = 60

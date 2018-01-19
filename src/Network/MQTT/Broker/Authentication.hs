@@ -18,7 +18,6 @@ import qualified Data.Binary          as B
 import qualified Data.ByteString      as BS
 import           Data.CaseInsensitive
 import           Data.UUID            as UUID
-import           Data.Word
 import qualified Data.X509            as X509
 import           GHC.Generics
 
@@ -69,12 +68,13 @@ data Principal
 
 data Quota
    = Quota
-   { quotaMaxIdleSessionTTL    :: Word64
-   , quotaMaxPacketSize        :: Word64
-   , quotaMaxPacketIdentifiers :: Word64
-   , quotaMaxQueueSizeQoS0     :: Word64
-   , quotaMaxQueueSizeQoS1     :: Word64
-   , quotaMaxQueueSizeQoS2     :: Word64
+   { quotaMaxSessions          :: Int
+   , quotaMaxIdleSessionTTL    :: Int
+   , quotaMaxPacketSize        :: Int
+   , quotaMaxPacketIdentifiers :: Int
+   , quotaMaxQueueSizeQoS0     :: Int
+   , quotaMaxQueueSizeQoS1     :: Int
+   , quotaMaxQueueSizeQoS2     :: Int
    } deriving (Eq, Ord, Show, Generic)
 
 instance B.Binary Quota

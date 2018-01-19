@@ -1,5 +1,6 @@
 {-# LANGUAGE DeriveGeneric              #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE LambdaCase                 #-}
 {-# LANGUAGE OverloadedStrings          #-}
 {-# LANGUAGE ScopedTypeVariables        #-}
 {-# LANGUAGE TupleSections              #-}
@@ -21,10 +22,13 @@ import           Control.Monad
 import qualified Data.Binary                          as B
 import qualified Data.ByteString                      as BS
 import           Data.Default.Class
+import           Data.Function                        (on)
 import           Data.Int
 import qualified Data.IntMap.Strict                   as IM
 import qualified Data.IntSet                          as IS
+import           Data.List                            (minimumBy)
 import qualified Data.Map.Strict                      as M
+import           Data.Maybe                           (catMaybes)
 import qualified Data.Sequence                        as Seq
 import           Data.Word
 import           GHC.Generics                         (Generic)
@@ -48,7 +52,7 @@ data BrokerState auth
    { brokerMaxSessionIdentifier   :: !SessionIdentifier
    , brokerSubscriptions          :: !(R.Trie IS.IntSet)
    , brokerSessions               :: !(IM.IntMap (Session auth))
-   , brokerSessionsByPrincipals   :: !(M.Map (PrincipalIdentifier, ClientIdentifier) SessionIdentifier)
+   , brokerSessionsByPrincipals   :: !(M.Map PrincipalIdentifier (M.Map ClientIdentifier SessionIdentifier))
    }
 
 data Callbacks auth
@@ -211,13 +215,13 @@ enqueue :: Session auth -> Message -> IO ()
 enqueue session msg = do
   quota <- principalQuota <$> readMVar (sessionPrincipal session)
   overflow <- modifyMVar (sessionQueue session) $ \queue-> case msgQoS msg of
-    QoS0 -> if fromIntegral (quotaMaxQueueSizeQoS0 quota) > Seq.length (queueQoS0 queue)
+    QoS0 -> if quotaMaxQueueSizeQoS0 quota > Seq.length (queueQoS0 queue)
       then pure $ (, False) $! queue { queueQoS0 = queueQoS0 queue Seq.|> msg }
       else pure $ (, True)  $! queue { queueQoS0 = Seq.drop 1 $ queueQoS0 queue Seq.|> msg }
-    QoS1 -> if fromIntegral (quotaMaxQueueSizeQoS1 quota) > Seq.length (queueQoS1 queue)
+    QoS1 -> if quotaMaxQueueSizeQoS1 quota > Seq.length (queueQoS1 queue)
       then pure $ (, False) $! queue { queueQoS1 = queueQoS1 queue Seq.|> msg }
       else pure $ (, True)  $! queue { queueQoS1 = Seq.drop 1 $ queueQoS1 queue Seq.|> msg }
-    QoS2 -> if fromIntegral (quotaMaxQueueSizeQoS2 quota) > Seq.length (queueQoS2 queue)
+    QoS2 -> if quotaMaxQueueSizeQoS2 quota > Seq.length (queueQoS2 queue)
       then pure $ (, False) $! queue { queueQoS2 = queueQoS2 queue Seq.|> msg }
       else pure $ (, True)  $! queue { queueQoS2 = Seq.drop 1 $ queueQoS2 queue Seq.|> msg }
   when overflow (accountOverflow $ sessionStatistic session)
@@ -250,12 +254,19 @@ terminate session = do
       withMVarMasked (sessionSubscriptions session) $ \subscriptions->
         pure st
           { brokerSessions = IM.delete sid ( brokerSessions st )
-            -- Remove the session id from the (principal, client) -> sessionid
+            -- Remove the session id from the principal -> clientid -> sessionid
             -- mapping. Remove empty leaves in this mapping, too.
-          , brokerSessionsByPrincipals = M.delete
-              ( sessionPrincipalIdentifier session
-              , sessionClientIdentifier session)
-              (brokerSessionsByPrincipals st)
+          , brokerSessionsByPrincipals = case M.lookup (sessionPrincipalIdentifier session) (brokerSessionsByPrincipals st) of
+              Nothing -> brokerSessionsByPrincipals st -- nothing to do, principal is not in the map
+              Just cim -> case M.lookup (sessionClientIdentifier session) cim of
+                Nothing -> brokerSessionsByPrincipals st -- nothing to do, client identifier is not in the map
+                Just _  -> if M.size cim == 1
+                  -- Principal was only connected with one client. Remove everything.
+                  then M.delete (sessionPrincipalIdentifier session) (brokerSessionsByPrincipals st)
+                  -- Principal is still connected with other clients. Only remove this one.
+                  -- NB: Force the inner map!
+                  else flip (M.insert (sessionPrincipalIdentifier session))
+                        (brokerSessionsByPrincipals st) $! M.delete (sessionClientIdentifier session) cim
             -- Remove the session id from each set that the session
             -- subscription tree has a corresponding value for (which is ignored).
           , brokerSubscriptions = R.differenceWith
@@ -270,3 +281,20 @@ terminate session = do
       where
         ss' = IS.delete sid ss
     SessionIdentifier sid = sessionIdentifier session
+
+getSessionByIdentifier :: Broker auth -> SessionIdentifier -> IO (Maybe (Session auth))
+getSessionByIdentifier broker (SessionIdentifier sid) = do
+  st <- readMVar (brokerState broker)
+  pure $ IM.lookup sid (brokerSessions st)
+
+-- | Terminate one session for a given `PrincipalIdentifier`.
+--
+--   This method is not synchronised.
+terminateOldestSessionOfPrincipal :: Broker auth -> PrincipalIdentifier -> IO ()
+terminateOldestSessionOfPrincipal broker pid = do
+  st <- readMVar (brokerState broker)
+  case M.lookup pid (brokerSessionsByPrincipals st) of
+    Nothing  -> pure () -- nothing to do (unlikely)
+    Just cim -> catMaybes <$> mapM (getSessionByIdentifier broker) (M.elems cim) >>= \case
+        [] -> pure () -- nothing to do (sessions disappeared in the meatime)
+        xs -> terminate $ minimumBy (compare `on` sessionCreatedAt) xs

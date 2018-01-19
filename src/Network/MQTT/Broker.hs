@@ -72,12 +72,12 @@ withSession broker request sessionRejectHandler sessionAcceptHandler = do
             -- In case the principals identity could be determined, we'll either
             -- find an associated existing session or create a new one.
             -- Getting/creating a session eventually modifies the broker state.
-            ( getSession broker (principalIdentifier, requestClientIdentifier request) )
+            ( getSession broker principalIdentifier (requestClientIdentifier request) )
             -- This is executed when the current thread terminates (on connection loss).
             -- Cleanup actions are executed here (like removing the session when the clean session flag was set).
             (\case
                 Nothing -> pure ()
-                Just (session, _) -> if requestCleanSession request
+                Just (session, _, _) -> if requestCleanSession request
                   then Session.terminate session
                   else Session.reset session
             )
@@ -89,11 +89,14 @@ withSession broker request sessionRejectHandler sessionAcceptHandler = do
             -- will receive a `ThreadKilled` exception.
             (\case
                 Nothing -> sessionRejectHandler NotAuthorized
-                Just s  -> acceptAndServeConnection s
+                Just (session, sessionPresent, maxSessionsExceeded )-> do
+                  when maxSessionsExceeded $
+                    terminateOldestSessionOfPrincipal broker principalIdentifier
+                  acceptAndServeConnection session sessionPresent
             )
   where
-    acceptAndServeConnection :: (Session auth, SessionPresent) -> IO ()
-    acceptAndServeConnection (session, sessionPresent) =
+    acceptAndServeConnection :: Session auth -> SessionPresent -> IO ()
+    acceptAndServeConnection session sessionPresent =
       exclusively (sessionLock session) $
         let serve = onConnect' >> sessionAcceptHandler session sessionPresent >> onDisconnect' Nothing
         in  serve `catch` (\e-> onDisconnect' $ Just $ show (e :: SomeException) )
@@ -154,8 +157,8 @@ terminateExpiredSessionsAt broker timestamp =
 --   Principal is only looked up initially. Reconnects won't update the
 --   permissions etc. Returns Nothing in case the principal identifier cannot
 --   be mapped to a principal object.
-getSession :: Authenticator auth => Broker auth -> (PrincipalIdentifier, ClientIdentifier) -> IO (Maybe (Session auth, SessionPresent))
-getSession broker pcid@(pid, cid) = do
+getSession :: Authenticator auth => Broker auth -> PrincipalIdentifier -> ClientIdentifier -> IO (Maybe (Session auth, SessionPresent, Bool))
+getSession broker pid cid = do
   authenticator <- brokerAuthenticator broker
   -- Resuming an existing session..
   -- Re-fetch the principal and its permissions.
@@ -163,17 +166,28 @@ getSession broker pcid@(pid, cid) = do
     Nothing -> pure Nothing
     Just principal ->
       modifyMVar (brokerState broker) $ \st->
-        case M.lookup pcid (brokerSessionsByPrincipals st) of
-          Just (SessionIdentifier sid) ->
-            case IM.lookup sid (brokerSessions st) of
-              Just session -> do
-                void $ swapMVar (sessionPrincipal session) principal
-                pure (st, Just (session, SessionPresent True))
-              -- Orphaned session id. This is illegal state.
-              Nothing ->
-                createSession principal st
-          -- No session entry found for principal. Creating one.
-          Nothing -> createSession principal st
+        case M.lookup pid (brokerSessionsByPrincipals st) of
+          -- No session entry found for principal.
+          -- Creating a new one.
+          Nothing -> do
+            (st', session) <- createSession principal st
+            -- Session limit cannot be exceeded with 1 session.
+            pure (st', Just (session, SessionPresent False, False))
+          -- At least one session exists for this principal.
+          -- Find the correct one or create a new one.
+          Just cim -> case M.lookup cid cim of
+            Nothing -> do
+              (st', session) <- createSession principal st
+              pure $ (st', Just (session, SessionPresent False, M.size cim >= quotaMaxSessions (principalQuota principal)))
+            Just (SessionIdentifier sid) ->
+              case IM.lookup sid (brokerSessions st) of
+                Nothing -> throwIO $ AssertionFailed $
+                  "Encountered orhphaned session id " ++ show sid ++
+                  " for principal " ++ show pid ++" (" ++ show cid ++ ")."
+                Just session -> do
+                  void $ swapMVar (sessionPrincipal session) principal
+                  -- Session limit cannot be exceeded when continuing an existing one.
+                  pure (st, Just (session, SessionPresent True, False))
     where
       createSession principal st = do
         now           <- sec <$> getTime Realtime
@@ -203,9 +217,11 @@ getSession broker pcid@(pid, cid) = do
             newBrokerState = st
               { brokerMaxSessionIdentifier = SessionIdentifier newSessionIdentifier
               , brokerSessions             = IM.insert newSessionIdentifier newSession (brokerSessions st)
-              , brokerSessionsByPrincipals = M.insert pcid (SessionIdentifier newSessionIdentifier) (brokerSessionsByPrincipals st)
+              , brokerSessionsByPrincipals = flip (M.insert pid) (brokerSessionsByPrincipals st) $! case M.lookup pid (brokerSessionsByPrincipals st) of
+                                               Nothing  -> M.singleton cid (SessionIdentifier newSessionIdentifier)
+                                               Just cim -> M.insert cid (SessionIdentifier newSessionIdentifier) cim
               }
-        pure (newBrokerState, Just (newSession, SessionPresent False))
+        pure (newBrokerState, newSession)
 
 getUptime        :: Broker auth -> IO Int64
 getUptime broker = do
@@ -217,3 +233,4 @@ getSessions broker = brokerSessions <$> readMVar (brokerState broker)
 
 getSubscriptions :: Broker auth -> IO (R.Trie IS.IntSet)
 getSubscriptions broker = brokerSubscriptions <$> readMVar (brokerState broker)
+

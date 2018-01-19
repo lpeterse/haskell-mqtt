@@ -3,7 +3,7 @@ synopsis:            An MQTT protocol implementation.
 description:
   This project aims to supply a rock-solid MQTT implementation suitable for
   production use.
-version:             0.5.0.0
+version:             0.6.0.0
 license:             MIT
 license-file:        LICENSE
 author:              Lars Petersen
@@ -11,7 +11,8 @@ maintainer:          info@lars-petersen.net
 category:            Network, IoT
 homepage:            https://github.com/lpeterse/haskell-mqtt
 bug-reports:         https://github.com/lpeterse/haskell-mqtt/issues
-extra-source-files:  README.md
+extra-source-files:  README.md,
+                     CHANGELOG.md
 build-type:          Simple
 cabal-version:       >=1.10
 
