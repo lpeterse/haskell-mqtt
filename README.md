@@ -1,4 +1,4 @@
-A pure Haskell MQTT client and server implementation
+A pure Haskell MQTT client and server implementation [![Travis](https://img.shields.io/travis/lpeterse/haskell-mqtt.svg)](https://travis-ci.org/lpeterse/haskell-mqtt)
 ====================================================
 
 ## Project goal
