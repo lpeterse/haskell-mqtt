@@ -89,9 +89,12 @@ class TrieValue a where
   nodeTree             :: TrieNode a -> Trie a
   nodeValue            :: TrieNode a -> Maybe a
 
+instance (TrieValue a, Semigroup a) =>  Semigroup (Trie a) where
+  (<>) = unionWith (<>)
+
 instance (TrieValue a, Monoid a) => Monoid (Trie a) where
   mempty  = empty
-  mappend = unionWith mappend
+  mappend = (<>)
 
 instance (TrieValue a, Eq a) => Eq (Trie a) where
   Trie m1 == Trie m2 =
