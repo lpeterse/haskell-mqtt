@@ -55,7 +55,7 @@ insert :: Message.Message -> RetainedTree -> RetainedTree
 insert msg = union (singleton msg)
 
 delete :: Message.Message -> RetainedTree -> RetainedTree
-delete msg = difference (singleton msg)
+delete msg = flip difference (singleton msg)
 
 singleton :: Message.Message -> RetainedTree
 singleton msg =
