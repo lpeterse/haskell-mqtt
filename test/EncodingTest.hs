@@ -20,11 +20,11 @@ tests = testGroup "Encoding / Decoding"
   ]
 
 testClientPacket :: TestTree
-testClientPacket = QC.testProperty "clientMessageBuilder <-> clientPacketParser" $ \msg->
+testClientPacket = QC.testProperty "clientPacketBuilder <-> clientPacketParser" $ \msg->
   msg === SG.runGet clientPacketParser (BS.toLazyByteString $ clientPacketBuilder msg)
 
 testServerPacket :: TestTree
-testServerPacket = QC.testProperty "serverMessageBuilder <-> serverPacketParser" $ \msg->
+testServerPacket = QC.testProperty "serverPacketBuilder <-> serverPacketParser" $ \msg->
   msg === SG.runGet serverPacketParser (BS.toLazyByteString $ serverPacketBuilder msg)
 
 instance Arbitrary ClientPacket where

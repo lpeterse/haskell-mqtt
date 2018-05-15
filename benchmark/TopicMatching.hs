@@ -1,11 +1,11 @@
 module Main where
 
-import Criterion.Main
+import           Criterion.Main
 
-import Data.Bits
-import Data.String
-import Network.MQTT.Topic
-import Network.MQTT.RoutingTree as R
+import           Data.Bits
+import           Data.String
+import           Network.MQTT.Message
+import           Network.MQTT.Trie    as R
 
 main :: IO ()
 main = filterTree `seq` defaultMain [benchmark]
@@ -13,7 +13,7 @@ main = filterTree `seq` defaultMain [benchmark]
 benchmark :: Benchmark
 benchmark  = bench "Matching 512 topics against 20000 permissions." $ whnf (foldr (\topic accum-> accum `xor` R.matchTopic topic filterTree) False) topics
 
-filterTree :: RoutingTree ()
+filterTree :: Trie ()
 filterTree = foldr (\f t-> R.insert (fromString f) () t) mempty filters
 
 filters :: [String]
