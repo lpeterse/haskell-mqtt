@@ -38,7 +38,6 @@ import qualified Data.ByteString.Builder    as BS
 import qualified Data.ByteString.Short      as BS
 import           Data.List
 import           Data.List.NonEmpty         (NonEmpty (..))
-import           Data.Monoid                ((<>))
 import           Data.String
 import qualified Data.Text                  as T
 import qualified Data.Text.Encoding         as T

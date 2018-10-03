@@ -48,7 +48,8 @@ library
                        case-insensitive,
                        x509,
                        x509-validation,
-                       networking
+                       networking,
+                       semigroups
   hs-source-dirs:      src
   default-language:    Haskell2010
 

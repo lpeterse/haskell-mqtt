@@ -11,7 +11,6 @@ import           Control.Monad
 import           Data.Default.Class
 import qualified Data.IntMap.Strict                 as IM
 import           Data.Maybe
-import           Data.Monoid
 import qualified Data.Sequence                      as Seq
 import           Data.String
 import           Data.Typeable
