@@ -65,7 +65,7 @@ import           Data.List.NonEmpty         (NonEmpty (..))
 import qualified Data.List.NonEmpty         as NE
 import qualified Data.Map.Strict            as M
 import           Data.Maybe                 hiding (mapMaybe)
-import           Data.Monoid
+import           Data.Semigroup
 import           Prelude                    hiding (lookup, map, null)
 
 import           Network.MQTT.Message.Topic
@@ -89,9 +89,11 @@ class TrieValue a where
   nodeTree             :: TrieNode a -> Trie a
   nodeValue            :: TrieNode a -> Maybe a
 
+instance (TrieValue a, Semigroup a) => Semigroup (Trie a) where
+    (<>) = unionWith (<>)
+
 instance (TrieValue a, Monoid a) => Monoid (Trie a) where
   mempty  = empty
-  mappend = unionWith mappend
 
 instance (TrieValue a, Eq a) => Eq (Trie a) where
   Trie m1 == Trie m2 =
