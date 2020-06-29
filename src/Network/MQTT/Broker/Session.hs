@@ -58,7 +58,6 @@ import           Data.Int
 import qualified Data.IntMap                           as IM
 import qualified Data.IntSet                           as IS
 import           Data.Maybe
-import           Data.Monoid
 import qualified Data.Sequence                         as Seq
 
 import           Network.MQTT.Broker.Authentication    hiding (getPrincipal)

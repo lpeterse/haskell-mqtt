@@ -67,7 +67,6 @@ import           Data.Bool
 import qualified Data.ByteString            as BS
 import qualified Data.ByteString.Builder    as BS
 import qualified Data.ByteString.Lazy       as BSL
-import           Data.Monoid
 import           Data.String
 import qualified Data.Text                  as T
 import qualified Data.Text.Encoding         as T

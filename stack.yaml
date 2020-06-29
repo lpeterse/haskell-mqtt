@@ -1,8 +1,9 @@
-resolver: lts-10.3
+resolver: lts-16.3
 packages:
   - '.'
 extra-deps:
+  - socket-0.8.3.0
   - git: https://github.com/lpeterse/haskell-networking.git
-    commit: c131db3c27a582387a6396c134e62ba37a1865bf
+    commit: b79d22a2b95c6ba4bb16b5b47bfb0ea06df9ddbd
 flags: {}
 extra-package-dbs: []

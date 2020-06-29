@@ -27,7 +27,7 @@ module Network.MQTT.Broker
 import           Control.Concurrent.InterruptibleLock
 import           Control.Concurrent.MVar
 import           Control.Exception
-import           Control.Monad                         (mapM_, void, when)
+import           Control.Monad                         (void, when)
 import           Data.Int
 import qualified Data.IntMap.Strict                    as IM
 import qualified Data.IntSet                           as IS
