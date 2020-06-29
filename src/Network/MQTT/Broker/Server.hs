@@ -1,5 +1,7 @@
 {-# LANGUAGE FlexibleContexts    #-}
 {-# LANGUAGE FlexibleInstances   #-}
+{-# LANGUAGE LambdaCase          #-}
+{-# LANGUAGE NumericUnderscores  #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneDeriving  #-}
 {-# LANGUAGE TypeFamilies        #-}
@@ -102,7 +104,7 @@ serveConnection broker conn info = do
   leftover       <- newMVar mempty
   recentActivity <- newIORef True
   req            <- getConnectionRequest info
-  msg            <- receiveMessage conn maxInitialPacketSize leftover
+  msg            <- withInitialPacketTimeout $ receiveMessage conn maxInitialPacketSize leftover
   case msg of
     ClientConnectUnsupported -> do
       Broker.onConnectionRejected cbs req UnacceptableProtocolVersion
@@ -147,7 +149,15 @@ serveConnection broker conn info = do
     -- This value is assumed to make no problems while still protecting
     -- the servers resources against exaustion attacks.
     maxInitialPacketSize :: Int64
-    maxInitialPacketSize  = 65535
+    maxInitialPacketSize = 65_535
+
+    -- The time to wait for the first packet to arrive.
+    withInitialPacketTimeout :: IO a -> IO a
+    withInitialPacketTimeout action = race timer action >>= \case
+      Left _ -> E.throwIO KeepAliveTimeoutException
+      Right a -> pure a
+      where
+        timer = threadDelay 10_000_000
 
     -- The keep alive thread wakes up every `keepAlive/2` seconds.
     -- When it detects no recent activity, it sleeps one more full `keepAlive`
@@ -168,7 +178,7 @@ serveConnection broker conn info = do
           activity'' <- readIORef recentActivity
           unless activity'' $ E.throwIO KeepAliveTimeoutException
       where
-        regularInterval = fromIntegral interval *  500000
+        regularInterval = fromIntegral interval *  500_000
 
     -- | This thread is responsible for continuously processing input.
     --   It blocks on reading the input stream until input becomes available.
