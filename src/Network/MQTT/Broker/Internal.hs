@@ -185,7 +185,7 @@ waitPending    = void . readMVar . sessionQueuePending
 
 emptyServerQueue :: Int -> ServerQueue
 emptyServerQueue i = ServerQueue
- { queuePids         = Seq.fromList $ fmap PacketIdentifier [0 .. min i 65535]
+ { queuePids         = Seq.fromList $ fmap PacketIdentifier [1 .. min i 65535]
  , outputBuffer      = mempty
  , queueQoS0         = mempty
  , queueQoS1         = mempty
